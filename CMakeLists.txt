@@ -107,3 +107,22 @@ target_include_directories(wtsn-tests PRIVATE
 if(BUILD_TESTING)
   add_test(NAME wtsn-tests COMMAND wtsn-tests)
 endif()
+
+# ---- TSN Node Simulator (independent feature; does not touch core) ----
+set(SIM_SOURCES
+  src/simulator/common/sim_log.c
+  src/simulator/common/sim_str.c
+  src/simulator/core/sim_device.c
+  src/simulator/core/sim_simulator.c
+  src/simulator/profiles/sim_profile.c
+  src/simulator/services/sim_services.c
+  src/simulator/protocol/sim_protocol.c
+  src/simulator/app/sim_main.c
+)
+add_executable(tsn-node-simulator ${SIM_SOURCES})
+target_include_directories(tsn-node-simulator PRIVATE src)
+target_link_libraries(tsn-node-simulator PRIVATE Threads::Threads)
+
+# install simulator profiles into the build tree
+file(COPY profiles DESTINATION ${CMAKE_BINARY_DIR})
+

@@ -76,23 +76,39 @@ cmake --build build -- -j$(nproc)
 
 ---
 
+## TSN Node Simulator
+
+The repository also ships a **generic TSN Node Simulator** (`tsn-node-simulator`). It does not emulate any specific silicon; instead it simulates arbitrary TSN-capable controllers (ESP32, Raspberry Pi, STM32, NXP, Linux, or any custom kind) driven by plain-text **configuration profiles** in `profiles/*.ini`.
+
+The simulator exposes: device discovery, MQTT publishing, OPC UA endpoints, QoS, VLAN, time synchronization, TAS and Gate Control Lists, and sensor simulation (temperature, pressure, IMU, distance, GPIO).
+
+```bash
+cmake --build build --target tsn-node-simulator
+./build/tsn-node-simulator --all --mqtt-host localhost --mqtt-port 1883 --opcua-base 4840
+```
+
+Create your own node by adding a profile:
+
+```ini
+[device]
+id = my-node
+name = Custom Node
+kind = nxp
+model = iMX8M
+...
+```
+
+See [docs/SIMULATOR.md](docs/SIMULATOR.md).
+
+---
+
 ## Project layout
 
 ```
 src/
-  app/        application bootstrap, entry points, tests
-  common/     logging, string utils, errors
-  mvc/        Model-View-Controller + event bus
-  db/         SQLite schema and CRUD repositories
-  device/     device model + manager
-  discovery/  discovery framework
-  qos|vlan|timesync|tas|sensors/    domain services
-  mqtt|opcua|gateway/               protocol integrations
-  plugin/     loadable protocol plugins (.so)
-  ui/         LVGL dark-theme GUI (optional)
-docs/
-  ARCHITECTURE.md
-  BUILD.md
+  simulator/     # generic TSN node simulator (independent feature)
+profiles/        # device profile templates (.ini)
+  ...
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
