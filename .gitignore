@@ -1,0 +1,8 @@
+build/
+*.o
+*.so
+*.db
+*.sqlite
+*.sqlite3
+.idea/
+.vscode/
