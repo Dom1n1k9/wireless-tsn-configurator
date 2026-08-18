@@ -105,9 +105,3 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - The GUI is optional and only built when LVGL is detected.
 - The OPC UA server uses the open62541 API and may need minor version-specific adjustments — run `./build/wtsn-tests` first after cloning.
 - This project has not yet been through a full CI build on a Linux machine; it is the initial scaffold.
-
----
-
-## License
-
-MIT
