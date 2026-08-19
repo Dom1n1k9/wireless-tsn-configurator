@@ -197,8 +197,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 - The core (database, device manager, QoS/VLAN/TimeSync/TAS/sensor logic, MVC,
   plugins, CLI, tests) is implemented.
-- The GUI is optional and only built when LVGL is detected. It includes a **Trace**
-  page for live communication monitoring.
+- The **GUI (LVGL 9 + SDL2 window)** shows the whole configurator: Dashboard
+  (live stats), Devices (tree with status/IP/firmware/TSN features), TSN/QoS
+  (802.1Q), TAS (802.1Qbv GCL), VLAN, TimeSync (gPTP), Sensors, OPC UA,
+  MQTT, **Trace** and Settings — all populated with real data from the managers/DB.
 - **Real OPC UA PubSub is implemented and working** (UADP/ UDP multicast to
   `opc.udp://239.255.0.1:4840/`): the `pubsub_opcua.c` backend creates the full
   writer chain (variables → PublishedDataSet → DataSetFields → WriterGroup →

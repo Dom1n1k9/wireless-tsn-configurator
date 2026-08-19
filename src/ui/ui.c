@@ -32,8 +32,8 @@ static void nav_click(lv_event_t *e) {
 }
 
 static void build_nav(lv_obj_t *parent) {
-    static const char *pages[] = { "dashboard", "devices", "tsn", "vlan",
-                                   "timesync", "opcua", "mqtt", "trace", "settings", NULL };
+    static const char *pages[] = { "dashboard", "devices", "tsn", "tas", "vlan",
+                                   "timesync", "sensors", "opcua", "mqtt", "trace", "settings", NULL };
     for (int i = 0; pages[i]; i++) {
         lv_obj_t *btn = lv_button_create(parent);
         lv_obj_set_size(btn, lv_pct(100), 40);
@@ -75,8 +75,10 @@ int wtsn_ui_run(wtsn_app *app) {
     wtsn_controller_register_view(g_ui.controller, wtsn_page_dashboard_create(app), "dashboard");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_devices_create(app), "devices");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_tsn_create(app), "tsn");
+    wtsn_controller_register_view(g_ui.controller, wtsn_page_tas_create(app), "tas");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_vlan_create(app), "vlan");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_timesync_create(app), "timesync");
+    wtsn_controller_register_view(g_ui.controller, wtsn_page_sensors_create(app), "sensors");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_opcua_create(app), "opcua");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_mqtt_create(app), "mqtt");
     wtsn_controller_register_view(g_ui.controller, wtsn_page_trace_create(app), "trace");
