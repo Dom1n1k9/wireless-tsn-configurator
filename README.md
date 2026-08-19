@@ -11,9 +11,9 @@ It acts as a central controller that discovers wireless nodes, manages them, app
 - **Automatic device discovery** via MQTT and OPC UA (plugin-based for future protocols)
 - **Device management** with a tree view, online/offline/error states and full info (ID, IP, firmware, last seen, supported TSN features)
 - **IEEE 802.1Q QoS configuration** (priority 0-7, traffic classes, bandwidth reservation, latency requirements)
-- **VLAN-like wireless group management** (VLAN ID, membership, import/export)
-- **Time synchronization** with grandmaster selection, local / external grandmaster modes and future gPTP / 802.1AS support
-- **Time Aware Scheduling (TAS)** — build and edit Gate Control Lists (GCL), configure cycle time, deploy schedules to nodes and visualize gate open/close windows
+- **IEEE 802.1Q VLAN management** (VLAN ID, membership, import/export)
+- **Time synchronization (gPTP, IEEE 802.1AS)** with grandmaster selection and local / external grandmaster modes
+- **Time Aware Scheduling (TAS, IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), configure cycle time, deploy schedules to nodes and visualize gate open/close windows
 - **Sensor management** — auto-detect temperature, pressure, IMU, distance and GPIO sensors with diagnostics
 - **Integrated OPC UA server** (open62541) with node browser and data model mapping
 - **Integrated MQTT client** (mosquitto) with topic browser and pub/sub
