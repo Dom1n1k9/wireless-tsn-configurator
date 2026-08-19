@@ -136,3 +136,17 @@ target_link_libraries(tsn-node-simulator PRIVATE Threads::Threads)
 # install simulator profiles into the build tree
 file(COPY profiles DESTINATION ${CMAKE_BINARY_DIR})
 
+# ---- TSN node firmware agent (runs on physical devices, executes configurator
+#      commands via MQTT / OPC UA; Linux adapter uses iproute2/tc, embedded
+#      adapters are compile-safe stubs for ESP-IDF/Zephyr/vendor SDK) ----
+set(AGENT_SOURCES
+  src/agent/agent.c
+  src/agent/agent_providers.c
+  src/agent/platform/agent_platform.c
+  src/agent/agent_main.c
+)
+add_executable(tsn-node-agent ${AGENT_SOURCES})
+target_include_directories(tsn-node-agent PRIVATE ${MOSQUITTO_INCLUDE_DIRS} src)
+target_link_libraries(tsn-node-agent PRIVATE wtsn-core SQLite::SQLite3
+  ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads)
+
