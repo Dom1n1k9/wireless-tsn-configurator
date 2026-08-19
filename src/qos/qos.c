@@ -33,3 +33,12 @@ const char *wtsn_qos_latency_str(wtsn_qos_latency_class lc) {
     default: return "Unknown";
     }
 }
+
+const char *wtsn_preemption_str(wtsn_frame_preemption p) {
+    switch (p) {
+    case WTSN_PREEMPT_OFF: return "off";
+    case WTSN_PREEMPT_EXPRESS_QUEUE: return "express-queue";
+    case WTSN_PREEMPT_ON: return "on";
+    default: return "off";
+    }
+}

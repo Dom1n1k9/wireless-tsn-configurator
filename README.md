@@ -15,6 +15,7 @@ It acts as a central controller that discovers wireless nodes, manages them, app
 - **Time synchronization (gPTP, IEEE 802.1AS)** with grandmaster selection and local / external grandmaster modes
 - **Time Aware Scheduling (TAS, IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), configure cycle time, deploy schedules to nodes and visualize gate open/close windows
 - **Centralized configuration (aligned with IEEE 802.1Qcc)** — the configurator acts as a central controller that pushes QoS / VLAN / time-sync / schedules to the nodes, the CNC-style control plane for the Wireless TSN network
+- **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt lower-priority preemptable frames to protect time-critical traffic
 - **Sensor management** — auto-detect temperature, pressure, IMU, distance and GPIO sensors with diagnostics
 - **Integrated OPC UA server** (open62541) with node browser and data model mapping
 - **Integrated MQTT client** (mosquitto) with topic browser and pub/sub

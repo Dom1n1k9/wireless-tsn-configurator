@@ -2,6 +2,8 @@
 
 #include "common/log.h"
 
+#include <string.h>
+
 static const char *SCHEMA =
     "CREATE TABLE IF NOT EXISTS devices ("
     "  id TEXT PRIMARY KEY, name TEXT, ip TEXT, mac TEXT, kind TEXT,"
@@ -13,7 +15,7 @@ static const char *SCHEMA =
     ");"
     "CREATE TABLE IF NOT EXISTS qos_configs ("
     "  device_id TEXT PRIMARY KEY, priority INTEGER, traffic_class INTEGER,"
-    "  bandwidth_kbps INTEGER, latency_ms INTEGER,"
+    "  bandwidth_kbps INTEGER, latency_ms INTEGER, preemption INTEGER,"
     "  FOREIGN KEY(device_id) REFERENCES devices(id)"
     ");"
     "CREATE TABLE IF NOT EXISTS vlan_groups ("
@@ -43,6 +45,18 @@ static const char *SCHEMA =
     "  key TEXT PRIMARY KEY, value TEXT"
     ");";
 
+static wtsn_error run_migration(wtsn_db *db, const char *sql) {
+    char *err = NULL;
+    int rc = sqlite3_exec(db->handle, sql, NULL, NULL, &err);
+    if (rc != SQLITE_OK && err != NULL) {
+        if (strstr(err, "duplicate column name") == NULL) {
+            wtsn_log(WTSN_LOG_WARN, "migration step skipped: %s", err);
+        }
+        sqlite3_free(err);
+    }
+    return WTSN_OK;
+}
+
 wtsn_error wtsn_db_open(wtsn_db *db, const char *path) {
     if (!db || !path) return WTSN_ERR_INVALID_ARG;
     memset(db, 0, sizeof(*db));
@@ -63,6 +77,8 @@ wtsn_error wtsn_db_migrate(wtsn_db *db) {
         sqlite3_free(err);
         return WTSN_ERR_DB;
     }
+    /* existing databases created before the preemption column */
+    run_migration(db, "ALTER TABLE qos_configs ADD COLUMN preemption INTEGER DEFAULT 0;");
     return WTSN_OK;
 }
 

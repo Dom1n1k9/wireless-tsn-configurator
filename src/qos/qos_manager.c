@@ -39,6 +39,7 @@ wtsn_error wtsn_qos_manager_configure(wtsn_qos_manager *m, const char *device_id
     q.traffic_class = (int)cfg->traffic_class;
     q.bandwidth_kbps = cfg->bandwidth_kbps;
     q.latency_ms = cfg->latency_ms;
+    q.preemption = (int)cfg->preemption;
     wtsn_db_qos_save(m->db, &q);
 
     wtsn_model_notify(&m->model, "changed");

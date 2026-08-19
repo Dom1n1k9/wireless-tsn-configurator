@@ -9,6 +9,7 @@ typedef struct {
     int traffic_class;
     int bandwidth_kbps;
     int latency_ms;
+    int preemption;
 } wtsn_qos_config;
 
 wtsn_error wtsn_db_qos_save(wtsn_db *db, const wtsn_qos_config *cfg);
