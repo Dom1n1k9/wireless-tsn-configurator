@@ -1,27 +1,27 @@
 # Wireless TSN Configurator
 
-A production-grade desktop application in pure C for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32 and future microcontroller platforms.
+A production-grade desktop application in pure C for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms.
 
-It acts as a central controller that discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization / schedule policies, reads sensors, and exposes the whole network over **MQTT** and **OPC UA**.
+It acts as a **central controller (CNC-style control plane, aligned with IEEE 802.1Qcc)** that discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization / schedule policies, reads sensors, and exposes the whole network over **MQTT** and **OPC UA** — including OPC UA PubSub and OPC UA FX / wireless multicast, with a firmware agent for physical devices, a node simulator for virtual ones, and a live communication trace.
 
 ---
 
 ## What it does
 
-- **Automatic device discovery** via MQTT and OPC UA (plugin-based for future protocols)
-- **Device management** with a tree view, online/offline/error states and full info (ID, IP, firmware, last seen, supported TSN features)
-- **Centralized configuration (aligned with IEEE 802.1Qcc)** — the configurator acts as a central controller that pushes QoS / VLAN / time-sync / schedules to the nodes, the CNC-style control plane for the Wireless TSN network
-- **IEEE 802.1Q QoS configuration** (priority 0-7, traffic classes, bandwidth reservation, latency requirements)
-- **IEEE 802.1Q VLAN management** (VLAN ID, membership, import/export)
-- **Time synchronization (gPTP, IEEE 802.1AS)** with grandmaster selection and local / external grandmaster modes
-- **Time Aware Scheduling (TAS, IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), configure cycle time, deploy schedules to nodes and visualize gate open/close windows
-- **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt lower-priority preemptable frames to protect time-critical traffic
-- **Sensor management** — auto-detect temperature, pressure, IMU, distance and GPIO sensors with diagnostics
-- **Integrated OPC UA server** (open62541) with node browser and data model mapping
-- **Integrated MQTT client** (mosquitto) with topic browser and pub/sub
-- **MQTT over OPC UA gateway** with bidirectional translation
+- **Automatic device discovery** via MQTT, OPC UA and plugins (extensible for future protocols)
+- **Device management** — tree view, online / offline / error states, and full info (ID, IP, firmware, last seen, supported TSN features)
+- **Centralized configuration (IEEE 802.1Qcc aligned)** — pushes QoS / VLAN / time-sync / schedules to the nodes
+- **IEEE 802.1Q QoS** — priority 0-7, traffic classes, bandwidth reservation, latency requirements
+- **IEEE 802.1Q VLAN** — VLAN ID, group membership, import / export
+- **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local / external grandmaster modes
+- **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), cycle time, deploy schedules, visualize gate windows
+- **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt preemptable classes to protect time-critical traffic
+- **Sensor management** — auto-detect temperature, pressure, IMU, distance, GPIO sensors with diagnostics
+- **OPC UA server + PubSub + FX / wireless multicast**
+- **MQTT client** and **MQTT↔OPC UA gateway**
+- **Communication trace / monitoring** in the GUI
 
-Everything is persisted in **SQLite**, so devices and their configurations are remembered across restarts.
+All state is persisted in **SQLite**, so devices and configurations survive restarts.
 
 ---
 
@@ -31,7 +31,7 @@ Everything is persisted in **SQLite**, so devices and their configurations are r
 |--------------|----------------|--------------------------------|
 | SQLite3      | >= 3.30        | SQLite database                |
 | libmosquitto | >= 2.0 dev     | MQTT client                   |
-| open62541    | >= 1.3 dev     | OPC UA server                 |
+| open62541    | >= 1.3 dev     | OPC UA server + PubSub       |
 | LVGL         | >= 9.0 dev     | GUI (optional, for GUI mode)  |
 | CMake        | >= 3.16        | Build system                  |
 | GCC/Clang    | C11 compiler   | Compiler                      |
@@ -42,7 +42,9 @@ Install on Debian/Ubuntu:
 sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev libopen62541-dev
 ```
 
-> **GUI mode only:** LVGL also needs to be installed as a pkg-config-visible library (e.g. `lvgl`, `liblvgl-dev`). If LVGL is not found, the build falls back to CLI-only automatically.
+> **GUI mode only:** LVGL must be installed as a pkg-config-visible library (e.g. `lvgl`, `liblvgl-dev`). If LVGL is not found, the build falls back to CLI-only automatically.
+
+> **Real OPC UA PubSub:** requires open62541 built with `UA_ENABLE_PUBSUB` and the project built with `-DWTSN_ENABLE_PUBSUB=ON`. Without it, a simulated PubSub backend is used instead.
 
 ---
 
@@ -78,42 +80,51 @@ cmake --build build -- -j$(nproc)
 
 ---
 
-## OPC UA PubSub, MQTT-over-PubSub and Communication Trace
+## OPC UA (Server, PubSub, FX)
 
-The configurator ships a dataset-based **PubSub** layer with two pluggable backends:
+- **Server** — embedded open62541 server (`src/opcua/opcua_server.c`) hosting a
+  configurator namespace, with device node mapping on the Objects tree.
+- **PubSub** — dataset-based layer (`src/pubsub/`) with pluggable backends:
+  - **Real** — open62541 behind `UA_ENABLE_PUBSUB` (`pubsub_opcua.c`);
+  - **Simulated** — loopback backend (`pubsub_loopback.c`) used by the
+    simulator and as an automatic fallback.
+- **OPC UA FX / wireless multicast** — all W-TSN members (real via the agent,
+  or simulated) join a shared multicast group `239.255.0.1:4840` (UA-DP).
+  A publisher spreads a dataset to every member over UDP, no broker required.
 
-- **Real OPC UA PubSub** (`src/pubsub/pubsub_opcua.c`) via open62541
-  (requires open62541 built with `UA_ENABLE_PUBSUB`; enable with
-  `-DWTSN_ENABLE_PUBSUB=ON`).
-- **Simulated PubSub** (`src/pubsub/pubsub_loopback.c`) - used by the
-  simulator and as an automatic fallback so the gateway always works.
+### FX multicast — simulated
+The simulator (`src/simulator/protocol/sim_protocol.c`) models the multi-node
+group: every node "joins" `239.255.0.1:4840` and FX sends are logged.
 
-A **MQTT over OPC UA PubSub gateway** (`src/gateway/gateway_pubsub.c`)
-bidirectionally converts MQTT topics into OPC UA PubSub datasets and back.
+### FX multicast — real
+The agent (`src/agent/agent_providers.c`) sends datasets into the group over a
+real POSIX UDP multicast socket (`agt_linux_send_fx_multicast`).
 
-A **communication trace** (`src/trace/trace.c` + the **Trace** page in the GUI)
-logs every real and simulated communication event, raw frames, configuration
-changes and FX multicast messages live inside the application.
+---
 
-## OPC UA FX / wireless multicast
+## MQTT
 
-All W-TSN members (real nodes via the agent, or simulated nodes) join a **shared
-OPC UA FX multicast group** (`239.255.0.1:4840`, UA-DP transport). A publisher
-spreads a dataset to every member of the group directly over UDP without an MQTT
-broker.
+- **Client** — `src/mqtt/mqtt_client.c` wraps libmosquitto: connect, subscribe,
+  publish, message callbacks, background loop.
+- **Broker config** via CLI flags / settings.
+- **MQTT ↔ OPC UA gateway** — `src/gateway/gateway.c` maps MQTT topics to
+  OPC UA paths bidirectionally.
+- **MQTT over OPC UA PubSub** — `src/gateway/gateway_pubsub.c` converts MQTT
+  topics into PubSub datasets and back.
 
-- **Simulated** - `tsn-node-simulator` models the multi-node group and logs each
-  FX multicast send (`src/simulator/protocol/sim_protocol.c`).
-- **Real** - `tsn-node-agent` (`--platform linux|raspberry_pi`) sends datasets
-  into the group over a real UDP multicast socket (`agt_linux_send_fx_multicast`).
-- **Monitoring** - each FX multicast message appears in the **Trace** page as a
-  multicast entry (amber).
+---
+
+## Communication Trace / Monitoring
+
+`src/trace/trace.c` (with the **Trace** page in the GUI) records every real and
+simulated event live: communication, raw frames, configuration changes and FX multicast
+messages — each shown with a timestamp, source and type.
 
 ---
 
 ## TSN Node Firmware Agent
 
-`tsn-node-agent` runs on physical devices and executes commands from the configurator via
+`tsn-node-agent` runs on physical devices and executes configurator commands over
 MQTT / OPC UA:
 
 ```bash
@@ -121,32 +132,33 @@ cmake --build build --target tsn-node-agent
 ./build/tsn-node-agent --id node-01 --platform linux --mqtt-host broker.local
 ```
 
-Supported commands over `tsn/cmd/<device>`: `qos`, `vlan`, `timesync`,
-`tas`, `status` and `fx` (FX multicast). Linux/Raspberry Pi apply QoS/VLAN via
-`iproute2`+`tc`; ESP32/STM32/NXP ship as compile-safe embedded adapters.
+| Option         | Description                          |
+|----------------|--------------------------------------|
+| `--id`         | Device id reported to the configurator |
+| `--platform`   | `linux`, `raspberry_pi`, `esp32`, `stm32`, `nxp` |
+| `--mqtt-host`  | Configurator / broker host          |
+| `--mqtt-port`  | MQTT port (default 1883)          |
+
+Commands over `tsn/cmd/<device>`: `qos`, `vlan`, `timesync`, `tas`, `status`
+and `fx` (FX multicast). Linux/Raspberry Pi apply QoS/VLAN via `iproute2`+`tc`;
+ESP32/STM32/NXP ship as compile-safe embedded adapters ready for the vendor SDK.
 
 ---
 
 ## TSN Node Simulator
 
-The repository also ships a **generic TSN Node Simulator** (`tsn-node-simulator`). It does not emulate any specific silicon; instead it simulates arbitrary TSN-capable controllers (ESP32, Raspberry Pi, STM32, NXP, Linux, or any custom kind) driven by plain-text **configuration profiles** in `profiles/*.ini`.
+The repository ships a **generic TSN Node Simulator** (`tsn-node-simulator`). It
+does not emulate any specific silicon; it simulates arbitrary TSN-capable controllers
+(ESP32, Raspberry Pi, STM32, NXP, Linux, or any custom kind) from plain-text
+**configuration profiles** in `profiles/*.ini`.
 
-The simulator exposes: device discovery, MQTT publishing, OPC UA endpoints, QoS, VLAN, time synchronization, TAS and Gate Control Lists, and sensor simulation (temperature, pressure, IMU, distance, GPIO).
+It simulates: discovery, MQTT publishing, OPC UA endpoints, QoS, VLAN, time
+synchronization, TAS / Gate Control Lists, sensor simulation (temperature, pressure,
+IMU, distance, GPIO) and OPC UA FX multicast.
 
 ```bash
 cmake --build build --target tsn-node-simulator
 ./build/tsn-node-simulator --all --mqtt-host localhost --mqtt-port 1883 --opcua-base 4840
-```
-
-Create your own node by adding a profile:
-
-```ini
-[device]
-id = my-node
-name = Custom Node
-kind = nxp
-model = iMX8M
-...
 ```
 
 See [docs/SIMULATOR.md](docs/SIMULATOR.md).
@@ -157,9 +169,22 @@ See [docs/SIMULATOR.md](docs/SIMULATOR.md).
 
 ```
 src/
-  simulator/     # generic TSN node simulator (independent feature)
-profiles/        # device profile templates (.ini)
-  ...
+  app/        application bootstrap, entry points, tests
+  common/     logging, string utils, errors
+  mvc/        Model-View-Controller + event bus
+  db/         SQLite schema + CRUD repositories
+  device/     device model + manager
+  discovery/  discovery framework
+  qos|vlan|timesync|tas|sensors/   domain services
+  mqtt|opcua|pubsub|gateway/        protocol integrations
+  pubsub/     dataset PubSub layer (OPC UA + loopback)
+  trace/      communication monitor
+  agent/      firmware agent for physical nodes
+  simulator/  generic node simulator
+  plugin/     loadable protocol plugins (.so)
+  ui/         LVGL dark-theme GUI (optional)
+profiles/     device profile templates (.ini)
+docs/         ARCHITECTURE, BUILD, SIMULATOR
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
@@ -168,7 +193,17 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Status / Notes
 
-- The core (database, device manager, QoS/VLAN/TimeSync/TAS/sensor logic, MVC, plugins, CLI, tests) is implemented.
-- The GUI is optional and only built when LVGL is detected.
-- The OPC UA server uses the open62541 API and may need minor version-specific adjustments — run `./build/wtsn-tests` first after cloning.
-- This project has not yet been through a full CI build on a Linux machine; it is the initial scaffold.
+- The core (database, device manager, QoS/VLAN/TimeSync/TAS/sensor logic, MVC,
+  plugins, CLI, tests) is implemented.
+- The GUI is optional and only built when LVGL is detected. It includes a **Trace**
+  page for live communication monitoring.
+- Real OPC UA PubSub requires open62541 built with `UA_ENABLE_PUBSUB` and
+  `-DWTSN_ENABLE_PUBSUB=ON`; otherwise the simulated backend is used.
+- The project has not yet been through a full CI build on a Linux machine — it is
+  a scaffold. Run `./build/wtsn-tests` first after cloning.
+
+---
+
+## License
+
+MIT
