@@ -21,6 +21,9 @@ cmake --build build -- -j$(nproc)
 - `-DBUILD_GUI=ON`/`OFF` - build LVGL front-end (default ON)
 - `-DBUILD_PLUGINS=ON`/`OFF` - build sample plugins (default ON)
 - `-DWTSN_DB_PATH` - override default sqlite database path
+- `-DWTSN_ENABLE_PUBSUB=ON` - use real OPC UA PubSub. Requires open62541 that
+  was itself built/installed with PubSub enabled (`-DUA_ENABLE_PUBSUB=ON`).
+  Without it the app falls back to the simulated loopback PubSub backend.
 
 ## Running
 

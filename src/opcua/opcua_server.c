@@ -96,6 +96,14 @@ uint16_t wtsn_opcua_server_port(wtsn_opcua_server *s) {
     return s ? s->port : 0;
 }
 
+void *wtsn_opcua_server_handle(wtsn_opcua_server *s) {
+    return s ? (void *)s->server : NULL;
+}
+
+int wtsn_opcua_server_ns(wtsn_opcua_server *s) {
+    return s ? (int)s->ns : 1;
+}
+
 wtsn_error wtsn_opcua_server_export_model(wtsn_opcua_server *s, const char *file) {
     (void)s;
     if (!file) return WTSN_ERR_INVALID_ARG;

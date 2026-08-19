@@ -76,6 +76,25 @@ cmake --build build -- -j$(nproc)
 
 ---
 
+## OPC UA PubSub, MQTT-over-PubSub and Communication Trace
+
+The configurator ships a dataset-based **PubSub** layer with two pluggable backends:
+
+- **Real OPC UA PubSub** (`src/pubsub/pubsub_opcua.c`) via open62541
+  (requires open62541 built with `UA_ENABLE_PUBSUB`; enable with
+  `-DWTSN_ENABLE_PUBSUB=ON`).
+- **Simulated PubSub** (`src/pubsub/pubsub_loopback.c`) - used by the
+  simulator and as an automatic fallback so the gateway always works.
+
+A **MQTT over OPC UA PubSub gateway** (`src/gateway/gateway_pubsub.c`)
+bidirectionally converts MQTT topics into OPC UA PubSub datasets and back.
+
+A **communication trace** (`src/trace/trace.c` + the **Trace** page in the GUI)
+logs every real and simulated communication event, raw frames and configuration
+changes live inside the application.
+
+---
+
 ## TSN Node Simulator
 
 The repository also ships a **generic TSN Node Simulator** (`tsn-node-simulator`). It does not emulate any specific silicon; instead it simulates arbitrary TSN-capable controllers (ESP32, Raspberry Pi, STM32, NXP, Linux, or any custom kind) driven by plain-text **configuration profiles** in `profiles/*.ini`.

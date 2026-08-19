@@ -63,6 +63,24 @@ Plugins expose `discover`, `read`, `write`, `probe` functions described by the
 `wtsn_plugin_api.h` interface. Discoverers are plugins; the discovery framework
 loads them at startup and enumerates discovered nodes.
 
+## PubSub Layer (`src/pubsub`)
+
+A uniform dataset-based PubSub abstraction with pluggable backends:
+
+- **OPC UA PubSub** (`pubsub_opcua.c`) - real open62541 PubSub behind
+  `UA_ENABLE_PUBSUB`; used by the configurator against real devices.
+- **Loopback** (`pubsub_loopback.c`) - simulated PubSub, used by the simulator
+  and as a fallback so the gateway keeps working without a fully-built PubSub stack.
+
+The **MQTT-over-OPC-UA-PubSub gateway** (`gateway_pubsub.c`) bidirectionally
+converts MQTT topics into PubSub datasets and back.
+
+## Trace Layer (`src/trace` + GUI `trace_page`)
+
+`wtsn_trace` records every communication event, raw frame bytes and configuration
+change (real or simulated) and publishes them on the event bus. The **Trace** page
+displays them live: timestamp, source, kind (comm/frame/config) and content.
+
 ## Threading Model
 
 - Main thread: GUI event loop.

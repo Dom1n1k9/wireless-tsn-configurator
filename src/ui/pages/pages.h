@@ -11,6 +11,7 @@ wtsn_view *wtsn_page_vlan_create(wtsn_app *app);
 wtsn_view *wtsn_page_timesync_create(wtsn_app *app);
 wtsn_view *wtsn_page_opcua_create(wtsn_app *app);
 wtsn_view *wtsn_page_mqtt_create(wtsn_app *app);
+wtsn_view *wtsn_page_trace_create(wtsn_app *app);
 wtsn_view *wtsn_page_settings_create(wtsn_app *app);
 
 #endif

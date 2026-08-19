@@ -5,14 +5,17 @@
 #include "db/db.h"
 #include "device/device_manager.h"
 #include "gateway/gateway.h"
+#include "gateway/gateway_pubsub.h"
 #include "mqtt/mqtt_client.h"
 #include "mvc/event_bus.h"
 #include "opcua/opcua_server.h"
 #include "plugin/plugin_manager.h"
+#include "pubsub/pubsub.h"
 #include "qos/qos_manager.h"
 #include "sensors/sensor_manager.h"
 #include "tas/tas_manager.h"
 #include "timesync/timesync_manager.h"
+#include "trace/trace.h"
 #include "vlan/vlan_manager.h"
 
 typedef struct {
@@ -37,6 +40,9 @@ typedef struct wtsn_app {
     wtsn_mqtt_client *mqtt;
     wtsn_opcua_server *opcua;
     wtsn_gateway *gateway;
+    wtsn_gateway_pubsub *gw_pubsub;
+    wtsn_trace *trace;
+    wtsn_pubsub *pubsub;
     wtsn_app_config config;
 } wtsn_app;
 

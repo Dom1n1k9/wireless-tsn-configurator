@@ -2,6 +2,8 @@
 
 #include "common/log.h"
 #include "common/str_util.h"
+#include "pubsub/pubsub_opcua.h"
+#include "pubsub/pubsub_loopback.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +34,8 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     app->bus = wtsn_event_bus_create();
     if (!app->bus) { wtsn_db_close(&app->db); return WTSN_ERR_NO_MEMORY; }
 
+    app->trace = wtsn_trace_create(app->bus);
+
     app->plugins = wtsn_plugin_manager_create();
     app->devices = wtsn_device_manager_create(&app->db, app->bus, app->plugins);
     app->qos = wtsn_qos_manager_create(&app->db, app->bus);
@@ -56,6 +60,34 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     app->opcua = wtsn_opcua_server_create();
     wtsn_opcua_server_start(app->opcua, app->config.opcua_port);
 
+    /* PubSub backend: real OPC UA PubSub if compiled in, else loopback (simulated).
+       Both real and simulated endpoints are traced for the GUI. */
+    wtsn_pubsub_backend pbackend;
+    if (wtsn_pubsub_opcua_backend(&pbackend, wtsn_opcua_server_handle(app->opcua),
+                                   (uint16_t)wtsn_opcua_server_ns(app->opcua)) != WTSN_OK) {
+        wtsn_log(WTSN_LOG_WARN, "opc ua pubsub backend unavailable, no pubsub started");
+        app->pubsub = NULL;
+    } else {
+        app->pubsub = calloc(1, sizeof(wtsn_pubsub));
+        wtsn_pubsub_init(app->pubsub, &pbackend, pbackend.state);
+        if (wtsn_pubsub_start(app->pubsub) != WTSN_OK) {
+            /* fall back so the gateway still has a loopback pubsub to use */
+            wtsn_pubsub_backend lb;
+            wtsn_pubsub_loopback_backend(&lb, NULL);
+            app->pubsub = calloc(1, sizeof(wtsn_pubsub));
+            wtsn_pubsub_init(app->pubsub, &lb, NULL);
+        }
+        if (app->trace) wtsn_trace_add_config(app->trace, "pubsub",
+            wtsn_pubsub_name(app->pubsub));
+    }
+
+    if (app->mqtt && app->pubsub) {
+        app->gw_pubsub = wtsn_gateway_pubsub_create(app->mqtt, app->pubsub, app->trace);
+        wtsn_gateway_pubsub_map_topic(app->gw_pubsub, "tsn/ns",
+                                      "wtsnData");
+        wtsn_gateway_pubsub_start(app->gw_pubsub);
+    }
+
     if (app->mqtt) {
         app->gateway = wtsn_gateway_create(app->mqtt, app->opcua);
         wtsn_gateway_map_topic(app->gateway, "tsn/#", "/tsn/#");
@@ -67,9 +99,12 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
 
 void wtsn_app_shutdown(wtsn_app *app) {
     if (!app) return;
+    if (app->gw_pubsub) wtsn_gateway_pubsub_destroy(app->gw_pubsub);
+    if (app->pubsub) free(app->pubsub);
     if (app->mqtt) wtsn_mqtt_client_destroy(app->mqtt);
     if (app->opcua) wtsn_opcua_server_destroy(app->opcua);
     if (app->gateway) wtsn_gateway_destroy(app->gateway);
+    if (app->trace) wtsn_trace_destroy(app->trace);
     if (app->sensors) wtsn_sensor_manager_destroy(app->sensors);
     if (app->tas) wtsn_tas_manager_destroy(app->tas);
     if (app->timesync) wtsn_timesync_manager_destroy(app->timesync);

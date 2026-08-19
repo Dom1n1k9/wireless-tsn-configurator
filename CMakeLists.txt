@@ -17,6 +17,10 @@ endif()
 
 option(BUILD_GUI "Build LVGL GUI front-end" ON)
 option(BUILD_PLUGINS "Build sample protocol plugins" ON)
+option(WTSN_ENABLE_PUBSUB "Use real OPC UA PubSub (open62541 must be built with UA_ENABLE_PUBSUB)" OFF)
+if(WTSN_ENABLE_PUBSUB)
+  add_compile_definitions(UA_ENABLE_PUBSUB=1)
+endif()
 
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -58,6 +62,11 @@ set(WTSN_SOURCES
   src/mqtt/mqtt_client.c
   src/opcua/opcua_server.c
   src/gateway/gateway.c
+  src/gateway/gateway_pubsub.c
+  src/pubsub/pubsub.c
+  src/pubsub/pubsub_loopback.c
+  src/pubsub/pubsub_opcua.c
+  src/trace/trace.c
   src/plugin/plugin_manager.c
 )
 
@@ -87,6 +96,7 @@ if(BUILD_GUI AND LVGL_FOUND)
     src/ui/widgets/theme.c
     src/ui/pages/dashboard_page.c
     src/ui/pages/default_pages.c
+    src/ui/pages/trace_page.c
   )
   add_executable(wtsn-configurator src/app/main_gui.c ${WTSN_UI_SOURCES})
   target_link_libraries(wtsn-configurator PRIVATE wtsn-core SQLite::SQLite3
