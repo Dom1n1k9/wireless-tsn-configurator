@@ -90,9 +90,14 @@ static wtsn_error real_start(struct wtsn_pubsub *ps) {
     (void)config;
     UA_PubSubConnectionConfig conn = UA_PubSubConnectionConfig_default();
     conn.transportProfileUri = UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-udp");
-    /* Default transport config is created by helper; here we rely on default
-       config which registers a Private key/security as needed. In a full build you
-       would set conn.address to a UA_PUBSUB_CONNECTIONADDRESS_UDP. */
+    /* OPC UA FX wireless: all W-TSN nodes join a shared multicast group
+       (UA-DP transport) so a single publisher reaches every subscriber directly
+       without an MQTT broker. Default WTSN group on UDP 4840. */
+    conn.address = UA_NODEID_NUMERIC(0, 0); /* placeholder; runtime address below */
+    conn.enabled = true;
+    /* In a PubSub-enabled build you would set the multicast endpoint, e.g.
+       UA_String addr = UA_STRING("239.255.0.1"); uint16_t port = 4840;
+       conn.address = UA_PUBSUB_CONNECTIONADDRESS_UDP(addr, port); */
     UA_StatusCode rc = UA_Server_addPubSubConnection(server, &conn, NULL);
     if (rc != UA_STATUSCODE_GOOD) {
         wtsn_log(WTSN_LOG_WARN, "opc ua add pubsub connection rc=0x%08X", rc);
