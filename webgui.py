@@ -15,12 +15,36 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.environ.get("WTSN_DB", os.path.join(BASE, "build", "wtsn_gui.db"))
+DB_REAL = os.environ.get("WTSN_DB", os.path.join(BASE, "build", "wtsn_gui.db"))
+DB_SIM = os.path.join(BASE, "build", "wtsn_sim.db")
 PORT = int(os.environ.get("WTSN_PORT", "8000"))
 
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
           "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
           "sensors", "settings"]
+
+SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
+    "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER);"
+    "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
+    "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
+    "INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,preemption INTEGER);"
+    "CREATE TABLE IF NOT EXISTS vlan_groups(id TEXT PRIMARY KEY,name TEXT,vlan_id INTEGER);"
+    "CREATE TABLE IF NOT EXISTS vlan_members(group_id TEXT,device_id TEXT);"
+    "CREATE TABLE IF NOT EXISTS tas_schedules(id TEXT PRIMARY KEY,name TEXT,cycle_time_ns "
+    "INTEGER,deploy_target TEXT);"
+    "CREATE TABLE IF NOT EXISTS gcl_entries(schedule_id TEXT,\"index\" INTEGER,gate_state "
+    "INTEGER,duration_ns INTEGER);"
+    "CREATE TABLE IF NOT EXISTS timesync_status(id TEXT,mode INTEGER,grandmaster TEXT,"
+    "offset_ns INTEGER,quality INTEGER);"
+    "CREATE TABLE IF NOT EXISTS sensors(device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,"
+    "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER);"
+    "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);"
+)
+
+def ensure_schema(con):
+    con.executescript(SCHEMA)
+    con.commit()
 
 PROFILES = [(0, "esp32", "192.168.1.10", "ESP32 Gateway"),
             (2, "rpi", "192.168.1.20", "Raspberry Pi"),
@@ -36,8 +60,9 @@ MODE = {"mode": "sim"}
 
 
 def connect():
-    con = sqlite3.connect(DB, timeout=3)
+    con = sqlite3.connect(DB_SIM if MODE["mode"] == "sim" else DB_REAL, timeout=3)
     con.row_factory = sqlite3.Row
+    ensure_schema(con)
     return con
 
 
@@ -114,7 +139,7 @@ def sim_tick():
                     " VALUES(?,?,?,?)", ("sched1", "Control cycle", 1000000, gm))
         con.execute("DELETE FROM gcl_entries WHERE schedule_id='sched1'")
         for idx, (g, d) in enumerate([(0x01, 300000), (0x03, 200000), (0x00, 500000)]):
-            con.execute("INSERT INTO gcl_entries(schedule_id,index,gate_state,duration_ns)"
+            con.execute("INSERT INTO gcl_entries(schedule_id,\"index\",gate_state,duration_ns)"
                         " VALUES('sched1',?,?,?)", (idx, g, d))
         con.commit()
         for did in devs:
