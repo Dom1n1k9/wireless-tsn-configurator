@@ -475,7 +475,7 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     threading.Thread(target=sim_runner, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler())
-    print("WTSN web GUI: http://127.0.0.1:%d  (db=%s)" % (port, DB), flush=True)
+    print("WTSN web GUI: http://127.0.0.1:%d  (db=%s)" % (port, DB_REAL), flush=True)
     try:
         import webbrowser
         webbrowser.open("http://127.0.0.1:%d/" % port)
