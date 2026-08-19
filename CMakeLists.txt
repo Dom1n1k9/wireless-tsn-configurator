@@ -27,19 +27,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
 pkg_check_modules(OPEN62541 REQUIRED open62541)
 
-# LVGL 9 and SDL2 (optional GUI). Resolved by direct paths so the GUI builds even
-# when pkg-config cannot locate the .pc files (e.g. built into $HOME/local).
-find_path(LVGL_INCLUDE_DIRS lvgl/lvgl.h HINTS ${CMAKE_PREFIX_PATH}/include $ENV{HOME}/local/include)
-find_library(LVGL_LIBRARIES NAMES lvgl HINTS ${CMAKE_PREFIX_PATH}/lib $ENV{HOME}/local/lib)
-find_path(SDL2_INCLUDE_DIRS SDL2/SDL.h HINTS ${CMAKE_PREFIX_PATH}/include $ENV{HOME}/local/include /usr/include)
-find_library(SDL2_LIBRARIES NAMES SDL2 SDL2-2.0 HINTS ${CMAKE_PREFIX_PATH}/lib $ENV{HOME}/local/lib /usr/lib)
-set(LVGL_PRIVATE stdc++ m pthread)
-if(NOT LVGL_INCLUDE_DIRS OR NOT LVGL_LIBRARIES OR NOT SDL2_LIBRARIES)
-  message(STATUS "GUI libs incomplete; GUI will be disabled")
-else()
-  set(LVGL_FOUND TRUE)
-endif()
-
 link_directories(${MOSQUITTO_LIBRARY_DIRS} ${OPEN62541_LIBRARY_DIRS})
 
 find_package(Threads REQUIRED)
@@ -104,25 +91,7 @@ add_executable(wtsn-cli src/app/main_cli.c)
 target_link_libraries(wtsn-cli PRIVATE wtsn-core SQLite::SQLite3 ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads)
 target_include_directories(wtsn-cli PRIVATE ${MOSQUITTO_INCLUDE_DIRS} ${OPEN62541_INCLUDE_DIRS})
 
-if(BUILD_GUI)
-  set(WTSN_UI_SOURCES
-    src/ui/ui.c
-    src/ui/sdl_driver.c
-    src/ui/widgets/theme.c
-    src/ui/pages/dashboard_page.c
-    src/ui/pages/default_pages.c
-    src/ui/pages/trace_page.c
-  )
-  add_executable(wtsn-configurator src/app/main_gui.c ${WTSN_UI_SOURCES})
-  target_link_libraries(wtsn-configurator PRIVATE wtsn-core SQLite::SQLite3
-    ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads
-    ${LVGL_LIBRARIES} ${SDL2_LIBRARIES} ${LVGL_PRIVATE})
-  target_include_directories(wtsn-configurator PRIVATE
-    ${MOSQUITTO_INCLUDE_DIRS} ${OPEN62541_INCLUDE_DIRS} ${LVGL_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
-else()
-  message(WARNING "lvgl not found (BUILD_GUI); building CLI only. "
-                  "Install LVGL or set BUILD_GUI=OFF.")
-endif()
+
 
 add_executable(wtsn-tests src/app/test_main.c)
 target_link_libraries(wtsn-tests PRIVATE wtsn-core SQLite::SQLite3
