@@ -26,7 +26,7 @@ static void dashboard_activate(wtsn_view *self) {
     lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_layout(row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_bg_color(row, lv_color_transparent(), 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
 
     char buf[128];

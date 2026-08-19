@@ -1,6 +1,8 @@
 #include "ui/ui.h"
 #include "ui/pages/pages.h"
 #include "ui/widgets/theme.h"
+#include "ui/driver.h"
+#include "mvc/controller.h"
 
 #include <lvgl/lvgl.h>
 #include <stdlib.h>
@@ -46,6 +48,7 @@ static void build_nav(lv_obj_t *parent) {
 int wtsn_ui_run(wtsn_app *app) {
     lv_init();
     wtsn_theme_apply();
+    wtsn_ui_driver_init(1280, 800);
 
     g_ui.app = app;
     g_ui.controller = wtsn_controller_create();
@@ -83,6 +86,7 @@ int wtsn_ui_run(wtsn_app *app) {
     if (v && v->activate) v->activate(v);
 
     while (1) {
+        wtsn_ui_driver_pump();
         lv_timer_handler();
         lv_delay_ms(16);
     }
