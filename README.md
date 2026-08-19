@@ -46,6 +46,8 @@ sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev libopen62
 
 > **Real OPC UA PubSub:** requires open62541 built with `UA_ENABLE_PUBSUB` and the project built with `-DWTSN_ENABLE_PUBSUB=ON`. Without it, a simulated PubSub backend is used instead.
 
+> **Build requirements:** cmake, a C11 compiler (gcc/clang), SQLite3, mosquitto, open62541 (>= 1.3). If you do not have root, you can install all dependencies locally (`$HOME/local`) and point CMake/pkg-config at them — see [docs/BUILD.md](docs/BUILD.md).
+
 ---
 
 ## How to build & run
@@ -197,10 +199,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   plugins, CLI, tests) is implemented.
 - The GUI is optional and only built when LVGL is detected. It includes a **Trace**
   page for live communication monitoring.
-- Real OPC UA PubSub requires open62541 built with `UA_ENABLE_PUBSUB` and
-  `-DWTSN_ENABLE_PUBSUB=ON`; otherwise the simulated backend is used.
-- The project has not yet been through a full CI build on a Linux machine — it is
-  a scaffold. Run `./build/wtsn-tests` first after cloning.
+- **Real OPC UA PubSub is implemented and working** (UADP/ UDP multicast to
+  `opc.udp://239.255.0.1:4840/`): the `pubsub_opcua.c` backend creates the full
+  writer chain (variables → PublishedDataSet → DataSetFields → WriterGroup →
+  DataSetWriter) and publishes dataset snapshots. Build with `-DWTSN_ENABLE_PUBSUB=ON`
+  against an open62541 compiled with `UA_ENABLE_PUBSUB`; otherwise the simulated
+  (loopback) backend is used automatically as a fallback.
+- The project has been built with GCC on Linux and the full test suite (`wtsn-tests`)
+  passes; the CLI, node simulator and node agent all run headless.
 
 ---
 

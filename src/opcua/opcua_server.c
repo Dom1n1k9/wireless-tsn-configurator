@@ -8,6 +8,9 @@
 
 #include <open62541/server.h>
 #include <open62541/server_config_default.h>
+#ifdef UA_ENABLE_PUBSUB
+#include <open62541/plugin/pubsub_udp.h>
+#endif
 
 #define OPCUA_MAX_DEVICES 128
 
@@ -36,22 +39,24 @@ void wtsn_opcua_server_destroy(wtsn_opcua_server *s) {
 
 wtsn_error wtsn_opcua_server_start(wtsn_opcua_server *s, uint16_t port) {
     if (!s || s->server) return WTSN_ERR_INVALID_ARG;
-    UA_ServerConfig *config = UA_ServerConfig_new_default();
-    if (!config) return WTSN_ERR_NO_MEMORY;
-    config->networkLayers = (UA_ServerNetworkLayer *)UA_malloc(
-        sizeof(UA_ServerNetworkLayer));
-    config->networkLayers[0] = UA_ServerNetworkLayerTCP(
-        UA_ServerNetworkLayerTCP_Default, port);
-    config->networkLayers_size = 1;
+    UA_ServerConfig config;
+    memset(&config, 0, sizeof(config));
+    UA_ServerConfig_setBasics(&config);
+    UA_ServerConfig_addNetworkLayerTCP(&config, port, 0, 0);
+    UA_ServerConfig_addEndpoint(&config, UA_STRING("http://opcfoundation.org/UA/SecurityPolicy#None"),
+                             UA_MESSAGESECURITYMODE_NONE);
+#ifdef UA_ENABLE_PUBSUB
+    UA_ServerConfig_addPubSubTransportLayer(&config, UA_PubSubTransportLayerUDPMP());
+#endif
 
-    UA_Server *server = UA_Server_newWithConfig(config);
+    UA_Server *server = UA_Server_newWithConfig(&config);
     if (!server) return WTSN_ERR_NO_MEMORY;
     s->server = server;
     s->port = port;
 
     /* Namespace for the WTSN data model */
-    UA_String nsUri = UA_STRING("urn:wtsn:configurator");
-    s->ns = UA_Server_addNamespace(server, nsUri, NULL);
+    const char *nsUri = "urn:wtsn:configurator";
+    s->ns = UA_Server_addNamespace(server, nsUri);
 
     wtsn_log(WTSN_LOG_INFO, "opc ua server on port %u ns=%u", port, s->ns);
     return WTSN_OK;
@@ -74,11 +79,12 @@ wtsn_error wtsn_opcua_server_add_device(wtsn_opcua_server *s, const wtsn_device 
     wtsn_strlcpy(m->device_id, dev->id, sizeof(m->device_id));
 
     UA_ObjectAttributes oattr = UA_ObjectAttributes_default;
-    oattr.displayName = UA_LOCALIZED_TEXT((char *)"", (char *)dev->name);
+    oattr.displayName = UA_LOCALIZEDTEXT_ALLOC("", dev->name);
     UA_NodeId parent = UA_NODEID_NUMERIC(UA_NS0ID_OBJECTSFOLDER, 0);
     UA_NodeId parentRef = UA_NODEID_NUMERIC(UA_NS0ID_ORGANIZES, 0);
+    UA_QualifiedName browseName = UA_QUALIFIEDNAME(s->ns, (char *)dev->id);
     UA_StatusCode rc = UA_Server_addObjectNode(s->server, UA_NODEID_NULL, parent,
-        parentRef, UA_NODEID_NUMERIC(UA_NS0ID_FOLDER_TYPE, 0), oattr, NULL, &m->node);
+        parentRef, browseName, UA_NODEID_NUMERIC(UA_NS0ID_FOLDERTYPE, 0), oattr, NULL, &m->node);
     return rc == UA_STATUSCODE_GOOD ? WTSN_OK : WTSN_ERR_IO;
 }
 

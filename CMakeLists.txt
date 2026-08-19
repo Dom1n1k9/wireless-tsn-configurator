@@ -28,6 +28,8 @@ pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
 pkg_check_modules(OPEN62541 REQUIRED open62541)
 pkg_check_modules(LVGL QUIET lvgl)
 
+link_directories(${MOSQUITTO_LIBRARY_DIRS} ${OPEN62541_LIBRARY_DIRS})
+
 find_package(Threads REQUIRED)
 
 set(WTSN_SOURCES

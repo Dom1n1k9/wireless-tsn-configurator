@@ -8,6 +8,22 @@ sudo apt install -y build-essential cmake libsqlite3-dev \
   libmosquitto-dev libopen62541-dev
 ```
 
+### Without root: build dependencies into `$HOME/local`
+
+The project builds with GCC; you only need cmake to configure and the three run-time
+libraries (SQLite3, mosquitto, open62541). When you cannot `apt install` (no sudo),
+build them into `$HOME/local` and point the build at them:
+
+```bash
+export PKG_CONFIG_PATH=$HOME/local/lib/pkgconfig
+export LD_LIBRARY_PATH=$HOME/local/lib
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=$HOME/local \
+  -DWTSN_ENABLE_PUBSUB=ON
+cmake --build build -- -j$(nproc)
+```
+
 ## Configure and build
 
 ```bash
@@ -15,6 +31,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -- -j$(nproc)
 ./build/wtsn-configurator
 ```
+
+> **Important:** cmake and the three libraries must be on `PATH`/`LD_LIBRARY_PATH` at
+> run time if installed locally (`export LD_LIBRARY_PATH=$HOME/local/lib`).
 
 ## Options
 

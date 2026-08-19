@@ -28,7 +28,7 @@ static const char *SCHEMA =
     "  id TEXT PRIMARY KEY, name TEXT, cycle_time_ns INTEGER, deploy_target TEXT"
     ");"
     "CREATE TABLE IF NOT EXISTS gcl_entries ("
-    "  schedule_id TEXT, index INTEGER, gate_state TEXT, duration_ns INTEGER,"
+    "  schedule_id TEXT, \"index\" INTEGER, gate_state TEXT, duration_ns INTEGER,"
     "  FOREIGN KEY(schedule_id) REFERENCES tas_schedules(id)"
     ");"
     "CREATE TABLE IF NOT EXISTS timesync_status ("

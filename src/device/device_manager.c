@@ -1,6 +1,7 @@
 #include "device/device_manager.h"
 
 #include "common/log.h"
+#include "mvc/model.h"
 
 #include <stdio.h>
 #include <stdlib.h>

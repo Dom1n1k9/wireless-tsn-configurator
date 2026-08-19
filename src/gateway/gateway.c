@@ -25,7 +25,7 @@ static void route_message(const char *topic, const char *payload, size_t len, vo
     if (!topic) return;
     for (size_t i = 0; i < gw->map_count; i++) {
         if (strcmp(topic, gw->maps[i].mqtt_topic) == 0 ||
-            strcmp(gw->maps[i].mqtt_topic, WTSN_GATEWAY_TOPIC_ALL) == 0) {
+            strcmp(gw->maps[i].mqtt_topic, WTSN_GATEWAY_TOPIC_ALLOW) == 0) {
             wtsn_log(WTSN_LOG_INFO, "gateway route %s -> %s", topic, gw->maps[i].opcua_path);
         }
     }
