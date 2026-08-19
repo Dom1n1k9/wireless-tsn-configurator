@@ -74,6 +74,14 @@ wtsn_error wtsn_trace_add_config(wtsn_trace *t, const char *source, const char *
     return WTSN_OK;
 }
 
+wtsn_error wtsn_trace_add_multicast(wtsn_trace *t, const char *source, const char *group, const char *msg) {
+    if (!t || !msg) return WTSN_ERR_INVALID_ARG;
+    char line[WTSN_TRACE_LINE];
+    snprintf(line, sizeof(line), "FX mcast -> %s: %s", group ? group : "?", msg);
+    push(t, WTSN_TRACE_MULTICAST, source, line);
+    return WTSN_OK;
+}
+
 wtsn_trace_entry *wtsn_trace_entry_at(wtsn_trace *t, int index) {
     if (!t || index < 0 || index >= t->count) return NULL;
     int idx = (t->head - 1 - index + WTSN_TRACE_MAX) % WTSN_TRACE_MAX;

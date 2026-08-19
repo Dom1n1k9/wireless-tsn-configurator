@@ -89,6 +89,20 @@ wtsn_error wtsn_agent_handle_command(wtsn_agent *a, const char *command, const c
     } else if (strcmp(command, "status") == 0) {
         if (a->mqtt) wtsn_mqtt_client_publish(a->mqtt, "tsn/status", a->device_id);
         return WTSN_OK;
+    } else if (strcmp(command, "fx") == 0) {
+        /* OPC UA FX wireless multicast: publish a dataset into the shared group */
+        const char *group = token_at(payload, 0);
+        if (!group[0]) group = "239.255.0.1";
+        const char *dataset = token_at(payload, 1);
+        if (!dataset[0]) dataset = "wtsnData";
+        if (a->platform == AGENT_PLATFORM_LINUX ||
+            a->platform == AGENT_PLATFORM_RASPBERRY_PI) {
+            return agt_linux_send_fx_multicast(a->state, group,
+                (const unsigned char *)dataset, strlen(dataset));
+        }
+        wtsn_log(WTSN_LOG_INFO, "[%s] fx multicast to group %s dataset %s",
+                 a->platform_str, group, dataset);
+        return WTSN_OK;
     }
     return WTSN_ERR_NOT_FOUND;
 }

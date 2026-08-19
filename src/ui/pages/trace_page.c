@@ -18,6 +18,7 @@ static lv_color_t entry_color(wtsn_trace_type type) {
     case WTSN_TRACE_COMM: return g_theme.secondary;
     case WTSN_TRACE_FRAME: return g_theme.primary;
     case WTSN_TRACE_CONFIG: return g_theme.success;
+    case WTSN_TRACE_MULTICAST: return g_theme.warn;
     default: return g_theme.text_dim;
     }
 }

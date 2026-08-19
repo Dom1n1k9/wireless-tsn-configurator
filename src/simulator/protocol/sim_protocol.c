@@ -25,6 +25,8 @@ struct sim_mqtt {
     char host[128];
     int port;
     bool connected;
+    sim_mcast_cb mcast_cb;
+    void *mcast_ud;
 };
 
 struct sim_opcua {
@@ -159,5 +161,29 @@ sim_error sim_opcua_start(sim_opcua *o, int base_port) {
 
 sim_error sim_opcua_update(sim_opcua *o) {
     (void)o;
+    return SIM_OK;
+}
+
+void sim_mqtt_set_fx_multicast_cb(sim_mqtt *m, sim_mcast_cb cb, void *ud) {
+    if (!m) return;
+    m->mcast_cb = cb;
+    m->mcast_ud = ud;
+}
+
+sim_error sim_mqtt_publish_fx_multicast(sim_mqtt *m, const char *node_id, const char *dataset) {
+    if (!m || !node_id || !dataset) return SIM_ERR_INVALID_ARG;
+    /*
+     * OPC UA FX / wireless multicast.
+     * All nodes share the multicast group 239.255.0.1:4840 (UA-DP). The
+     * publisher stamps the node id + dataset name into the group and every member
+     * "receives" it - here that spread is modelled and logged per node so the
+     * configurator's monitoring can capture it. In a real deployment this payload
+     * goes out over UDP multicast with the UA PubSub encoding (JSON/Field
+     * encoding); the network join is handled by the OS multicast socket.
+     */
+    const char *group = "239.255.0.1:4840";
+    if (m->mcast_cb) m->mcast_cb(node_id, group, dataset, m->mcast_ud);
+    sim_log(SIM_LOG_INFO, "FX mcast -> group %s node %s dataset %s",
+            group, node_id, dataset);
     return SIM_OK;
 }

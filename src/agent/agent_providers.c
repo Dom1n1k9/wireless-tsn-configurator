@@ -7,6 +7,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
 
 /* ---------------- Linux / Raspberry Pi adapter ---------------- */
 
@@ -80,6 +89,36 @@ static wtsn_error linux_send(void *state, const char *topic, const unsigned char
         buf[len] = '\0';
     }
     return WTSN_OK;
+}
+
+/* OPC UA FX / wireless multicast: send a dataset to the shared UA-DP group
+   over a real UDP multicast socket. Default WTSN group 239.255.0.1:4840. */
+wtsn_error agt_linux_send_fx_multicast(void *state, const char *group,
+                                      const unsigned char *data, size_t len) {
+    (void)state;
+    if (!group) return WTSN_ERR_INVALID_ARG;
+#ifdef _WIN32
+    (void)data; (void)len;
+    return WTSN_ERR_NOT_IMPLEMENTED;
+#else
+    /* real POSIX multicast send */
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return WTSN_ERR_IO;
+    struct sockaddr_in sin;
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(4840);
+    if (inet_pton(AF_INET, group, &sin.sin_addr) != 1 ||
+        !IN_MULTICAST(ntohl(sin.sin_addr.s_addr))) {
+        close(fd);
+        return WTSN_ERR_INVALID_ARG;
+    }
+    unsigned char ttl = 1;
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+    ssize_t n = sendto(fd, data, len, 0, (struct sockaddr *)&sin, sizeof(sin));
+    close(fd);
+    return n >= 0 ? WTSN_OK : WTSN_ERR_IO;
+#endif
 }
 
 static wtsn_error linux_init(void *state) {

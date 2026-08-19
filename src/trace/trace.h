@@ -11,7 +11,8 @@
 typedef enum {
     WTSN_TRACE_COMM = 0,
     WTSN_TRACE_FRAME,
-    WTSN_TRACE_CONFIG
+    WTSN_TRACE_CONFIG,
+    WTSN_TRACE_MULTICAST
 } wtsn_trace_type;
 
 typedef struct {
@@ -29,6 +30,7 @@ void wtsn_trace_destroy(wtsn_trace *t);
 wtsn_error wtsn_trace_add_comm(wtsn_trace *t, const char *source, const char *msg);
 wtsn_error wtsn_trace_add_frame(wtsn_trace *t, const char *source, const unsigned char *bytes, size_t len);
 wtsn_error wtsn_trace_add_config(wtsn_trace *t, const char *source, const char *what);
+wtsn_error wtsn_trace_add_multicast(wtsn_trace *t, const char *source, const char *group, const char *msg);
 
 wtsn_trace_entry *wtsn_trace_entry_at(wtsn_trace *t, int index);
 int wtsn_trace_count(wtsn_trace *t);

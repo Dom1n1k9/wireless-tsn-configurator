@@ -8,6 +8,9 @@
 agent_platform_ops agt_linux_ops(void);
 void *agt_linux_state_create(wtsn_mqtt_client *mqtt);
 
+wtsn_error agt_linux_send_fx_multicast(void *state, const char *group,
+                                       const unsigned char *data, size_t len);
+
 /* Embedded platforms: ESP32 / STM32 / NXP - compile-safe stubs that log.
    Real implementation would drive ESP-IDF / Zephyr / vendor SDK TSN blocks. */
 agent_platform_ops agt_embedded_ops(agent_platform p);

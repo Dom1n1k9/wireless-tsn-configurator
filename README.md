@@ -92,8 +92,38 @@ A **MQTT over OPC UA PubSub gateway** (`src/gateway/gateway_pubsub.c`)
 bidirectionally converts MQTT topics into OPC UA PubSub datasets and back.
 
 A **communication trace** (`src/trace/trace.c` + the **Trace** page in the GUI)
-logs every real and simulated communication event, raw frames and configuration
-changes live inside the application.
+logs every real and simulated communication event, raw frames, configuration
+changes and FX multicast messages live inside the application.
+
+## OPC UA FX / wireless multicast
+
+All W-TSN members (real nodes via the agent, or simulated nodes) join a **shared
+OPC UA FX multicast group** (`239.255.0.1:4840`, UA-DP transport). A publisher
+spreads a dataset to every member of the group directly over UDP without an MQTT
+broker.
+
+- **Simulated** - `tsn-node-simulator` models the multi-node group and logs each
+  FX multicast send (`src/simulator/protocol/sim_protocol.c`).
+- **Real** - `tsn-node-agent` (`--platform linux|raspberry_pi`) sends datasets
+  into the group over a real UDP multicast socket (`agt_linux_send_fx_multicast`).
+- **Monitoring** - each FX multicast message appears in the **Trace** page as a
+  multicast entry (amber).
+
+---
+
+## TSN Node Firmware Agent
+
+`tsn-node-agent` runs on physical devices and executes commands from the configurator via
+MQTT / OPC UA:
+
+```bash
+cmake --build build --target tsn-node-agent
+./build/tsn-node-agent --id node-01 --platform linux --mqtt-host broker.local
+```
+
+Supported commands over `tsn/cmd/<device>`: `qos`, `vlan`, `timesync`,
+`tas`, `status` and `fx` (FX multicast). Linux/Raspberry Pi apply QoS/VLAN via
+`iproute2`+`tc`; ESP32/STM32/NXP ship as compile-safe embedded adapters.
 
 ---
 

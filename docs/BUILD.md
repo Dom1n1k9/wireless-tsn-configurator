@@ -35,6 +35,24 @@ cmake --build build -- -j$(nproc)
 ./build/wtsn-configurator --headless --db ./cfg.db
 ```
 
+## TSN node firmware agent
+
+```bash
+cmake --build build --target tsn-node-agent
+./build/tsn-node-agent --id node-01 --platform linux --mqtt-host localhost --mqtt-port 1883
+```
+
+| Option         | Description                          |
+|----------------|--------------------------------------|
+| `--id`         | Device id reported to the configurator |
+| `--platform`   | `linux`, `raspberry_pi`, `esp32`, `stm32`, `nxp` |
+| `--mqtt-host`  | Configurator / broker host (default `localhost`) |
+| `--mqtt-port`  | MQTT port (default 1883)            |
+
+The Linux/Raspberry Pi adapter applies QoS/VLAN via `iproute2`+`tc` and maps
+time sync to `ptp4l`/`phc2sys`. The ESP32/STM32/NXP adapters are
+compile-safe stubs ready to be filled with the vendor SDK.
+
 ## Tests
 
 ```bash
