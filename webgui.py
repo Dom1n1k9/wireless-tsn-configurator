@@ -21,7 +21,7 @@ PORT = int(os.environ.get("WTSN_PORT", "8000"))
 
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
           "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
-          "sensors", "settings"]
+          "sensors", "preemption_configs", "settings"]
 
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
@@ -29,6 +29,8 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
     "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
     "INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,preemption INTEGER);"
+    "CREATE TABLE IF NOT EXISTS preemption_configs(device_id TEXT PRIMARY KEY,preemption "
+    "INTEGER,emac TEXT,pmac TEXT);"
     "CREATE TABLE IF NOT EXISTS vlan_groups(id TEXT PRIMARY KEY,name TEXT,vlan_id INTEGER);"
     "CREATE TABLE IF NOT EXISTS vlan_members(group_id TEXT,device_id TEXT);"
     "CREATE TABLE IF NOT EXISTS tas_schedules(id TEXT PRIMARY KEY,name TEXT,cycle_time_ns "
@@ -96,7 +98,7 @@ def sim_tick():
     try:
         for t in ["devices", "qos_configs", "vlan_groups", "vlan_members",
                   "tas_schedules", "gcl_entries", "timesync_status", "sensors",
-                  "device_tsn_features"]:
+                  "device_tsn_features", "preemption_configs"]:
             con.execute("DELETE FROM %s" % t)
         n = random.randint(3, 6)
         devs = []
@@ -120,7 +122,10 @@ def sim_tick():
                         "bandwidth_kbps,latency_ms,preemption) VALUES(?,?,?,?,?,?)",
                         (did, random.randint(0, 7), random.randint(0, 3),
                          random.randint(1000, 50000), random.randint(1, 8),
-                         random.randint(0, 2)))
+                         random.randint(0, 1)))
+            con.execute("INSERT OR REPLACE INTO preemption_configs(device_id,preemption,emac,pmac)"
+                        " VALUES(?,?,?,?)",
+                        (did, random.randint(0, 1), "7,6,5", "3,2,1,0"))
             for sid, typ, unit in (("temp1", 0, "C"), ("press1", 1, "hPa"),
                                    ("imu1", 2, "g"), ("gpio1", 4, "V")):
                 if random.random() < 0.7:
@@ -244,6 +249,19 @@ def run_action(act, body):
             con.execute("DELETE FROM qos_configs WHERE device_id=?", (body.get("device_id"),))
             con.commit()
             return {"ok": True, "msg": "QoS deleted"}
+        if act == "save_preemption":
+            e = body.get("emac") or ""
+            p = body.get("pmac") or ""
+            if body.get("preemption", 0) == 0:
+                e = p = ""
+            con.execute("INSERT OR REPLACE INTO preemption_configs(device_id,preemption,"
+                        "emac,pmac) VALUES(?,?,?,?)",
+                        (body.get("device_id"), clamp(body.get("preemption", 0), 0, 1),
+                         e, p))
+            con.commit()
+            add_event("config", "cnc", "preemption %s -> %s (eMAC [%s] pMAC [%s])" %
+                     (body.get("device_id"), body.get("preemption"), e, p))
+            return {"ok": True, "msg": "Preemption saved"}
         if act == "save_vlan":
             vlan = clamp(body.get("vlan_id", 1), 1, 4094)
             gid = body.get("id") or ("grp%d" % vlan)
@@ -288,11 +306,21 @@ def run_action(act, body):
                         (clamp(body.get("mode", 0), 0, 3), body.get("grandmaster", ""),
                          clamp(body.get("offset_ns", 0), -(10**12), 10**12),
                          clamp(body.get("quality", 0), 0, 100)))
+            con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('sync_nodes',?)",
+                        (",".join(body.get("nodes") or []),))
             con.commit()
             return {"ok": True, "msg": "Time sync saved"}
+        if act == "exec_all":
+            svr = dict((r["key"], r["value"])
+                       for r in con.execute("SELECT key,value FROM settings"))
+            target = svr.get("server_id", "") or (svr.get("server_type", "pc"))
+            add_event("config", "cnc", "EXECUTING settings on controller/server=" + str(target))
+            for r in con.execute("SELECT id FROM devices"):
+                add_event("fxmqtt", r["id"], "tsn/fx/node/%s <- config applied" % r["id"])
+            return {"ok": True, "msg": "Settings executed on controller"}
         if act == "fx_send":
-            add_event("fx", body.get("source", "cnc"), "FX multicast 239.255.0.1:4840: " +
-                     body.get("msg", ""))
+            add_event("fx", body.get("source", "cnc"),
+                     "tsn/fx/field <- " + body.get("msg", ""))
             return {"ok": True, "msg": "FX sent"}
         if act == "clear_events":
             EVENTS.clear()
@@ -364,14 +392,22 @@ header{display:flex;align-items:center;gap:14px;padding:0 16px;height:54px;backg
 header .logo{font-weight:700;font-size:16px;color:var(--pri)}
 header .sub{color:var(--dim);font-size:12px}
 .spacer{flex:1}
+.muted{color:var(--dim);font-size:13px}
 .mode{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .mode button{padding:7px 14px;background:none;color:var(--dim);border:none;cursor:pointer;font-size:13px}
 .mode button.on{background:var(--pri);color:#fff}
 .wrap{display:flex;flex:1;overflow:hidden}
-nav{width:180px;background:var(--surf);border-right:1px solid var(--border);padding:8px 0;overflow:auto;flex-shrink:0}
-nav button{display:block;width:100%;padding:11px 14px;background:none;border:none;color:var(--dim);text-align:left;font-size:14px;cursor:pointer}
+nav{width:200px;background:var(--surf);border-right:1px solid var(--border);padding:8px 0;overflow:auto;flex-shrink:0}
+nav button{display:block;width:100%;padding:10px 14px;background:none;border:none;color:var(--dim);text-align:left;font-size:14px;cursor:pointer}
 nav button.on{color:var(--text);background:var(--surf2);border-left:3px solid var(--pri)}
-main{flex:1;overflow:auto;padding:18px}
+.navgroup{margin-bottom:4px}
+.navtitle{color:var(--sec);font-size:11px;font-weight:700;letter-spacing:.04em;padding:10px 14px 4px;text-transform:uppercase}
+main{flex:1;overflow:auto;padding:18px;padding-bottom:90px}
+#execbar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surf);border-top:1px solid var(--sec);padding:10px 16px}
+#execbar h3{margin:0 0 8px;color:var(--sec);font-size:13px}
+button.big{width:100%;font-size:14px;padding:11px;background:var(--sec);color:#04121c;font-weight:700}
+label.ck{width:auto;display:inline-flex;align-items:center;gap:4px;margin:4px 8px 0 0;color:var(--text)}
+label.ck input{width:auto}
 h2{margin:0 0 12px;font-size:18px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .stat{border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--surf)}
@@ -396,17 +432,18 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <span class="mode"><button id="md_real" onclick="setMode('real')">Real</button><button id="md_sim" class="on" onclick="setMode('sim')">Simulation</button></span>
 </header>
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
+<div id="execbar"><h3>Controller / FXMQTT target</h3><button class="big" onclick="execAll()">Execute settings on controller</button></div>
 <div id="toast"></div>
 <script>
-const PAGES=["dashboard","devices","qos","vlan","tas","timesync","fxmqtt","monitor","sensors","settings"];
+const NAV=[["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","VLAN ID"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["OPC UA FX over MQTT",[["fxmqtt","OPC UA FX Config"]]],["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"],["settings","Settings"]]]];
 let D={};
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 async function api(a,d){const r=await fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:a,data:d})});const j=await r.json();toast(j.msg,j.ok);return j}
 function toast(m,ok){const t=$("toast");t.style.display="block";t.style.borderColor=ok?"var(--sec)":"var(--err)";t.textContent=m;clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",2200)}
-async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go("dashboard")}
+async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go("qos")}
 function renderNav(){const n=$("nav");n.innerHTML="";
- PAGES.forEach(p=>{const b=document.createElement("button");b.textContent=p;b.onclick=()=>go(p);b.id="nv_"+p;n.appendChild(b)});
+ NAV.forEach(g=>{if(g[0]){const h=document.createElement("div");h.className="navgroup";n.appendChild(h);const t=document.createElement("div");t.className="navtitle";t.textContent=g[0];h.appendChild(t)}const cont=g[1];cont.forEach(pp=>{const b=document.createElement("button");b.textContent=pp[1];b.onclick=()=>go(pp[0]);b.id="nv_"+pp[0];(g[0]?n.lastElementChild:n).appendChild(b)})});
  $("md_real").className=D.mode==="real"?"on":"";$("md_sim").className=D.mode==="sim"?"on":""}
 function setMode(m){api("set_mode",{mode:m}).then(load)}
 function stat(l,v){return "<div class='stat'><div class='l'>"+l+"</div><div class='v'>"+v+"</div></div>"}
@@ -414,69 +451,85 @@ function types(d){return (D.device_tsn_features||[]).filter(f=>f.device_id==d).m
 function tsnOpts(gm){return D.devices.map(d=>"<label><input type=checkbox value='"+esc(d.id)+"' "+(d.id==gm?"checked":"")+"> GM:"+esc(d.id)+"</label>").join("")}
 function go(p){document.querySelectorAll("#nav button").forEach(b=>b.className=b.id==="nv_"+p?"on":"");
  const m=$("main");
- if(p==="dashboard")m.innerHTML=dash();
- else if(p==="devices")m.innerHTML=devices();
+ if(p==="devices")m.innerHTML=devices();
  else if(p==="qos")m.innerHTML=qos();
  else if(p==="vlan")m.innerHTML=vlan();
  else if(p==="tas")m.innerHTML=tas();
+ else if(p==="preemption")m.innerHTML=preemption();
  else if(p==="timesync")m.innerHTML=timesync();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
  else if(p==="sensors")m.innerHTML=sensors();
- else if(p==="settings")m.innerHTML=settings()}
-function dash(){const on=D.devices.filter(d=>d.status==0).length;
- return "<h2>Dashboard</h2><div class='grid'>"+stat("Devices",D.devices.length)+stat("Online",on)+
- stat("VLAN",D.vlan_groups.length)+stat("TAS",D.tas_schedules.length)+
- stat("Sensors",D.sensors.length)+stat("Mode",D.mode)+"</div>"+
- "<div class='card'><h3>Network</h3>FX over MQTT (OPC UA FX / C2C Field Exchange) carried on the MQTT broker.<br>"+
- (D.mode==="sim"?"In <b>Simulation</b> mode you can configure and see live frame flow without hardware.":
- "In <b>Real</b> mode the configurator waits for real TSN nodes (ESP32/RPi/STM32/NXP/Linux) and their sensors.")+"</div>"}
-function devices(){let rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td class='"+(d.status==0?"":"")+"'>"+["online","offline","error"][d.status]||d.status+"</td><td>"+esc(d.ip)+"</td><td>"+esc(d.firmware)+"</td><td>"+esc(types(d.id))+"</td><td><button class='ghost' onclick='loadDev(\""+esc(d.id)+"\")'>edit</button></td></tr>").join("");
- let opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
- return "<h2>Devices</h2><div class='card'><h3>Add / edit TSN device</h3>"+
- "<div class='row'><label>id</label><input id=did><span class='row'><label>name</label><input id=dname></span></div>"+
- "<div class='row'><label>ip</label><input id=dip><span class='row'><label>firmware</label><input id=dfw></span></div>"+
- "<div class='row'><label>kind</label><select id=dkind><option value=0>Generic</option><option value=1>ESP32</option><option value=2>Raspberry Pi</option><option value=3>STM32</option></select></div>"+
- "<h3>TSN functions</h3>"+["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","FXMQTT"].map(f=>"<label><input type=checkbox id=fn_"+esc(f.split(' ')[0].replace(/[^A-Za-z0-9]/g,''))+"> "+f+"</label>").join("")+
- "<div><button onclick='saveDev()'>Save</button></div></div>"+
- "<h3>Grandmaster / Slaves</h3><div class='card'><div class='row'><label>set as GM</label><select id=gm_sel><option value=''>-</option>"+opts+"</select>"+
- "<button onclick=gmSet()>Apply</button></div></div>"+
- "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>tsn</th><th></th></tr>"+rows+"</table>"}
-function fnIds(){const map={"802":["802","802","gPTP","802","802","FX"]};return ["802","802","gPTP","802","802","FX"]}
-function loadDev(id){const d=D.devices.find(x=>x.id==id);if(!d)return;$("did").value=d.id;$("dname").value=d.name;$("dip").value=d.ip;$("dfw").value=d.firmware;$("dkind").value=d.kind}
-function saveDev(){const fns=fnIds().map((k,i)=>document.getElementById("fn_"+k)?document.getElementById("fn_"+k).checked:false);
- const tsn=["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","FXMQTT"].filter((x,i)=>fns[i]);
- api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:$("dfw").value,kind:parseInt($("dkind").value),status:0,tsn:tsn}})}
-function gmSet(){const sel=$("gm_sel");if(sel.value)api("set_role",{id:sel.value,role:"grandmaster"})}
-function qos(){let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>"+q.priority+"</td><td>"+q.bandwidth_kbps+"</td><td>"+q.latency_ms+" ms</td><td>"+q.preemption+"</td></tr>").join("");
+ else if(p==="settings")m.innerHTML=settings();
+ showExec()}
+function showExec(){const c=document.getElementById("execbar");if(c)c.style.display=$("main").innerHTML?"block":"none"}
+function execAll(){api("exec_all",{}).then(load)}
+function devices(){
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
- return "<h2>QoS (IEEE 802.1Q) — priority 0-7</h2><div class='card'><div class='row'><label>device</label><select id=q_dev><option value=''>-</option>"+opts+"</select></div>"+
- "<div class='row'><label>priority 0-7</label><input id=q_prio type=number min=0 max=7 value=5></div>"+
- "<div class='row'><label>bandwidth kbps</label><input id=q_bw type=number value=1000></div>"+
- "<div class='row'><label>latency ms</label><input id=q_lat type=number value=2></div>"+
- "<div class='row'><label>traffic class</label><select id=q_tc><option value=1>Audio/Video</option><option value=2>Controlled</option><option value=3>Critical</option><option value=0>Best effort</option></select></div>"+
- "<div class='row'><label>preemption</label><select id=q_pre><option value=0>off</option><option value=1>express</option><option value=2>on</option></select></div>"+
- "<button onclick=saveQ()>Save QoS</button></div><table><tr><th>device</th><th>prio</th><th>bw</th><th>lat</th><th>pre</th></tr>"+rows+"</table>"}
-function saveQ(){api("save_qos",{device_id:$("q_dev").value,priority:parseInt($("q_prio").value),traffic_class:0,bandwidth_kbps:parseInt($("q_bw").value),latency_ms:parseInt($("q_lat").value),preemption:parseInt($("q_pre").value)})}
+ const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+["online","offline","error"][d.status]||d.status+"</td><td>"+esc(d.ip)+"</td><td>"+esc(d.firmware)+"</td><td>"+esc((D.device_tsn_features||[]).filter(f=>f.device_id==d.id).map(f=>f.feature).join(", "))+"</td></tr>").join("");
+ return "<h2>Devices</h2><div class='card'><h3>Add TSN device</h3>"+
+  "<div class='row'><label>id</label><input id=did><span class='row'><label>name</label><input id=dname></span></div>"+
+  "<div class='row'><label>ip</label><input id=dip><span class='row'><label>firmware</label><input id=dfw></span></div>"+
+  "<div class='row'><label>kind</label><select id=dkind><option value=0>Generic</option><option value=1>ESP32</option><option value=2>Raspberry Pi</option><option value=3>STM32</option></select></div>"+
+  "<button onclick=saveDev()>Add Device</button></div>"+
+  "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>tsn</th></tr>"+rows+"</table>"}
+function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:$("dfw").value,kind:parseInt($("dkind").value),status:0,tsn:[]}})}
+const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
+function qos(){const def=(D.qos_configs[0]||{}).priority;
+ let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.bandwidth_kbps+"</td><td>"+q.latency_ms+" ms</td></tr>").join("");
+ const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
+ const prio=PRIOS.map(p=>"<option value='"+p[0]+"' "+(String(def)==String(p[0])?"selected":"")+">Priority "+p[0]+" — "+esc(p[1])+"</option>").join("");
+ return "<h2>IEEE 802.1Q — QoS Priority</h2><div class='card'>"+
+  "<div class='row'><label>device</label><select id=q_dev><option value=''>-</option>"+opts+"</select></div>"+
+  "<div class='row'><label>priority</label><select id=q_prio>"+prio+"</select></div>"+
+  "<div class='row'><label>bandwidth kbps</label><input id=q_bw type=number value=1000></div>"+
+  "<div class='row'><label>latency ms</label><input id=q_lat type=number value=2></div>"+
+  "<button onclick=saveQ()>Save QoS</button></div>"+
+  "<h3>Current settings</h3><div class=card><p class=muted>Traffic class follows the priority automatically. Preemption is configured on the <b>IEEE 802.1Qbu</b> page.</p></div>"+
+  "<table><tr><th>device</th><th>priority</th><th>bw kbps</th><th>latency ms</th></tr>"+rows+"</table>"}
+function saveQ(){const d=$("q_dev").value;const p=parseInt($("q_prio").value);api("save_qos",{device_id:d,priority:p,traffic_class:p,bandwidth_kbps:parseInt($("q_bw").value),latency_ms:parseInt($("q_lat").value),preemption:(D.qos_configs.find(q=>q.device_id==d)||{}).preemption||0})}
 function vlan(){let rows=D.vlan_groups.map(g=>"<tr><td>"+esc(g.id)+"</td><td>"+esc(g.name)+"</td><td>"+g.vlan_id+"</td><td>"+esc((D.vlan_members||[]).filter(x=>x.group_id==g.id).map(x=>x.device_id).join(", "))+"</td></tr>").join("");
  return "<h2>VLAN (IEEE 802.1Q)</h2><div class='card'><div class='row'><label>name</label><input id=v_name></div><div class='row'><label>VLAN ID 1-4094</label><input id=v_id type=number value=100></div><button onclick='api(\"save_vlan\",{id:\"v_\"+Math.random().toString(36).slice(2,6),name:$(\"v_name\").value,vlan_id:parseInt($(\"v_id\").value)})'>Add group</button></div><table><tr><th>id</th><th>name</th><th>vlan</th><th>members</th></tr>"+rows+"</table>"}
 function tas(){let bl=D.tas_schedules.map(s=>{const g=(D.gcl_entries||[]).filter(e=>e.schedule_id==s.id).map(e=>e.gate_state+":"+e.duration_ns).join(", ");return "<div class='card'><h3>"+esc(s.name)+"</h3><div class='row'><label>id</label><span>"+esc(s.id)+"</span></div><div class='row'><label>cycle</label><span>"+s.cycle_time_ns+" ns</span></div><div class='row'><label>deploy</label><span>"+esc(s.deploy_target)+"</span></div><div class='row'><label>GCL</label><span>"+esc(g)+"</span></div></div>"}).join("");
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
  return "<h2>TAS (IEEE 802.1Qbv) — Gate Control List</h2><div class='card'><div class='row'><label>name</label><input id=t_name></div><div class='row'><label>cycle ns</label><input id=t_cyc type=number value=1000000></div><div class='row'><label>deploy target</label><select id=t_dev>"+opts+"</select></div><div class='row'><label>GCL</label><input id=t_gcl value='1:300000,3:200000,0:500000'></div><button onclick=tSave()>Save / Deploy</button></div>"+bl}
 function tSave(){const g=$("t_gcl").value.split(",").map(x=>{const[a,b]=x.split(":");return{gate_state:parseInt(a),duration_ns:parseInt(b)}});api("save_tas",{id:"s",name:$("t_name").value||"schedule",cycle_time_ns:parseInt($("t_cyc").value),deploy_target:$("t_dev").value,gcl:g})}
-function timesync(){const t=D.timesync_status[0]||{};const modes=["disabled","local GM","external GM","auto"];
- return "<h2>Time Sync (gPTP / IEEE 802.1AS)</h2><div class='card'><div class='row'><label>mode</label><select id=ts_mode>"+modes.map((m,i)=>["<option value='"+i+"' "+(String(t.mode)==String(i)?"selected":"")+">"+m+"</option>"].join("")).join("")+"</select></div>"+
- "<div class='row'><label>grandmaster</label><input id=ts_gm value='"+esc(t.grandmaster||"")+"'></div>"+
- "<div class='row'><label>offset ns</label><input id=ts_off type=number value='"+(t.offset_ns||0)+"'></div>"+
- "<div class='row'><label>quality</label><input id=ts_q type=number value='"+(t.quality||0)+"'></div>"+
- "<button onclick='api(\"save_timesync\",{mode:parseInt($(\"ts_mode\").value),grandmaster:$(\"ts_gm\").value,offset_ns:parseInt($(\"ts_off\").value),quality:parseInt($(\"ts_q\").value)})'>Save</button></div>"}
+function preemption(){
+ const rows=(D.preemption_configs||[]).map(p=>"<tr><td>"+esc(p.device_id)+"</td><td>"+(["off","on","on"][p.preemption]||p.preemption)+"</td><td>"+esc(p.emac)+"</td><td>"+esc(p.pmac)+"</td></tr>").join("");
+ const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
+ return "<h2>IEEE 802.1Qbu — Frame Preemption</h2>"+
+  "<div class='card'><div class='row'><label>device</label><select id=pr_dev><option value=''>-</option>"+opts+"</select></div>"+
+  "<div class='row'><label>mode</label><select id=pr_mode onchange=prMode()><option value=0>off (no preemption)</option><option value=1>on</option></select></div>"+
+  "<div id=pr_mac style='display:none'>"+
+  "<div class='row'><label>eMAC priorities</label><input id=pr_emac placeholder='e.g. 7,6,5'></div>"+
+  "<div class='row'><label>pMAC priorities</label><input id=pr_pmac placeholder='e.g. 3,2,1,0'></div></div>"+
+  "<button onclick=savePre()>Save Preemption</button></div>"+
+  "<h3>Current settings</h3><table><tr><th>device</th><th>mode</th><th>eMAC prios</th><th>pMAC prios</th></tr>"+rows+"</table>"}
+function prMode(){const on=$("pr_mode").value=="1";$("pr_mac").style.display=on?"block":"none"}
+function savePre(){const d=$("pr_dev").value;if(!d)return;api("save_preemption",{device_id:d,preemption:parseInt($("pr_mode").value),emac:$("pr_emac").value,pmac:$("pr_pmac").value})}
+function timesync(){const t=(D.timesync_status||[])[0]||{};
+ const modes=["disabled","local GM","external GM","auto"];
+ const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(t.grandmaster==d.id?"selected":"")+">"+esc(d.id)+"</option>").join("");
+ const syncNodes=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};
+ const chosen=(syncNodes.value||gmNodeList()||"").split(",").filter(Boolean);
+ const nodes=D.devices.map(d=>"<label class=ck><input type=checkbox value='"+esc(d.id)+"' "+(chosen.includes(d.id)?"checked":"")+"'> "+esc(d.id)+"</label>").join("");
+ return "<h2>IEEE 802.1AS — gPTP Time Synchronization</h2>"+
+  "<div class='card'><h3>Grandmaster (Sync Master)</h3><div class='row'><label>GM node</label><select id=ts_gm><option value=''>- none -</option>"+opts+"</select></div>"+
+  "<div class='row'><label>mode</label><select id=ts_mode>"+modes.map((m,i)=>["<option value='"+i+"' "+(String(t.mode)==String(i)?"selected":"")+">"+m+"</option>"].join("")).join("")+"</select></div>"+
+  "<div class='row'><label>offset ns</label><input id=ts_off type=number value='"+(t.offset_ns||0)+"'></div>"+
+  "<div class='row'><label>quality</label><input id=ts_q type=number value='"+(t.quality||0)+"'></div></div>"+
+  "<div class='card'><h3>Sync Slave Nodes (follow the GM)</h3>"+(nodes||"<div class='row'>no devices</div>")+"</div>"+
+  "<div class='card'><button class=big onclick=saveTimeSync()>Save 802.1AS Sync</button></div>"}
+function gmNodeList(){return (D.timesync_status||[]).length?D.timesync_status[0].grandmaster:""}
+function saveTimeSync(){const n=[].slice.call(document.querySelectorAll("#main .ck input:checked")).map(c=>c.value);
+ api("save_timesync",{mode:parseInt($("ts_mode").value),grandmaster:$("ts_gm").value,offset_ns:parseInt($("ts_off").value),quality:parseInt($("ts_q").value),nodes:n})}
 function fxmqtt(){
  const srv=(D.settings||[]).find(s=>s.key==="server_type")||{};
  const srvid=(D.settings||[]).find(s=>s.key==="server_id")||{};
  const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
  const isPc=(srv.value||"node")==="pc";
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(srvid.value==d.id?"selected":"")+">"+esc(d.id)+"</option>").join("");
- return "<h2>OPC UA FX over MQTT (PubSub / C2C Field Exchange)</h2><div class='card'><h3>Field Server / Participant</h3>"+
+ return "<h2>OPC UA FX over MQTT — OPC UA FX Config</h2><div class='card'><h3>Field Server / Participant</h3>"+
   "<div class='row'><label>server</label><select id=fs_type><option value='node' "+(isPc?"":"selected")+">Node (device)</option><option value='pc' "+(isPc?"selected":"")+">PC (configurator)</option></select></div>"+
   "<div class='row' id=fs_node_row><label>node</label><select id=fs_node>"+opts+"</select></div>"+
   "<div class='row'><label>broker</label><input id=fs_broker value='"+esc(brk.value||"127.0.0.1:1883")+"'></div>"+
