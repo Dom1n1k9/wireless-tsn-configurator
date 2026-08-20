@@ -11,7 +11,6 @@ int main(int argc, char **argv) {
     snprintf(cfg.db_path, sizeof(cfg.db_path), "wtsn.db");
     snprintf(cfg.mqtt_host, sizeof(cfg.mqtt_host), "localhost");
     cfg.mqtt_port = 1883;
-    cfg.opcua_port = 4840;
     cfg.headless = true;
 
     for (int i = 1; i < argc; i++) {
@@ -21,8 +20,6 @@ int main(int argc, char **argv) {
             snprintf(cfg.mqtt_host, sizeof(cfg.mqtt_host), "%s", argv[++i]);
         } else if (strcmp(argv[i], "--mqtt-port") == 0 && i + 1 < argc) {
             cfg.mqtt_port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--opcua-port") == 0 && i + 1 < argc) {
-            cfg.opcua_port = (uint16_t)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--plugin-dir") == 0 && i + 1 < argc) {
             snprintf(cfg.plugin_dir, sizeof(cfg.plugin_dir), "%s", argv[++i]);
         } else if (strcmp(argv[i], "--headless") == 0) {

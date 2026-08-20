@@ -17,17 +17,12 @@ endif()
 
 option(BUILD_GUI "Build LVGL GUI front-end" ON)
 option(BUILD_PLUGINS "Build sample protocol plugins" ON)
-option(WTSN_ENABLE_PUBSUB "Use real OPC UA PubSub (open62541 must be built with UA_ENABLE_PUBSUB)" OFF)
-if(WTSN_ENABLE_PUBSUB)
-  add_compile_definitions(UA_ENABLE_PUBSUB=1)
-endif()
 
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
-pkg_check_modules(OPEN62541 REQUIRED open62541)
 
-link_directories(${MOSQUITTO_LIBRARY_DIRS} ${OPEN62541_LIBRARY_DIRS})
+link_directories(${MOSQUITTO_LIBRARY_DIRS})
 
 find_package(Threads REQUIRED)
 
@@ -61,12 +56,7 @@ set(WTSN_SOURCES
   src/sensors/sensor.c
   src/sensors/sensor_manager.c
   src/mqtt/mqtt_client.c
-  src/opcua/opcua_server.c
-  src/gateway/gateway.c
-  src/gateway/gateway_pubsub.c
-  src/pubsub/pubsub.c
-  src/pubsub/pubsub_loopback.c
-  src/pubsub/pubsub_opcua.c
+  src/fxmqtt/fxmqtt.c
   src/trace/trace.c
   src/plugin/plugin_manager.c
 )
@@ -74,30 +64,26 @@ set(WTSN_SOURCES
 add_library(wtsn-core STATIC ${WTSN_SOURCES})
 target_include_directories(wtsn-core PUBLIC src)
 target_link_libraries(wtsn-core PRIVATE SQLite::SQLite3)
-target_link_libraries(wtsn-core PUBLIC ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES})
-target_include_directories(wtsn-core PUBLIC ${MOSQUITTO_INCLUDE_DIRS} ${OPEN62541_INCLUDE_DIRS})
+target_link_libraries(wtsn-core PUBLIC ${MOSQUITTO_LIBRARIES})
+target_include_directories(wtsn-core PUBLIC ${MOSQUITTO_INCLUDE_DIRS})
 
 if(BUILD_PLUGINS)
   add_library(plugin-mqtt-discovery SHARED src/plugin/plugin_mqtt_discovery.c)
   target_link_libraries(plugin-mqtt-discovery PRIVATE ${MOSQUITTO_LIBRARIES} wtsn-core)
   target_include_directories(plugin-mqtt-discovery PRIVATE ${MOSQUITTO_INCLUDE_DIRS})
-
-  add_library(plugin-opcua-discovery SHARED src/plugin/plugin_opcua_discovery.c)
-  target_link_libraries(plugin-opcua-discovery PRIVATE ${OPEN62541_LIBRARIES} wtsn-core)
-  target_include_directories(plugin-opcua-discovery PRIVATE ${OPEN62541_INCLUDE_DIRS})
 endif()
 
 add_executable(wtsn-cli src/app/main_cli.c)
-target_link_libraries(wtsn-cli PRIVATE wtsn-core SQLite::SQLite3 ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads)
-target_include_directories(wtsn-cli PRIVATE ${MOSQUITTO_INCLUDE_DIRS} ${OPEN62541_INCLUDE_DIRS})
+target_link_libraries(wtsn-cli PRIVATE wtsn-core SQLite::SQLite3 ${MOSQUITTO_LIBRARIES} Threads::Threads)
+target_include_directories(wtsn-cli PRIVATE ${MOSQUITTO_INCLUDE_DIRS})
 
 
 
 add_executable(wtsn-tests src/app/test_main.c)
 target_link_libraries(wtsn-tests PRIVATE wtsn-core SQLite::SQLite3
-  ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads)
+  ${MOSQUITTO_LIBRARIES} Threads::Threads)
 target_include_directories(wtsn-tests PRIVATE
-  ${MOSQUITTO_INCLUDE_DIRS} ${OPEN62541_INCLUDE_DIRS})
+  ${MOSQUITTO_INCLUDE_DIRS})
 if(BUILD_TESTING)
   add_test(NAME wtsn-tests COMMAND wtsn-tests)
 endif()
@@ -121,7 +107,7 @@ target_link_libraries(tsn-node-simulator PRIVATE Threads::Threads)
 file(COPY profiles DESTINATION ${CMAKE_BINARY_DIR})
 
 # ---- TSN node firmware agent (runs on physical devices, executes configurator
-#      commands via MQTT / OPC UA; Linux adapter uses iproute2/tc, embedded
+#      commands via MQTT; Linux adapter uses iproute2/tc, embedded
 #      adapters are compile-safe stubs for ESP-IDF/Zephyr/vendor SDK) ----
 set(AGENT_SOURCES
   src/agent/agent.c
@@ -132,5 +118,5 @@ set(AGENT_SOURCES
 add_executable(tsn-node-agent ${AGENT_SOURCES})
 target_include_directories(tsn-node-agent PRIVATE ${MOSQUITTO_INCLUDE_DIRS} src)
 target_link_libraries(tsn-node-agent PRIVATE wtsn-core SQLite::SQLite3
-  ${MOSQUITTO_LIBRARIES} ${OPEN62541_LIBRARIES} Threads::Threads)
+  ${MOSQUITTO_LIBRARIES} Threads::Threads)
 

@@ -90,7 +90,7 @@ wtsn_error wtsn_agent_handle_command(wtsn_agent *a, const char *command, const c
         if (a->mqtt) wtsn_mqtt_client_publish(a->mqtt, "tsn/status", a->device_id);
         return WTSN_OK;
     } else if (strcmp(command, "fx") == 0) {
-        /* OPC UA FX wireless multicast: publish a dataset into the shared group */
+        /* FX over MQTT: publish a dataset into the C2C field flow */
         const char *group = token_at(payload, 0);
         if (!group[0]) group = "239.255.0.1";
         const char *dataset = token_at(payload, 1);

@@ -4,13 +4,10 @@
 #include "common/common.h"
 #include "db/db.h"
 #include "device/device_manager.h"
-#include "gateway/gateway.h"
-#include "gateway/gateway_pubsub.h"
+#include "fxmqtt/fxmqtt.h"
 #include "mqtt/mqtt_client.h"
 #include "mvc/event_bus.h"
-#include "opcua/opcua_server.h"
 #include "plugin/plugin_manager.h"
-#include "pubsub/pubsub.h"
 #include "qos/qos_manager.h"
 #include "sensors/sensor_manager.h"
 #include "tas/tas_manager.h"
@@ -23,7 +20,6 @@ typedef struct {
     char plugin_dir[WTSN_MAX_STR];
     char mqtt_host[128];
     int mqtt_port;
-    uint16_t opcua_port;
     bool headless;
 } wtsn_app_config;
 
@@ -38,11 +34,8 @@ typedef struct wtsn_app {
     wtsn_tas_manager *tas;
     wtsn_sensor_manager *sensors;
     wtsn_mqtt_client *mqtt;
-    wtsn_opcua_server *opcua;
-    wtsn_gateway *gateway;
-    wtsn_gateway_pubsub *gw_pubsub;
+    wtsn_fxmqtt *fxmqtt;
     wtsn_trace *trace;
-    wtsn_pubsub *pubsub;
     wtsn_app_config config;
 } wtsn_app;
 

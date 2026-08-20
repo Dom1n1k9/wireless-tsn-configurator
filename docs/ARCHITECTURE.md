@@ -8,7 +8,7 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
                      ┌────────────────────────────────────────────┐
                      │             GUI (LVGL)                  │
                      │ Dash | Devices | TSN | VLAN | TimeSync   │
-                     │ OPC UA | MQTT | Trace | Settings       │
+                     │ FXMQTT | MQTT | Trace | Settings        │
                      └──────────────────┬─────────────────────────┘
                                         │ events / commands
                      ┌──────────────────▼─────────────────────────┐
@@ -26,24 +26,20 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
         │                                    │                          │
         ▼                                    ▼                          ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-│ Discoverers   │  │    PubSub     │  │  MQTT Client  │  │    Trace     │
-│ MQTT/OPC UA  │  │ OPC UA+Loop  │  │ (mosquitto)   │  │  monitor     │
+│ Discoverers   │  │    FXMQTT     │  │  MQTT Client  │  │    Trace     │
+│ MQTT/plugins  │  │ FX over MQTT │  │ (mosquitto)   │  │  monitor     │
 └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────────────┘
-        │                    │     OPC UA FX        │       ▲
-        │                    │  multicast 239.255.0.1│       │ events
-        ▼                    ▼  ─────────▶          ▼       │
+        │                    │ C2C topics      │       ▲
+        │                    │ tsn/fx/field    │       │ events
+        ▼                    ▼  ─────────▶     ▼       │
 ┌───────────────┐  ┌───────────────┐  ┌───────────────────┐
-│ OPC UA Server │  │   Agent       │  │ Gateway (MQTT↔UA   │
-│ (open62541)   │  │ firmware dev  │  │  + MQTT-over-PubSub)│
+│ PluginManager │  │   Agent       │  │     MQTT broker   │
+│               │  │ firmware dev  │  │  (mosquitto)      │
 └───────┬───────┘  └───────────────┘  └───────────────────┘
         ▼
 ┌───────────────┐  ┌───────────────┐
-│ PluginManager │  │   Simulator   │  virtual nodes
-└───────┬───────┘  └─────────────────┘
-        ▼
-┌───────────────┐
-│   SQLite DB   │  devices, qos, vlan, tas, timesync, sensors
-└───────────────┘
+│   Simulator   │  │   SQLite DB   │  devices, qos, vlan, tas, timesync, sensors
+└───────────────┘  └───────────────┘  virtual nodes
 ```
 
 ## Layers
@@ -53,9 +49,9 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
 3. **Database** (`src/db`) - SQLite schema init and CRUD repositories.
 4. **Services** (`src/device`, `src/qos`, `src/vlan`, `src/timesync`,
    `src/tas`, `src/sensors`) - domain logic.
-5. **Discovery** (`src/discovery`) - discover MQTT/OPC UA devices.
-6. **Protocols** (`src/mqtt`, `src/opcua`, `src/pubsub`, `src/gateway`) -
-   MQTT, OPC UA server/PubSub/FX and gateways.
+5. **Discovery** (`src/discovery`) - discover MQTT/plugin devices.
+6. **Protocols** (`src/mqtt`, `src/fxmqtt`) - the single MQTT-based
+   FX / C2C communication channel.
 7. **Agent** (`src/agent`) - firmware agent that executes commands on physical
    nodes (Linux/RPi adapter + ESP32/STM32/NXP embedded adapters).
 8. **Simulator** (`src/simulator`) - generic TSN node simulator from profiles.
@@ -75,33 +71,21 @@ Plugins expose `discover`, `read`, `write`, `probe` functions described by the
 `wtsn_plugin_api.h` interface. Discoverers are plugins; the discovery framework
 loads them at startup and enumerates discovered nodes.
 
-## PubSub Layer (`src/pubsub`)
+## FXMQTT Layer (`src/fxmqtt`)
 
-A uniform dataset-based PubSub abstraction with pluggable backends:
+The single communication channel. OPC UA FX / C2C Field Exchange is carried
+entirely over MQTT:
 
-- **OPC UA PubSub** (`pubsub_opcua.c`) - real open62541 PubSub behind
-  `UA_ENABLE_PUBSUB`; used by the configurator against real devices.
-- **Loopback** (`pubsub_loopback.c`) - simulated PubSub, used by the simulator
-  and as a fallback so the gateway keeps working without a fully-built PubSub stack.
-
-The **MQTT-over-OPC-UA-PubSub gateway** (`gateway_pubsub.c`) bidirectionally
-converts MQTT topics into PubSub datasets and back.
-
-## FX Wireless Multicast
-
-All W-TSN members share a multicast group `239.255.0.1:4840` (UA-DP
-transport), so a publisher reaches every subscriber directly over UDP — no MQTT
-broker needed. Two providers exist:
-
-- **Real** — the agent (`src/agent/agent_providers.c`) sends datasets into the
-  group over a POSIX UDP multicast socket (`agt_linux_send_fx_multicast`).
-- **Simulated** — the simulator (`src/simulator/protocol/sim_protocol.c`)
-  models the multi-node group and logs each FX send.
+- **Field Server / Participant** — the configurator (PC) or a selected device
+  node acts as the Field Server, configurable from the GUI FX page.
+- **C2C Field Exchange (PubSub topics)** — `tsn/fx/field`, `tsn/fx/data`,
+  `tsn/fx/<node>` carry the Field Exchange traffic on the MQTT broker.
+- No OPC UA server, PubSub binary encoding or dedicated multicast stack is used.
 
 ## Agent Layer (`src/agent`)
 
 `tsn-node-agent` runs on physical nodes and executes configurator commands
-(`qos`, `vlan`, `timesync`, `tas`, `status`, `fx`) via MQTT/OPC UA. Linux/RPi
+(`qos`, `vlan`, `timesync`, `tas`, `status`, `fx`) via MQTT. Linux/RPi
 use `iproute2`+`tc`; ESP32/STM32/NXP ship as compile-safe embedded adapters.
 
 ## Simulator Layer (`src/simulator`)
@@ -119,5 +103,5 @@ bus. The **Trace** page displays them live: timestamp, source, and kind
 ## Threading Model
 
 - Main thread: GUI event loop.
-- Worker threads: discovery pollers, MQTT callbacks, OPC UA server, gateway.
+- Worker threads: discovery pollers, MQTT callbacks, everything else.
 - Cross-thread communication via thread-safe event bus (mutex + queue).

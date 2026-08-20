@@ -1,5 +1,7 @@
 #include "simulator/protocol/sim_protocol.h"
 
+#include "common/common.h"
+#include "fxmqtt/fxmqtt.h"
 #include "simulator/common/sim_log.h"
 #include "simulator/common/sim_str.h"
 #include "simulator/services/sim_services.h"
@@ -27,12 +29,6 @@ struct sim_mqtt {
     bool connected;
     sim_mcast_cb mcast_cb;
     void *mcast_ud;
-};
-
-struct sim_opcua {
-    sim_simulator *sim;
-    void *server;
-    int base_port;
 };
 
 /* ---------------- discovery ---------------- */
@@ -138,32 +134,6 @@ static void publish(void *client, const char *topic, const char *payload) {
     sim_log(SIM_LOG_INFO, "  %s <- %s", topic, payload);
 }
 
-/* ---------------- opcua ---------------- */
-
-sim_opcua *sim_opcua_create(sim_simulator *sim) {
-    if (!sim) return NULL;
-    sim_opcua *o = calloc(1, sizeof(sim_opcua));
-    if (!o) return NULL;
-    o->sim = sim;
-    return o;
-}
-
-void sim_opcua_destroy(sim_opcua *o) {
-    free(o);
-}
-
-sim_error sim_opcua_start(sim_opcua *o, int base_port) {
-    if (!o) return SIM_ERR_INVALID_ARG;
-    o->base_port = base_port;
-    sim_log(SIM_LOG_INFO, "opc ua endpoints base port %d", base_port);
-    return SIM_OK;
-}
-
-sim_error sim_opcua_update(sim_opcua *o) {
-    (void)o;
-    return SIM_OK;
-}
-
 void sim_mqtt_set_fx_multicast_cb(sim_mqtt *m, sim_mcast_cb cb, void *ud) {
     if (!m) return;
     m->mcast_cb = cb;
@@ -173,17 +143,14 @@ void sim_mqtt_set_fx_multicast_cb(sim_mqtt *m, sim_mcast_cb cb, void *ud) {
 sim_error sim_mqtt_publish_fx_multicast(sim_mqtt *m, const char *node_id, const char *dataset) {
     if (!m || !node_id || !dataset) return SIM_ERR_INVALID_ARG;
     /*
-     * OPC UA FX / wireless multicast.
-     * All nodes share the multicast group 239.255.0.1:4840 (UA-DP). The
-     * publisher stamps the node id + dataset name into the group and every member
-     * "receives" it - here that spread is modelled and logged per node so the
-     * configurator's monitoring can capture it. In a real deployment this payload
-     * goes out over UDP multicast with the UA PubSub encoding (JSON/Field
-     * encoding); the network join is handled by the OS multicast socket.
+     * OPC UA FX over MQTT.
+     * The publisher stamps the node id + dataset name into the flow, carried over
+     * the MQTT broker with the FX / C2C topics; here the spread is modelled
+     * and logged per node so the configurator's monitoring can capture it.
      */
-    const char *group = "239.255.0.1:4840";
-    if (m->mcast_cb) m->mcast_cb(node_id, group, dataset, m->mcast_ud);
-    sim_log(SIM_LOG_INFO, "FX mcast -> group %s node %s dataset %s",
-            group, node_id, dataset);
+    const char *topic = WTSN_FXMQTT_TOPIC_FIELD;
+    if (m->mcast_cb) m->mcast_cb(node_id, topic, dataset, m->mcast_ud);
+    sim_log(SIM_LOG_INFO, "FX mqtt -> topic %s node %s dataset %s",
+            topic, node_id, dataset);
     return SIM_OK;
 }

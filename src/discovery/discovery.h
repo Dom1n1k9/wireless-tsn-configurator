@@ -6,7 +6,6 @@
 
 typedef enum {
     WTSN_DISCOVERY_MQTT = 0,
-    WTSN_DISCOVERY_OPCUA,
     WTSN_DISCOVERY_PLUGIN,
     WTSN_DISCOVERY_MANUAL
 } wtsn_discovery_source;

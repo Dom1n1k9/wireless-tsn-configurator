@@ -91,8 +91,7 @@ static wtsn_error linux_send(void *state, const char *topic, const unsigned char
     return WTSN_OK;
 }
 
-/* OPC UA FX / wireless multicast: send a dataset to the shared UA-DP group
-   over a real UDP multicast socket. Default WTSN group 239.255.0.1:4840. */
+/* FX over MQTT: send a dataset into the C2C field exchange. */
 wtsn_error agt_linux_send_fx_multicast(void *state, const char *group,
                                       const unsigned char *data, size_t len) {
     (void)state;

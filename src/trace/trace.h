@@ -3,7 +3,6 @@
 
 #include "common/common.h"
 #include "mvc/event_bus.h"
-#include "pubsub/pubsub.h"
 
 #define WTSN_TRACE_MAX 1024
 #define WTSN_TRACE_LINE 256

@@ -11,8 +11,7 @@ virtual devices that speak the same protocols.
 ## Features
 
 - Device Discovery (announcements)
-- MQTT publishing of node state
-- OPC UA endpoint (per profile, planned)
+- MQTT publishing of node state (incl. FX / C2C over MQTT)
 - QoS (IEEE 802.1Q priority 0-7, traffic class, bandwidth, latency)
 - VLAN (VLAN ID 1-4094 + group)
 - Time Synchronization (slave / master / external grandmaster, gPTP, 802.1AS)
@@ -50,7 +49,7 @@ cmake --build build --target tsn-node-simulator
 ## Run
 
 ```bash
-# all bundled profiles with MQTT + OPC UA
+# all bundled profiles with MQTT
 ./build/tsn-node-simulator --all
 
 # specific profiles, custom broker
@@ -58,7 +57,7 @@ cmake --build build --target tsn-node-simulator
   --profile profiles/esp32.ini \
   --profile profiles/nxp.ini \
   --mqtt-host 192.168.1.10 --mqtt-port 1883 \
-  --opcua-base 4840 --once
+  --once
 ```
 
 | Option            | Description                             |
@@ -67,7 +66,6 @@ cmake --build build --target tsn-node-simulator
 | `--all`           | Load all bundled profiles                |
 | `--mqtt-host`     | MQTT broker host (default `localhost`) |
 | `--mqtt-port`     | MQTT broker port (default 1883)        |
-| `--opcua-base`    | Base OPC UA port (default 4840)        |
 | `--once`          | Run a single tick and exit              |
 | `--help`          | Show usage                             |
 
@@ -80,10 +78,10 @@ profiles/*.ini  ->  sim_profile_load()  ->  sim_device (model)
                                               |
                           sim_simulator (collection + tick loop)
                               |  |  |
-              discovery/   mqtt/    opcua/
-            announce()  publish  endpoints
+              discovery/   mqtt/
+             announce()  publish
 ```
 
 The simulator core (`sim_simulator`) ticks every node: it wobbles sensor
 values and advances TAS gate state from the GCL. The protocol layer then
-exposes the node state over discovery, MQTT and OPC UA.
+exposes the node state over discovery and MQTT, including FX / C2C over MQTT.

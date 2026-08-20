@@ -14,7 +14,6 @@ int main(int argc, char **argv) {
 
     const char *mqtt_host = "localhost";
     int mqtt_port = 1883;
-    int opcua_base = 4840;
     bool run_loop = true;
 
     static const char *all[] =
@@ -31,13 +30,11 @@ int main(int argc, char **argv) {
             mqtt_host = argv[++i];
         } else if (strcmp(argv[i], "--mqtt-port") == 0 && i + 1 < argc) {
             mqtt_port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--opcua-base") == 0 && i + 1 < argc) {
-            opcua_base = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--once") == 0) {
             run_loop = false;
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: tsn-node-simulator [--profile <file>]... [--all]\n"
-                   "       [--mqtt-host <h>] [--mqtt-port <p>] [--opcua-base <b>] [--once]\n");
+                   "       [--mqtt-host <h>] [--mqtt-port <p>] [--once]\n");
             return 0;
         }
     }
@@ -72,16 +69,12 @@ int main(int argc, char **argv) {
     sim_mqtt *mqtt = sim_mqtt_create(sim);
     if (mqtt) sim_mqtt_connect(mqtt, mqtt_host, mqtt_port);
 
-    sim_opcua *opcua = sim_opcua_create(sim);
-    if (opcua) sim_opcua_start(opcua, opcua_base);
-
     sim_discovery_start(disc);
 
     long tick = 0;
     do {
         sim_simulator_tick(sim, tick * 1000000LL);
         if (mqtt) sim_mqtt_publish_all(mqtt);
-        if (opcua) sim_opcua_update(opcua);
         if ((tick % 5) == 0) sim_discovery_announce(disc);
         tick++;
         usleep(100000);
@@ -89,7 +82,6 @@ int main(int argc, char **argv) {
 
     sim_discovery_destroy(disc);
     if (mqtt) sim_mqtt_destroy(mqtt);
-    if (opcua) sim_opcua_destroy(opcua);
     sim_simulator_destroy(sim);
     return 0;
 }

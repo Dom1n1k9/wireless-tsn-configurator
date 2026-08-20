@@ -3,8 +3,8 @@
 
 Deployment vs Simulation mode, devices with TSN functions and grandmaster/slave
 role, QoS (802.1Q, priority 0-7), VLAN (ID), TAS/GCL (802.1Qbv), gPTP
-(802.1AS), sensors, OPC UA, PubSub, MQTT, OPC UA FX/wireless multicast, and a
-live network/frame monitor. In simulation mode a background thread fabricates
+(802.1AS), sensors, MQTT, OPC UA FX over MQTT (FXMQTT / C2C Field Exchange),
+and a live network/frame monitor. In simulation mode a background thread fabricates
 devices, sensors and a realistic frame flow so everything can be exercised without HW.
 
 Run:  python3 webgui.py [port]   ->  http://127.0.0.1:8000/
@@ -145,11 +145,11 @@ def sim_tick():
         for did in devs:
             add_event("mqtt", did, "tsn/nodes/%s  <-  JSON telemetry" % did)
         for did in devs[:2]:
-            add_event("pubsub", gm, "UADP DataSet %s -> 239.255.0.1:4840" % did)
+            add_event("fxmqtt", gm, "FX over MQTT dataset %s" % did)
             add_event("frame", did, "raw %s" % "".join(
                 random.choice("0123456789ABCDEF") for _ in range(28)))
         if random.random() < 0.6:
-            add_event("fx", gm, "OPC UA FX multicast 239.255.0.1:4840")
+            add_event("fx", gm, "OPC UA FX over MQTT (C2C field exchange)")
         if random.random() < 0.4:
             add_event("config", "cnc", "schema deployed to " + gm)
         add_event("discovery", gm, "nodes announced")
@@ -183,6 +183,21 @@ def run_action(act, body):
             add_event("config", "cnc",
                      "mode = SIMULATION" if MODE["mode"] == "sim" else "mode = REAL (waiting for real devices)")
             return {"ok": True, "msg": "mode = " + MODE["mode"]}
+        if act == "set_server":
+            server_type = body.get("type", "node")
+            did = body.get("id", "")
+            broker = body.get("broker", "127.0.0.1:1883")
+            con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('server_type',?)",
+                        (server_type,))
+            con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('server_id',?)",
+                        (did,))
+            con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('broker',?)",
+                        (broker,))
+            con.commit()
+            add_event("config", "cnc",
+                      "server = " + ("PC" if server_type == "pc" else "node " + did))
+            return {"ok": True, "msg": ("server = PC" if server_type == "pc"
+                                        else "server = node " + did)}
         if act == "save_devices":
             for i in body.get("delete") or []:
                 for t, c in (("devices", "id"), ("qos_configs", "device_id"),
@@ -383,7 +398,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const PAGES=["dashboard","devices","qos","vlan","tas","timesync","opcua","pubsub_mqtt","fx","monitor","sensors","settings"];
+const PAGES=["dashboard","devices","qos","vlan","tas","timesync","fxmqtt","monitor","sensors","settings"];
 let D={};
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -405,9 +420,7 @@ function go(p){document.querySelectorAll("#nav button").forEach(b=>b.className=b
  else if(p==="vlan")m.innerHTML=vlan();
  else if(p==="tas")m.innerHTML=tas();
  else if(p==="timesync")m.innerHTML=timesync();
- else if(p==="opcua")m.innerHTML=opcua();
- else if(p==="pubsub_mqtt")m.innerHTML=pubsub_mqtt();
- else if(p==="fx")m.innerHTML=fx();
+ else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
  else if(p==="sensors")m.innerHTML=sensors();
  else if(p==="settings")m.innerHTML=settings()}
@@ -415,7 +428,7 @@ function dash(){const on=D.devices.filter(d=>d.status==0).length;
  return "<h2>Dashboard</h2><div class='grid'>"+stat("Devices",D.devices.length)+stat("Online",on)+
  stat("VLAN",D.vlan_groups.length)+stat("TAS",D.tas_schedules.length)+
  stat("Sensors",D.sensors.length)+stat("Mode",D.mode)+"</div>"+
- "<div class='card'><h3>Network</h3>OPC UA server (real PubSub UADP/UDP multicast 239.255.0.1:4840) + MQTT bridge.<br>"+
+ "<div class='card'><h3>Network</h3>FX over MQTT (OPC UA FX / C2C Field Exchange) carried on the MQTT broker.<br>"+
  (D.mode==="sim"?"In <b>Simulation</b> mode you can configure and see live frame flow without hardware.":
  "In <b>Real</b> mode the configurator waits for real TSN nodes (ESP32/RPi/STM32/NXP/Linux) and their sensors.")+"</div>"}
 function devices(){let rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td class='"+(d.status==0?"":"")+"'>"+["online","offline","error"][d.status]||d.status+"</td><td>"+esc(d.ip)+"</td><td>"+esc(d.firmware)+"</td><td>"+esc(types(d.id))+"</td><td><button class='ghost' onclick='loadDev(\""+esc(d.id)+"\")'>edit</button></td></tr>").join("");
@@ -424,15 +437,15 @@ function devices(){let rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+es
  "<div class='row'><label>id</label><input id=did><span class='row'><label>name</label><input id=dname></span></div>"+
  "<div class='row'><label>ip</label><input id=dip><span class='row'><label>firmware</label><input id=dfw></span></div>"+
  "<div class='row'><label>kind</label><select id=dkind><option value=0>Generic</option><option value=1>ESP32</option><option value=2>Raspberry Pi</option><option value=3>STM32</option></select></div>"+
- "<h3>TSN functions</h3>"+["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","OPC UA","OPC UA PubSub","FX Multicast"].map(f=>"<label><input type=checkbox id=fn_"+esc(f.split(' ')[0].replace(/[^A-Za-z0-9]/g,''))+"> "+f+"</label>").join("")+
+ "<h3>TSN functions</h3>"+["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","FXMQTT"].map(f=>"<label><input type=checkbox id=fn_"+esc(f.split(' ')[0].replace(/[^A-Za-z0-9]/g,''))+"> "+f+"</label>").join("")+
  "<div><button onclick='saveDev()'>Save</button></div></div>"+
  "<h3>Grandmaster / Slaves</h3><div class='card'><div class='row'><label>set as GM</label><select id=gm_sel><option value=''>-</option>"+opts+"</select>"+
  "<button onclick=gmSet()>Apply</button></div></div>"+
  "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>tsn</th><th></th></tr>"+rows+"</table>"}
-function fnIds(){const map={"802":["802","802","gPTP","802","802","OPC","OPC","FX"]};return ["802","802","gPTP","802","802","OPC","OPC","FX"]}
+function fnIds(){const map={"802":["802","802","gPTP","802","802","FX"]};return ["802","802","gPTP","802","802","FX"]}
 function loadDev(id){const d=D.devices.find(x=>x.id==id);if(!d)return;$("did").value=d.id;$("dname").value=d.name;$("dip").value=d.ip;$("dfw").value=d.firmware;$("dkind").value=d.kind}
 function saveDev(){const fns=fnIds().map((k,i)=>document.getElementById("fn_"+k)?document.getElementById("fn_"+k).checked:false);
- const tsn=["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","OPC UA","OPC UA PubSub","FX Multicast"].filter((x,i)=>fns[i]);
+ const tsn=["802.1Q QoS","802.1Q VLAN","gPTP 802.1AS","802.1Qbv TAS","802.1Qbu Preemption","FXMQTT"].filter((x,i)=>fns[i]);
  api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:$("dfw").value,kind:parseInt($("dkind").value),status:0,tsn:tsn}})}
 function gmSet(){const sel=$("gm_sel");if(sel.value)api("set_role",{id:sel.value,role:"grandmaster"})}
 function qos(){let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>"+q.priority+"</td><td>"+q.bandwidth_kbps+"</td><td>"+q.latency_ms+" ms</td><td>"+q.preemption+"</td></tr>").join("");
@@ -457,10 +470,22 @@ function timesync(){const t=D.timesync_status[0]||{};const modes=["disabled","lo
  "<div class='row'><label>offset ns</label><input id=ts_off type=number value='"+(t.offset_ns||0)+"'></div>"+
  "<div class='row'><label>quality</label><input id=ts_q type=number value='"+(t.quality||0)+"'></div>"+
  "<button onclick='api(\"save_timesync\",{mode:parseInt($(\"ts_mode\").value),grandmaster:$(\"ts_gm\").value,offset_ns:parseInt($(\"ts_off\").value),quality:parseInt($(\"ts_q\").value)})'>Save</button></div>"}
-function opcua(){return "<h2>OPC UA Server</h2><div class='card'><div class='row'><label>port</label><span>4840</span></div><div class='row'><label>namespace</label><span>urn:wtsn:configurator (ns 2)</span></div><div class='row'><label>endpoint</label><span>opc.tcp://127.0.0.1:4840</span></div><div class='row'><label>status</label><span class='"+(D.mode==="sim"?"'":"'")+"'>"+(D.mode==="sim"?"simulated":"listening — waiting for real OPC UA devices")+"</span></div></div>"}
-function pubsub_mqtt(){return "<h2>PubSub & MQTT</h2><div class='card'><h3>OPC UA PubSub</h3><div class='row'><label>backend</label><span>UADP / UDP</span></div><div class='row'><label>dataset</label><span>wtsnData (max 64 fields)</span></div><h3>MQTT client</h3><div class='row'><label>broker</label><span>127.0.0.1:1883</span></div><div class='row'><label>topic</label><span>tsn/#</span></div><div class='row'><label>MQTT -> OPC UA</label><span>gateway maps topics to OPC UA paths</span></div></div>"}
-function fx(){return "<h2>OPC UA FX / Wireless Multicast</h2><div class='card'><div class='row'><label>group</label><span>239.255.0.1:4840 (UA-DP)</span></div><div class='row'><label>transport</label><span>all W-TSN members join group, no broker</span></div><div class='row'><label>message</label><input id=fx_msg value='alert'></div><button onclick='api(\"fx_send\",{msg:$(\"fx_msg\").value})'>Send FX multicast</button></div>"}
-function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><div class='row'><span>"+(D.mode==="sim"?"Live simulated flow (MQTT, OPC UA PubSub, FX multicast, raw frames)":"Real traffic — waiting for real nodes")+"</span>"+"<span class='spacer'></span><button class='ghost' onclick='api(\"clear_events\",{})'>Clear</button></div><div id=mon></div></div>"}
+function fxmqtt(){
+ const srv=(D.settings||[]).find(s=>s.key==="server_type")||{};
+ const srvid=(D.settings||[]).find(s=>s.key==="server_id")||{};
+ const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
+ const isPc=(srv.value||"node")==="pc";
+ const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(srvid.value==d.id?"selected":"")+">"+esc(d.id)+"</option>").join("");
+ return "<h2>OPC UA FX over MQTT (PubSub / C2C Field Exchange)</h2><div class='card'><h3>Field Server / Participant</h3>"+
+  "<div class='row'><label>server</label><select id=fs_type><option value='node' "+(isPc?"":"selected")+">Node (device)</option><option value='pc' "+(isPc?"selected":"")+">PC (configurator)</option></select></div>"+
+  "<div class='row' id=fs_node_row><label>node</label><select id=fs_node>"+opts+"</select></div>"+
+  "<div class='row'><label>broker</label><input id=fs_broker value='"+esc(brk.value||"127.0.0.1:1883")+"'></div>"+
+  "<button onclick=fsSave()>Save / Deploy</button></div>"+
+  "<div class='card'><h3>C2C Field Exchange (PubSub topics)</h3><table><tr><th>topic</th><th>direction</th></tr>"+
+  "<tr><td>tsn/fx/field</td><td>C2C pubsub</td></tr><tr><td>tsn/fx/data</td><td>field data exchange</td></tr><tr><td>tsn/fx/<b>node</b></td><td>node &harr; server</td></tr></table>"+
+  "</div><div class='card'><div class='row'><label>message</label><input id=fx_msg value='alert'></div><button onclick='api(\"fx_send\",{msg:$(\"fx_msg\").value})'>Send FX over MQTT</button></div>"}
+function fsSave(){const type=$("fs_type").value;api("set_server",{type:type,id:(type==="node"?$("fs_node").value:""),broker:$("fs_broker").value})}
+function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><div class='row'><span>"+(D.mode==="sim"?"Live simulated flow (MQTT, FX over MQTT, raw frames)":"Real traffic — waiting for real nodes")+"</span>"+"<span class='spacer'></span><button class='ghost' onclick='api(\"clear_events\",{})'>Clear</button></div><div id=mon></div></div>"}
 function refreshMon(){if($("mon")){const ev=(D.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span>"+esc(e.data)+"</span></div>").join("");$("mon").innerHTML=ev||"<div class='monrow'><span>no traffic yet</span></div>"}}
 function sensors(){let r=D.sensors.map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+esc(s.sensor_id)+"</td><td>"+esc(s.type)+"</td><td>"+s.value+" "+esc(s.unit)+"</td><td class='"+(s.healthy?"":"') style='color:var(--err)")+"'>"+(s.healthy?"healthy":"fault")+"</td></tr>").join("");
  return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(D.sensors.length?("<table><tr><th>device</th><th>id</th><th>type</th><th>value</th><th>health</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="sim"?"Waiting for simulation sensors...":"Connect real sensors — none identified yet.")+"</div>")}

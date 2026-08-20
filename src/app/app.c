@@ -2,8 +2,6 @@
 
 #include "common/log.h"
 #include "common/str_util.h"
-#include "pubsub/pubsub_opcua.h"
-#include "pubsub/pubsub_loopback.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,11 +10,8 @@
 
 static wtsn_error load_plugins(wtsn_app *app) {
     if (strlen(app->config.plugin_dir) == 0) return WTSN_OK;
-    /* load any .so files present in the plugin directory */
     char path[WTSN_MAX_STR];
     snprintf(path, sizeof(path), "%s/plugin-mqtt-discovery.so", app->config.plugin_dir);
-    wtsn_plugin_manager_load(app->plugins, path);
-    snprintf(path, sizeof(path), "%s/plugin-opcua-discovery.so", app->config.plugin_dir);
     wtsn_plugin_manager_load(app->plugins, path);
     return WTSN_OK;
 }
@@ -50,48 +45,23 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     load_plugins(app);
     wtsn_device_manager_discover_once(app->devices);
 
+    /* OPC UA FX over MQTT: the single communication channel (PubSub, C2C). */
+    app->mqtt = NULL;
+    app->fxmqtt = wtsn_fxmqtt_create();
+    if (!app->fxmqtt) return WTSN_ERR_NO_MEMORY;
+
     if (strlen(cfg->mqtt_host) > 0) {
         app->mqtt = wtsn_mqtt_client_create(app->bus);
         wtsn_mqtt_client_connect(app->mqtt, cfg->mqtt_host, cfg->mqtt_port,
                                  "wtsn-configurator", NULL, NULL);
         wtsn_mqtt_client_loop_start(app->mqtt);
-    }
-
-    app->opcua = wtsn_opcua_server_create();
-    wtsn_opcua_server_start(app->opcua, app->config.opcua_port);
-
-    /* PubSub backend: real OPC UA PubSub if compiled in, else loopback (simulated).
-       Both real and simulated endpoints are traced for the GUI. */
-    wtsn_pubsub_backend pbackend;
-    if (wtsn_pubsub_opcua_backend(&pbackend, wtsn_opcua_server_handle(app->opcua),
-                                   (uint16_t)wtsn_opcua_server_ns(app->opcua)) != WTSN_OK) {
-        wtsn_log(WTSN_LOG_WARN, "opc ua pubsub backend unavailable, no pubsub started");
-        app->pubsub = NULL;
-    } else {
-        app->pubsub = calloc(1, sizeof(wtsn_pubsub));
-        wtsn_pubsub_init(app->pubsub, &pbackend, pbackend.state);
-        if (wtsn_pubsub_start(app->pubsub) != WTSN_OK) {
-            /* fall back so the gateway still has a loopback pubsub to use */
-            wtsn_pubsub_backend lb;
-            wtsn_pubsub_loopback_backend(&lb, NULL);
-            app->pubsub = calloc(1, sizeof(wtsn_pubsub));
-            wtsn_pubsub_init(app->pubsub, &lb, NULL);
-        }
-        if (app->trace) wtsn_trace_add_config(app->trace, "pubsub",
-            wtsn_pubsub_name(app->pubsub));
-    }
-
-    if (app->mqtt && app->pubsub) {
-        app->gw_pubsub = wtsn_gateway_pubsub_create(app->mqtt, app->pubsub, app->trace);
-        wtsn_gateway_pubsub_map_topic(app->gw_pubsub, "tsn/ns",
-                                      "wtsnData");
-        wtsn_gateway_pubsub_start(app->gw_pubsub);
-    }
-
-    if (app->mqtt) {
-        app->gateway = wtsn_gateway_create(app->mqtt, app->opcua);
-        wtsn_gateway_map_topic(app->gateway, "tsn/#", "/tsn/#");
-        wtsn_gateway_start(app->gateway);
+        wtsn_fxmqtt          *fcfg = app->fxmqtt;
+        fcfg->broker_port = cfg->mqtt_port;
+        wtsn_strlcpy(fcfg->broker_host, cfg->mqtt_host, sizeof(fcfg->broker_host));
+        wtsn_fxmqtt_configure(app->fxmqtt, fcfg);
+        wtsn_fxmqtt_start(app->fxmqtt, app->mqtt);
+        if (app->trace) wtsn_trace_add_config(app->trace, "fxmqtt",
+                "OPC UA FX over MQTT started");
     }
 
     return WTSN_OK;
@@ -99,11 +69,8 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
 
 void wtsn_app_shutdown(wtsn_app *app) {
     if (!app) return;
-    if (app->gw_pubsub) wtsn_gateway_pubsub_destroy(app->gw_pubsub);
-    if (app->pubsub) free(app->pubsub);
+    if (app->fxmqtt) wtsn_fxmqtt_destroy(app->fxmqtt);
     if (app->mqtt) wtsn_mqtt_client_destroy(app->mqtt);
-    if (app->opcua) wtsn_opcua_server_destroy(app->opcua);
-    if (app->gateway) wtsn_gateway_destroy(app->gateway);
     if (app->trace) wtsn_trace_destroy(app->trace);
     if (app->sensors) wtsn_sensor_manager_destroy(app->sensors);
     if (app->tas) wtsn_tas_manager_destroy(app->tas);
