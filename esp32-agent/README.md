@@ -29,26 +29,51 @@ The agent reads its settings from NVS. The defaults are compiled in:
 ```bash
 cd esp32-agent
 idf.py set-target esp32        # or esp32s3, esp32c3 ...
-idf.py menuconfig              # optional: set WiFi + MQTT broker
+idf.py menuconfig             # optional: set WiFi + MQTT broker (or via NVS)
 idf.py build -p /dev/ttyUSB0 flash monitor
 ```
+
+## Wiring to the web GUI (real mode)
+
+1. Set an MQTT broker reachable from both the PC and the ESP32 (e.g. mosquitto
+   on the PC, listening on the LAN interface).
+2. On the **FXMQTT** page set broker to `<PC-IP>:1883` and choose a node/PC as
+   Field Server, Save.
+3. Switch the top-right mode to **Real**.
+4. Click **"Execute settings on controller"** (bottom bar) — the webgui now
+   connects to the broker and publishes a **single JSON snapshot** on
+   `tsn/cmd/<device>/apply` for every configured device, exactly what this ESP32
+   agent consumes, plus `status`. The agent replies on `tsn/ack` and
+   `tsn/status`; the webgui subscribes to these so devices show online.
+
+The webgui embeds a stdlib-only MQTT 3.1.1 client (no paho needed), see the
+`MqttBroker` class in `webgui.py`. Set broker with env `WTSN_BROKER=host:port`
+or via the FXMQTT / Settings pages. Broker auth via `WTSN_USER`/`WTSN_PASS`
+env vars.
+
+**Note:** in simulation mode nothing is published — it stays a pure in-browser/DB
+demo. Real commands only go out in **real** mode.
 
 ## MQTT protocol
 
 The ESP32 agent subscribes to `tsn/cmd/<device_id>/<command>` and publishes
-status / FX on:
+status / ack / FX on:
 
-| Topic                        | Direction / purpose                  |
-|------------------------------|------------------------------------|
-| `tsn/cmd/<id>/qos`          | in: `<priority>` (0-7)           |
-| `tsn/cmd/<id>/vlan`         | in: `<vlan_id>`                  |
-| `tsn/cmd/<id>/timesync`     | in: `<mode>` (0-3)              |
-| `tsn/cmd/<id>/tas`          | in: `<cycle_ns>`                 |
-| `tsn/cmd/<id>/preemption`   | in: `<mode>,<emac>,<pmac>`      |
-| `tsn/cmd/<id>/status`       | in: empty -> replies on `tsn/status` |
-| `tsn/cmd/<id>/fx`           | in: paylaod replicated to `tsn/fx/<id>` |
-| `tsn/status`                | out: JSON status                  |
-| `tsn/fx/#`                  | FX / C2C field exchange           |
+| Topic                        | Direction / purpose                        |
+|------------------------------|------------------------------------------|
+| `tsn/cmd/<id>/apply`        | in: JSON snapshot (preferred)             |
+| `tsn/cmd/<id>/qos`          | in: `<priority>` (0-7)                 |
+| `tsn/cmd/<id>/vlan`         | in: `<vlan_id>`                        |
+| `tsn/cmd/<id>/timesync`     | in: `<mode>` (0-3)                    |
+| `tsn/cmd/<id>/tas`          | in: `<cycle_ns>`                       |
+| `tsn/cmd/<id>/preemption`   | in: `<mode>,<emac>,<pmac>`            |
+| `tsn/cmd/<id>/status`       | in: empty -> replies on `tsn/status`    |
+| `tsn/ack`                  | out: `{"id","ok"}`                     |
+| `tsn/status`               | out: JSON status                        |
+| `tsn/discover`             | out: on connect                        |
+| `tsn/fx/#`                | FX / C2C field exchange                 |
+| `tsn/fx/field`            | in/out: C2C field exchange             |
+| `tsn/fx/<id>`             | in/out: device field exchange           |
 
 ## Limitations on ESP32
 

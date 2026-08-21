@@ -14,6 +14,7 @@ static const char *TAG = "mqtt";
 struct wtsn_mqtt {
     esp_mqtt_client_handle_t c;
     wtsn_cmd_cb cb;
+    wtsn_connected_cb conn_cb;
     void *ud;
 };
 
@@ -32,6 +33,7 @@ static void on_data(esp_mqtt_event_handle_t e) {
 
 static void on_connected(esp_mqtt_event_handle_t e) {
     wtsn_mqtt *m = (wtsn_mqtt *)e->user_context;
+    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/apply", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/qos", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/vlan", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/timesync", 0);
@@ -41,6 +43,7 @@ static void on_connected(esp_mqtt_event_handle_t e) {
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/fx", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/fx/#", 0);
     ESP_LOGI(TAG, "subscribed to commands");
+    if (m->conn_cb) m->conn_cb("", m->ud);
 }
 
 static void on_event(void *handler_args, esp_event_base_t base, int32_t event_id,
@@ -61,10 +64,11 @@ static void on_event(void *handler_args, esp_event_base_t base, int32_t event_id
 }
 
 wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
-                             wtsn_cmd_cb cb, void *ud) {
+                             wtsn_cmd_cb cb, wtsn_connected_cb conn_cb, void *ud) {
     wtsn_mqtt *m = calloc(1, sizeof(wtsn_mqtt));
     if (!m) return NULL;
     m->cb = cb;
+    m->conn_cb = conn_cb;
     m->ud = ud;
 
     esp_mqtt_client_config_t cfg = {

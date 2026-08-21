@@ -9,10 +9,214 @@ devices, sensors and a realistic frame flow so everything can be exercised witho
 
 Run:  python3 webgui.py [port]   ->  http://127.0.0.1:8000/
 """
-import json, os, random, sqlite3, threading, time
+import json, os, random, sqlite3, threading, time, socket, struct
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+
+# --- minimal MQTT 3.1.1 client (stdlib only, no paho dependency) ---
+class MqttBroker:
+    """Minimal MQTT 3.1.1 client: connect, subscribe, publish, keepalive.
+    Used in real mode to send commands to the ESP32 agent via a broker."""
+    def __init__(self, host="127.0.0.1", port=1883, client_id="wtsn-webgui"):
+        self.host, self.port, self.client_id = host, port, client_id
+        self.username = os.environ.get("WTSN_USER", "")
+        self.password = os.environ.get("WTSN_PASS", "")
+        self._sock = None
+        self._msg_id = 1
+        self._lock = threading.Lock()
+
+    def _write(self, hdr, body):
+        # variable header: byte 1 is remaining length
+        remaining = len(body)
+        enc = bytearray([(remaining % 128) | (0x80 if remaining >= 128 else 0)])
+        if remaining >= 128:
+            enc.append(remaining // 128)
+        self._sock.sendall(hdr + bytes(enc) + body)
+
+    def _read_packet(self):
+        sock = self._sock
+        # fixed header
+        fh = sock.recv(2)
+        if len(fh) < 2: return None
+        rem = fh[1]
+        mult, rem_len = 1, rem
+        while rem & 0x80:
+            r = sock.recv(1)
+            if not r: return None
+            rem_len += (r[0] & 0x7f) * mult
+            mult *= 128
+            rem = r[0]
+        body = b""
+        while len(body) < rem_len:
+            chunk = sock.recv(rem_len - len(body))
+            if not chunk: return None
+            body += chunk
+        return fh[0], body
+
+    def _send_str(self, body, s):
+        b = s.encode("utf-8")
+        return body + struct.pack(">H", len(b)) + b
+
+    def connect(self):
+        with self._lock:
+            try:
+                self._sock = socket.create_connection((self.host, self.port), timeout=5)
+            except OSError:
+                self._sock = None
+                return False
+            # CONNECT (MQTT 3.1.1)
+            flags = 0x02  # clean session
+            vh = b"\x00\x04MQTT\x04" + bytes([flags]) + struct.pack(">H", 30)
+            payload = self._send_str(b"", self.client_id)
+            if self.username:
+                flags |= 0x80
+                vh = b"\x00\x04MQTT\x04" + bytes([flags]) + struct.pack(">H", 30)
+                payload = self._send_str(payload, self.username)
+                payload = self._send_str(payload, self.password)
+            body = vh + payload
+            self._write(b"\x10", body)
+            resp = self._read_packet()
+            ok = resp and resp[0] == 0x20 and len(resp[1]) > 0 and resp[1][0] == 0
+            if not ok:
+                self._sock.close(); self._sock = None
+            return ok
+
+    def publish(self, topic, payload, qos=0):
+        if not self._sock: return False
+        with self._lock:
+            body = self._send_str(b"", topic)
+            body += bytes([qos << 6])
+            body += payload.encode("utf-8") if isinstance(payload, str) else payload
+            try:
+                self._write(b"\x30" if qos == 0 else b"\x32", body)
+                return True
+            except OSError:
+                self._sock = None
+                return False
+
+    def subscribe(self, topic, qos=0):
+        if not self._sock: return False
+        with self._lock:
+            self._msg_id += 1
+            body = struct.pack(">H", self._msg_id) + self._send_str(b"", topic) + bytes([qos])
+            try:
+                self._write(b"\x82", body)
+                return True
+            except OSError:
+                self._sock = None
+                return False
+
+    def close(self):
+        with self._lock:
+            if self._sock:
+                try: self._sock.close()
+                except OSError: pass
+                self._sock = None
+
+    def recv_publish(self):
+        """Read one inbound message. Returns (topic, payload) or None."""
+        try:
+            pkt = self._read_packet()
+        except OSError:
+            pkt = None
+        if not pkt:
+            try: self.close()
+            except Exception: pass
+            return None
+        ptype, body = pkt
+        if (ptype >> 4) == 3:
+            qos = (ptype >> 1) & 0x3
+            tl = struct.unpack(">H", body[:2])[0]
+            topic = body[2:2 + tl].decode("utf-8", "replace")
+            off = 2 + tl
+            if qos > 0:
+                off += 2
+            payload = body[off:].decode("utf-8", "replace")
+            return topic, payload
+        return None
+
+REAL_MQTT = None
+def get_real_mqtt(con):
+    """Return connected broker client (cached), connecting from settings or env."""
+    global REAL_MQTT
+    try:
+        brk = con.execute("SELECT key,value FROM settings WHERE key='broker'").fetchone()
+    except Exception:
+        brk = None
+    addr = brk["value"] if brk and brk["value"] else os.environ.get("WTSN_BROKER", "127.0.0.1:1883")
+    try:
+        host, port = addr.rsplit(":", 1)
+        port = int(port)
+    except Exception:
+        host, port = "127.0.0.1", 1883
+    if REAL_MQTT is not None:
+        if (REAL_MQTT.host, REAL_MQTT.port) != (host, port):
+            REAL_MQTT.close(); REAL_MQTT = None
+    if REAL_MQTT is None:
+        REAL_MQTT = MqttBroker(host, port, "wtsn-webgui")
+        if not REAL_MQTT.connect(): return None
+    return REAL_MQTT
+
+def mqtt_listener_loop():
+    """Background thread: subscribes to status/ack/discover and updates state."""
+    brk = host = port = None
+    while not LISTENER_STOP.is_set():
+        try:
+            con = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
+            con.row_factory = sqlite3.Row
+            ensure_schema(con)
+            row = con.execute("SELECT value FROM settings WHERE key='broker'").fetchone()
+            con.close()
+            addr = row["value"] if row and row["value"] else os.environ.get("WTSN_BROKER", "127.0.0.1:1883")
+            try:
+                h, p = addr.rsplit(":", 1); p = int(p)
+            except Exception:
+                h, p = "127.0.0.1", 1883
+            if brk is None or h != host or p != port:
+                if brk: brk.close()
+                brk = MqttBroker(h, p, "wtsn-webgui-listener")
+                host, port = h, p
+            if not brk.connect():
+                time.sleep(3); continue
+            brk.subscribe("tsn/ack")
+            brk.subscribe("tsn/status")
+            brk.subscribe("tsn/discover")
+            brk.subscribe("tsn/fx/#")
+            while not LISTENER_STOP.is_set():
+                r = brk.recv_publish()
+                if r is None:
+                    break
+                parse_listener_msg(r[0], r[1])
+        except Exception:
+            time.sleep(3)
+
+def parse_listener_msg(topic, payload):
+    try:
+        j = json.loads(payload)
+    except Exception:
+        j = {}
+    did = j.get("id", "")
+    try:
+        con = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
+        con.row_factory = sqlite3.Row
+        ensure_schema(con)
+    except Exception:
+        return
+    try:
+        if "/status" in topic and did:
+            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now') WHERE id=?", (did,))
+        elif "/discover" in topic and did:
+            con.execute("INSERT OR REPLACE INTO devices(id,name,status,last_seen) VALUES(?,?,0,strftime('%s','now'))", (did, did))
+        elif "/ack" in topic:
+            ok = j.get("ok", False)
+            add_event("config", "cnc", "ack %s %s" % (did, "OK" if ok else "FAIL"))
+            con.commit()
+            return
+        con.commit()
+        add_event(topic.split("/")[0], did or "broker", topic + " <- " + payload)
+    finally:
+        con.close()
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_REAL = os.environ.get("WTSN_DB", os.path.join(BASE, "build", "wtsn_gui.db"))
@@ -59,6 +263,7 @@ TSN_FUNCS = ["802.1Q QoS", "802.1Q VLAN", "gPTP 802.1AS", "802.1Qbv TAS",
 EVENTS = deque(maxlen=400)
 EVENT_LOCK = threading.Lock()
 MODE = {"mode": "sim"}
+LISTENER_STOP = threading.Event()
 
 
 def connect():
@@ -315,13 +520,50 @@ def run_action(act, body):
                        for r in con.execute("SELECT key,value FROM settings"))
             target = svr.get("server_id", "") or (svr.get("server_type", "pc"))
             add_event("config", "cnc", "EXECUTING settings on controller/server=" + str(target))
+            broker = get_real_mqtt(con)
+            n_pub = 0
             for r in con.execute("SELECT id FROM devices"):
-                add_event("fxmqtt", r["id"], "tsn/fx/node/%s <- config applied" % r["id"])
-            return {"ok": True, "msg": "Settings executed on controller"}
+                did = r["id"]
+                if not broker:
+                    break
+                snap = {"id": did}
+                qos = con.execute("SELECT * FROM qos_configs WHERE device_id=?", (did,)).fetchone()
+                if qos:
+                    snap["priority"] = qos["priority"]
+                    snap["traffic_class"] = qos["traffic_class"]
+                    snap["bandwidth_kbps"] = qos["bandwidth_kbps"]
+                    snap["latency_ms"] = qos["latency_ms"]
+                    snap["preemption"] = qos["preemption"] or 0
+                v = con.execute("SELECT v.* FROM vlan_members gr JOIN vlan_groups v ON "
+                               "v.id=gr.group_id WHERE gr.device_id=?", (did,)).fetchone()
+                if v:
+                    snap["vlan_id"] = v["vlan_id"]
+                    snap["group"] = v["name"]
+                pre = con.execute("SELECT * FROM preemption_configs WHERE device_id=?", (did,)).fetchone()
+                if pre:
+                    snap["preemption"] = pre["preemption"]
+                ts = con.execute("SELECT * FROM timesync_status WHERE id='main'", ()).fetchone()
+                if ts:
+                    snap["timesync_mode"] = ts["mode"]
+                    snap["grandmaster"] = ts["grandmaster"]
+                tas = con.execute("SELECT * FROM tas_schedules WHERE 1 LIMIT 1", ()).fetchone()
+                if tas:
+                    snap["tas_cycle_ns"] = tas["cycle_time_ns"]
+                broker.publish("tsn/cmd/%s/apply" % did, json.dumps(snap))
+                broker.publish("tsn/cmd/%s/status" % did, "1")
+                n_pub += 1
+                add_event("fxmqtt", "cnc", "apply sent tsn/cmd/%s/apply" % did)
+            if broker:
+                return {"ok": True, "msg": "Sent /apply to %d device(s) via MQTT" % n_pub}
+            return {"ok": False, "msg": "MQTT broker not reachable (" + str(target) + ")"}
         if act == "fx_send":
+            b = get_real_mqtt(con) if MODE["mode"] == "real" else None
             add_event("fx", body.get("source", "cnc"),
-                     "tsn/fx/field <- " + body.get("msg", ""))
-            return {"ok": True, "msg": "FX sent"}
+                      ("tsn/fx/field <- " + body.get("msg", "")))
+            if b:
+                b.publish("tsn/fx/field", body.get("msg", ""))
+                return {"ok": True, "msg": "FX published on broker"}
+            return {"ok": True, "msg": "FX sent (no broker / simulation)"}
         if act == "clear_events":
             EVENTS.clear()
             return {"ok": True, "msg": "monitor cleared"}
@@ -542,7 +784,14 @@ function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><di
 function refreshMon(){if($("mon")){const ev=(D.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span>"+esc(e.data)+"</span></div>").join("");$("mon").innerHTML=ev||"<div class='monrow'><span>no traffic yet</span></div>"}}
 function sensors(){let r=D.sensors.map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+esc(s.sensor_id)+"</td><td>"+esc(s.type)+"</td><td>"+s.value+" "+esc(s.unit)+"</td><td class='"+(s.healthy?"":"') style='color:var(--err)")+"'>"+(s.healthy?"healthy":"fault")+"</td></tr>").join("");
  return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(D.sensors.length?("<table><tr><th>device</th><th>id</th><th>type</th><th>value</th><th>health</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="sim"?"Waiting for simulation sensors...":"Connect real sensors — none identified yet.")+"</div>")}
-function settings(){return "<h2>Settings</h2><div class='card'><div class='row'><label>mode</label><span>"+D.mode+"</span></div><div class='row'><label>db</label><span>"+esc(D.db||"wtsn_gui.db")+"</span></div><div class='row'><label>push</label><span>configs are stored to SQLite; CLI/simulator apply them to nodes</span></div></div>"}
+function settings(){
+ const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
+ return "<h2>Settings</h2><div class='card'><div class='row'><label>mode</label><span>"+D.mode+"</span></div>"+
+  "<div class='row'><label>MQTT broker</label><input id=broker_in value='"+esc(brk.value||"127.0.0.1:1883")+"'></div>"+
+  "<button onclick=saveBroker()>Apply broker</button></div>"+
+  "<div class='card'><div class='row'><label>db</label><span>"+esc(D.db||"wtsn_gui.db")+"</span></div>"+
+  "<div class='row'><label>push</label><span>in <b>Real</b> mode /apply is sent over MQTT to devices</span></div></div>"}
+function saveBroker(){api("set_server",{type:((D.settings||[]).find(s=>s.key==="server_type")||{}).value||"node",id:"",broker:$("broker_in").value}).then(load)}
 setInterval(async()=>{const r=await fetch("/api/events");const j=await r.json();if(j.mode){D.mode=j.mode}if($("mon")){const ev=(j.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span>"+esc(e.data)+"</span></div>").join("");$("mon").innerHTML=ev||""}},2000);
 load();</script></body></html>
 """
@@ -552,6 +801,7 @@ if __name__ == "__main__":
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     threading.Thread(target=sim_runner, daemon=True).start()
+    threading.Thread(target=mqtt_listener_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler())
     print("WTSN web GUI: http://127.0.0.1:%d  (db=%s)" % (port, DB_REAL), flush=True)
     try:

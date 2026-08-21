@@ -6,42 +6,90 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "string.h"
+#include "stdio.h"
 
 #include "wtsn_agent.h"
 #include "wtsn_cfg.h"
 #include "wtsn_mqtt.h"
 #include "wtsn_tsn.h"
+#include "wtsn_json.h"
 
 static const char *TAG = "wtsn_main";
-
 static char g_device_id[32] = "esp32-01";
 static wtsn_mqtt *g_mqtt = NULL;
+
+static void send_ack(bool ok, const char *reason) {
+    char buf[128];
+    int n = snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"ok\":%s", g_device_id,
+                    ok ? "true" : "false");
+    if (!ok && reason && reason[0]) {
+        n += snprintf(buf + n, sizeof(buf) - (size_t)n, ",\"err\":\"%s\"", reason);
+    }
+    snprintf(buf + n, sizeof(buf) - (size_t)n, "}");
+    wtsn_mqtt_publish(g_mqtt, "tsn/ack", buf);
+}
+
+static void on_connected(const char *client_id, void *ud) {
+    (void)client_id; (void)ud;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"id\":\"%s\"}", g_device_id);
+    wtsn_mqtt_publish(g_mqtt, "tsn/discover", buf);
+    ESP_LOGI(TAG, "published discover for %s", g_device_id);
+}
+
+static void apply_snapshot(const char *payload) {
+    wtsn_config_snapshot cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    int v;
+    if (wtsn_json_get_int(payload, "priority", &v)) cfg.priority = v;
+    if (wtsn_json_get_int(payload, "traffic_class", &v)) cfg.traffic_class = v;
+    if (wtsn_json_get_int(payload, "bandwidth_kbps", &v)) cfg.bandwidth_kbps = v;
+    if (wtsn_json_get_int(payload, "latency_ms", &v)) cfg.latency_ms = v;
+    if (wtsn_json_get_int(payload, "preemption", &v)) cfg.preemption = v;
+    if (wtsn_json_get_int(payload, "vlan_id", &v)) cfg.vlan_id = v;
+    wtsn_json_get_str(payload, "group", cfg.group, sizeof(cfg.group));
+    if (wtsn_json_get_int(payload, "timesync_mode", &v)) cfg.timesync_mode = v;
+    wtsn_json_get_str(payload, "grandmaster", cfg.grandmaster, sizeof(cfg.grandmaster));
+    int64_t l;
+    if (wtsn_json_get_i64(payload, "tas_cycle_ns", &l)) cfg.tas_cycle_ns = l;
+
+    if (wtsn_tsn_apply_snapshot(&cfg) == 0) send_ack(true, "");
+    else send_ack(false, "apply_failed");
+}
 
 static void on_command(const char *topic, const char *payload, void *ud) {
     (void)ud;
     ESP_LOGI(TAG, "cmd %s <- %s", topic, payload);
+    if (strstr(topic, "/apply")) { apply_snapshot(payload); return; }
+
     char *slash = strrchr(topic, '/');
     const char *cmd = slash ? slash + 1 : topic;
 
     if (strcmp(cmd, "qos") == 0) {
-        int prio = atoi(payload);
-        wtsn_tsn_apply_qos(prio, prio, 0, 0, 0);
+        int p = atoi(payload);
+        wtsn_tsn_apply_qos(p, p, 0, 0, 0);
+        send_ack(true, "");
     } else if (strcmp(cmd, "vlan") == 0) {
         wtsn_tsn_apply_vlan(atoi(payload), "");
+        send_ack(true, "");
     } else if (strcmp(cmd, "timesync") == 0) {
         wtsn_tsn_apply_timesync(atoi(payload), "");
+        send_ack(true, "");
     } else if (strcmp(cmd, "tas") == 0) {
-        wtsn_tsn_apply_tas((int64_t)atoi(payload), "", NULL, NULL, 0);
+        wtsn_tsn_apply_tas((int64_t)atoi(payload), NULL, NULL, 0);
+        send_ack(true, "");
     } else if (strcmp(cmd, "preemption") == 0) {
         char mode[8] = {0}, emac[32] = {0}, pmac[32] = {0};
         const char *p1 = payload;
         const char *c1 = strchr(p1, ',');
         if (c1) {
-            strncpy(mode, p1, (size_t)(c1 - p1) < sizeof(mode) ? (size_t)(c1 - p1) : sizeof(mode) - 1);
+            size_t ml = (size_t)(c1 - p1);
+            strncpy(mode, p1, ml < sizeof(mode) ? ml : sizeof(mode) - 1);
             const char *p2 = c1 + 1;
             const char *c2 = strchr(p2, ',');
             if (c2) {
-                strncpy(emac, p2, (size_t)(c2 - p2) < sizeof(emac) ? (size_t)(c2 - p2) : sizeof(emac) - 1);
+                size_t el = (size_t)(c2 - p2);
+                strncpy(emac, p2, el < sizeof(emac) ? el : sizeof(emac) - 1);
                 wtsn_strlcpy(pmac, c2 + 1, sizeof(pmac));
             } else {
                 wtsn_strlcpy(emac, p2, sizeof(emac));
@@ -50,11 +98,14 @@ static void on_command(const char *topic, const char *payload, void *ud) {
             wtsn_strlcpy(mode, p1, sizeof(mode));
         }
         wtsn_tsn_apply_preemption(atoi(mode), emac, pmac);
+        send_ack(true, "");
     } else if (strcmp(cmd, "status") == 0) {
         wtsn_tsn_state *st = wtsn_tsn_get_state();
-        (void)st;
-        char buf[128];
-        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"status\":\"online\"}", g_device_id);
+        char buf[160];
+        snprintf(buf, sizeof(buf),
+                 "{\"id\":\"%s\",\"status\":\"online\",\"prio\":%d,\"vlan\":%d,"
+                 "\"preempt\":%d,\"tc\":%d}",
+                 g_device_id, st->priority, st->vlan_id, st->preemption, st->traffic_class);
         wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
     } else if (strcmp(cmd, "fx") == 0) {
         char buf[64];
@@ -70,12 +121,15 @@ static void wifi_init(const char *ssid, const char *pass) {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     wifi_config_t wc = {
-        .sta = { .threshold.authmode = WIFI_AUTH_WPA2_PSK },
+        .sta = {
+            .ssid = "",
+            .password = "",
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+        },
     };
     snprintf((char *)wc.sta.ssid, sizeof(wc.sta.ssid), "%s", ssid);
     snprintf((char *)wc.sta.password, sizeof(wc.sta.password), "%s", pass);
     wc.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    wc.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -95,8 +149,10 @@ void app_main(void) {
 
     wifi_init(wifi_ssid[0] ? wifi_ssid : "WTSN", wifi_pass);
 
-    g_mqtt = wtsn_mqtt_create(mqtt_host, mqtt_port, g_device_id, on_command, NULL);
+    g_mqtt = wtsn_mqtt_create(mqtt_host, mqtt_port, g_device_id, on_command,
+                               on_connected, NULL);
     if (g_mqtt) wtsn_mqtt_start(g_mqtt);
+    ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, mqtt_host, mqtt_port);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
