@@ -8,10 +8,6 @@
 static const char *skipws(const char *s) { while (s && *s && (*s==' '||*s=='\t'||*s=='\n'||*s=='\r')) s++; return s; }
 
 /* iterate "key": value at root */
-    return NULL;
-}
-
-/* Correct implementation: iterate "key": value at root */
 static const char *probe_value(const char *json, const char *key, int *cmp) {
     const char *p = json;
     size_t klen = strlen(key);
@@ -28,7 +24,8 @@ static const char *probe_value(const char *json, const char *key, int *cmp) {
         const char *val = skipws(p + 1);
         if (n == klen && memcmp(ks, key, klen) == 0) { *cmp = 1; return val; }
         *cmp = 0;
-        /* skip this value to next entry */        if (*val == '"') { const char *qe = strchr(val + 1, '"'); p = qe ? qe + 1 : val + 1; }
+        /* skip this value to next entry */
+        if (*val == '"') { const char *qe = strchr(val + 1, '"'); p = qe ? qe + 1 : val + 1; }
         else if (*val == '{') { int d=1; p=val+1; while (p && *p && d){ if(*p=='{')d++; else if(*p=='}')d--; p++;} }
         else if (*val == '[') { int d=1; p=val+1; while (p && *p && d){ if(*p=='[')d++; else if(*p==']')d--; p++;} }
         else { const char *e = val; while (*e && *e!=',' && *e!='}' && *e!=' ') e++; p = e; }

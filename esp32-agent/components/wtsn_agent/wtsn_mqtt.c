@@ -1,5 +1,4 @@
 #include "wtsn_mqtt.h"
-#include "wtsn_agent.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -36,6 +35,7 @@ static void on_connected(esp_mqtt_event_handle_t e) {
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/apply", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/qos", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/vlan", 0);
+    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/wifi", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/timesync", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/tas", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/preemption", 0);

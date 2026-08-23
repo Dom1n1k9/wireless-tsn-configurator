@@ -43,7 +43,7 @@ idf.py build -p /dev/ttyUSB0 flash monitor
 4. Click **"Execute settings on controller"** (bottom bar) — the webgui now
    connects to the broker and publishes a **single JSON snapshot** on
    `tsn/cmd/<device>/apply` for every configured device, exactly what this ESP32
-   agent consumes, plus `status`. The agent replies on `tsn/ack` and
+   agent consumes, plus `status`. The agent replies on `tsn/ack/<id>` and
    `tsn/status`; the webgui subscribes to these so devices show online.
 
 The webgui embeds a stdlib-only MQTT 3.1.1 client (no paho needed), see the
@@ -68,7 +68,7 @@ status / ack / FX on:
 | `tsn/cmd/<id>/tas`          | in: `<cycle_ns>`                       |
 | `tsn/cmd/<id>/preemption`   | in: `<mode>,<emac>,<pmac>`            |
 | `tsn/cmd/<id>/status`       | in: empty -> replies on `tsn/status`    |
-| `tsn/ack`                  | out: `{"id","ok"}`                     |
+| `tsn/ack/<id>`              | out: `{"id","ok"}`                     |
 | `tsn/status`               | out: JSON status                        |
 | `tsn/discover`             | out: on connect                        |
 | `tsn/fx/#`                | FX / C2C field exchange                 |

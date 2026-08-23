@@ -161,6 +161,7 @@ def get_real_mqtt(con):
 def mqtt_listener_loop():
     """Background thread: subscribes to status/ack/discover and updates state."""
     brk = host = port = None
+    cons = None
     while not LISTENER_STOP.is_set():
         try:
             con = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
@@ -179,30 +180,30 @@ def mqtt_listener_loop():
                 host, port = h, p
             if not brk.connect():
                 time.sleep(3); continue
-            brk.subscribe("tsn/ack")
+            brk.subscribe("tsn/ack/#")
             brk.subscribe("tsn/status")
             brk.subscribe("tsn/discover")
             brk.subscribe("tsn/fx/#")
+            if cons is None:
+                cons = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
+                cons.row_factory = sqlite3.Row
+                ensure_schema(cons)
             while not LISTENER_STOP.is_set():
                 r = brk.recv_publish()
                 if r is None:
                     break
-                parse_listener_msg(r[0], r[1])
+                parse_listener_msg(cons, r[0], r[1])
+            if cons:
+                cons.commit()
         except Exception:
             time.sleep(3)
 
-def parse_listener_msg(topic, payload):
+def parse_listener_msg(con, topic, payload):
     try:
         j = json.loads(payload)
     except Exception:
         j = {}
     did = j.get("id", "")
-    try:
-        con = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
-        con.row_factory = sqlite3.Row
-        ensure_schema(con)
-    except Exception:
-        return
     try:
         if "/status" in topic and did:
             con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now') WHERE id=?", (did,))
@@ -210,13 +211,15 @@ def parse_listener_msg(topic, payload):
             con.execute("INSERT OR REPLACE INTO devices(id,name,status,last_seen) VALUES(?,?,0,strftime('%s','now'))", (did, did))
         elif "/ack" in topic:
             ok = j.get("ok", False)
+            with ACK_LOCK:
+                RECENT_ACKS[did] = (ok, time.time())
             add_event("config", "cnc", "ack %s %s" % (did, "OK" if ok else "FAIL"))
             con.commit()
             return
         con.commit()
         add_event(topic.split("/")[0], did or "broker", topic + " <- " + payload)
-    finally:
-        con.close()
+    except Exception:
+        pass
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_REAL = os.environ.get("WTSN_DB", os.path.join(BASE, "build", "wtsn_gui.db"))
@@ -264,6 +267,8 @@ EVENTS = deque(maxlen=400)
 EVENT_LOCK = threading.Lock()
 MODE = {"mode": "sim"}
 LISTENER_STOP = threading.Event()
+RECENT_ACKS = {}
+ACK_LOCK = threading.Lock()
 
 
 def connect():
@@ -522,6 +527,7 @@ def run_action(act, body):
             add_event("config", "cnc", "EXECUTING settings on controller/server=" + str(target))
             broker = get_real_mqtt(con)
             n_pub = 0
+            snapshots = {}
             for r in con.execute("SELECT id FROM devices"):
                 did = r["id"]
                 if not broker:
@@ -549,13 +555,34 @@ def run_action(act, body):
                 tas = con.execute("SELECT * FROM tas_schedules WHERE 1 LIMIT 1", ()).fetchone()
                 if tas:
                     snap["tas_cycle_ns"] = tas["cycle_time_ns"]
-                broker.publish("tsn/cmd/%s/apply" % did, json.dumps(snap))
+                snapshots[did] = json.dumps(snap)
+                broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
                 broker.publish("tsn/cmd/%s/status" % did, "1")
                 n_pub += 1
                 add_event("fxmqtt", "cnc", "apply sent tsn/cmd/%s/apply" % did)
-            if broker:
-                return {"ok": True, "msg": "Sent /apply to %d device(s) via MQTT" % n_pub}
-            return {"ok": False, "msg": "MQTT broker not reachable (" + str(target) + ")"}
+            if not broker:
+                return {"ok": False, "msg": "MQTT broker not reachable (" + str(target) + ")"}
+            # wait up to ~2s for acks; retry once for non-acknowledged devices
+            retried = []
+            pending = []
+            end = time.time() + 2.0
+            while time.time() < end:
+                with ACK_LOCK:
+                    acked = set(RECENT_ACKS.keys())
+                pending = [r["id"] for r in con.execute("SELECT id FROM devices")
+                           if r["id"] not in acked]
+                if not pending:
+                    break
+                time.sleep(0.3)
+            for did in pending:
+                if did in snapshots:
+                    broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
+                    retried.append(did)
+                    add_event("fxmqtt", "cnc", "retry tsn/cmd/%s/apply" % did)
+            msg = "Sent /apply to %d device(s) via MQTT" % n_pub
+            if retried:
+                msg += "; %d retried (no ack)" % len(retried)
+            return {"ok": True, "msg": msg}
         if act == "fx_send":
             b = get_real_mqtt(con) if MODE["mode"] == "real" else None
             add_event("fx", body.get("source", "cnc"),

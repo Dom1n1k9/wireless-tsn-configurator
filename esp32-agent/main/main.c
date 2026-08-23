@@ -8,7 +8,6 @@
 #include "string.h"
 #include "stdio.h"
 
-#include "wtsn_agent.h"
 #include "wtsn_cfg.h"
 #include "wtsn_mqtt.h"
 #include "wtsn_tsn.h"
@@ -26,7 +25,9 @@ static void send_ack(bool ok, const char *reason) {
         n += snprintf(buf + n, sizeof(buf) - (size_t)n, ",\"err\":\"%s\"", reason);
     }
     snprintf(buf + n, sizeof(buf) - (size_t)n, "}");
-    wtsn_mqtt_publish(g_mqtt, "tsn/ack", buf);
+    char topic[40];
+    snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+    wtsn_mqtt_publish(g_mqtt, topic, buf);
 }
 
 static void on_connected(const char *client_id, void *ud) {
@@ -38,10 +39,15 @@ static void on_connected(const char *client_id, void *ud) {
 }
 
 static void apply_snapshot(const char *payload) {
+    if (!payload || !payload[0] || payload[0] != '{') {
+        send_ack(false, "bad_json");
+        return;
+    }
     wtsn_config_snapshot cfg;
     memset(&cfg, 0, sizeof(cfg));
     int v;
-    if (wtsn_json_get_int(payload, "priority", &v)) cfg.priority = v;
+    bool have_prio = wtsn_json_get_int(payload, "priority", &v);
+    if (have_prio) cfg.priority = v;
     if (wtsn_json_get_int(payload, "traffic_class", &v)) cfg.traffic_class = v;
     if (wtsn_json_get_int(payload, "bandwidth_kbps", &v)) cfg.bandwidth_kbps = v;
     if (wtsn_json_get_int(payload, "latency_ms", &v)) cfg.latency_ms = v;
@@ -52,6 +58,19 @@ static void apply_snapshot(const char *payload) {
     wtsn_json_get_str(payload, "grandmaster", cfg.grandmaster, sizeof(cfg.grandmaster));
     int64_t l;
     if (wtsn_json_get_i64(payload, "tas_cycle_ns", &l)) cfg.tas_cycle_ns = l;
+
+    if (have_prio && (cfg.priority < 0 || cfg.priority > 7)) {
+        send_ack(false, "bad_priority");
+        return;
+    }
+    if (cfg.preemption < 0 || cfg.preemption > 1) {
+        send_ack(false, "bad_preemption");
+        return;
+    }
+    if (cfg.timesync_mode < 0 || cfg.timesync_mode > 3) {
+        send_ack(false, "bad_timesync_mode");
+        return;
+    }
 
     if (wtsn_tsn_apply_snapshot(&cfg) == 0) send_ack(true, "");
     else send_ack(false, "apply_failed");
