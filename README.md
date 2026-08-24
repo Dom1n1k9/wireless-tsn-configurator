@@ -1,25 +1,48 @@
 # Wireless TSN Configurator
 
-A production-grade application for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms. The **core is written in pure C** (C11) for the control plane, and a **Python web GUI** (`webgui.py`, stdlib only) is the front-end.
+> **Central controller for Wireless TSN** — ESP32, Raspberry Pi, STM32, NXP and
+> Linux inline with IEEE 802.1Qcc. **Zero-touch node onboarding**: flash the
+> agent, connect it to power, and it provisions itself.
+
+A production-grade application for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms. The **core is written in pure C (C11)** for the control plane, and a **Python web GUI** (`webgui.py`, stdlib only) is the front-end.
 
 It acts as a **central controller (CNC-style control plane, aligned with IEEE 802.1Qcc)** that discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization / schedule policies, reads sensors, and exposes the whole network over **FXMQTT** — OPC UA FX / C2C Field Exchange carried entirely over MQTT, with a firmware agent for physical devices, a node simulator for virtual ones, and a live communication trace.
+
+---
+
+## Zero-touch onboarding
+
+**Flash it. Power it. It connects itself.**
+
+- On first boot a node with no WiFi credentials starts a **SoftAP `WTSN-Setup`**
+  and serves a config portal at **http://192.168.4.1/** — enter your WiFi SSID /
+  password and MQTT broker, and it saves them to NVS, reboots, joins your network
+  and announces itself to the configurator. No soldering, no serial config.
+- New controllers (ESP32, later STM32 / NXP / RPi) use the **same agent
+  protocol** — the host `tsn-node-agent` (Linux/RPi) and the embedded agents all
+  speak one JSON `/apply` snapshot, so onboarding Dockeries across hardware.
+- WiFi can be changed later remotely via the web GUI (`wifi` command on
+  `tsn/cmd/<id>/wifi`).
 
 ---
 
 ## What it does
 
 - **Automatic device discovery** via MQTT and plugins (extensible for future protocols)
-- **Device management** — tree view, online / offline / error states, and full info (ID, IP, firmware, last seen, supported TSN features)
+- **Device management** — online / offline / error states, and full info (ID, IP, firmware, last seen, supported TSN features)
 - **Centralized configuration (IEEE 802.1Qcc aligned)** — pushes QoS / VLAN / time-sync / schedules to the nodes
 - **IEEE 802.1Q QoS** — priority 0-7, traffic classes, bandwidth reservation, latency requirements
-- **IEEE 802.1Q VLAN** — VLAN ID, group membership, import / export
+- **IEEE 802.1Q VLAN** — VLAN ID, group membership
 - **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local / external grandmaster modes
-- **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), cycle time, deploy schedules, visualize gate windows
+- **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), cycle time, deploy schedules, visualize gate windows (full GCL is pushed to the node over `/apply`)
 - **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt preemptable classes to protect time-critical traffic
 - **Sensor management** — auto-detect temperature, pressure, IMU, distance, GPIO sensors with diagnostics
 - **OPC UA FX over MQTT (FXMQTT)** — PubSub / C2C Field Exchange over MQTT
 - **MQTT client** — the single communication channel
 - **Communication trace / monitoring** in the GUI
+
+All state is persisted in **SQLite**, so devices and configurations survive restarts.
+The front-end is a **Python web GUI** (module) replacing the old LVGL C GUI.
 
 All state is persisted in **SQLite**, so devices and configurations survive restarts.
 
@@ -130,9 +153,11 @@ cmake --build build --target tsn-node-agent
 | `--mqtt-host`  | Configurator / broker host          |
 | `--mqtt-port`  | MQTT port (default 1883)          |
 
-Commands over `tsn/cmd/<device>`: `qos`, `vlan`, `timesync`, `tas`, `status`
-and `fx` (FX multicast). Linux/Raspberry Pi apply QoS/VLAN via `iproute2`+`tc`;
-ESP32/STM32/NXP ship as compile-safe embedded adapters ready for the vendor SDK.
+Commands over `tsn/cmd/<device>`: `apply` (preferred — full JSON snapshot),
+`qos`, `vlan`, `timesync`, `tas`, `status`, `wifi` and `fx`. The agent replies
+with an ACK on `tsn/ack/<id>`. Linux/Raspberry Pi apply QoS/VLAN via
+`iproute2`+`tc`; ESP32/STM32/NXP use the embedded adapters. The **ESP32 agent**
+(`esp32-agent/`) is the reference implementation with zero-touch provisioning.
 
 ---
 
@@ -193,6 +218,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   the same sqlite schema.
 - The project has been built with GCC on Linux and the full test suite (`wtsn-tests`)
   passes; the CLI, node simulator and node agent all run headless.
+- GitHub Actions CI builds, tests and packages on every push.
 
 ---
 
