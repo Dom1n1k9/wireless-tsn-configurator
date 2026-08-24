@@ -10,5 +10,7 @@
 bool wtsn_json_get_int(const char *json, const char *key, int *out);
 bool wtsn_json_get_i64(const char *json, const char *key, int64_t *out);
 bool wtsn_json_get_str(const char *json, const char *key, char *out, size_t sz);
+bool wtsn_json_get_root_array(const char *json, const char *key, const char **out);
+int wtsn_json_parse_gcl(const char *arr, int *gates, int64_t *durations, int max_entries);
 
 #endif

@@ -3,6 +3,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "string.h"
@@ -28,6 +29,20 @@ static void send_ack(bool ok, const char *reason) {
     char topic[40];
     snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
     wtsn_mqtt_publish(g_mqtt, topic, buf);
+}
+
+static void crate_set_wifi(const char *payload) {
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    wtsn_json_get_str(payload, "ssid", ssid, sizeof(ssid));
+    wtsn_json_get_str(payload, "pass", pass, sizeof(pass));
+    if (ssid[0]) {
+        wtsn_cfg_set_wifi(ssid, pass);
+        ESP_LOGI(TAG, "set_wifi: %s (restart to connect)", ssid);
+        /* Restart will apply the new credentials from NVS on boot. */
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart();
+    }
 }
 
 static void on_connected(const char *client_id, void *ud) {
@@ -59,6 +74,14 @@ static void apply_snapshot(const char *payload) {
     int64_t l;
     if (wtsn_json_get_i64(payload, "tas_cycle_ns", &l)) cfg.tas_cycle_ns = l;
 
+    /* parse optional GCL array (802.1Qbv gate windows), if present */
+    const char *gcl_arr = NULL;
+    wtsn_json_get_root_array(payload, "gcl", &gcl_arr);
+    if (gcl_arr) {
+        cfg.gcl_entries = wtsn_json_parse_gcl(gcl_arr, cfg.gates, cfg.durations,
+                                               WTSN_GCL_MAX);
+    }
+
     if (have_prio && (cfg.priority < 0 || cfg.priority > 7)) {
         send_ack(false, "bad_priority");
         return;
@@ -84,7 +107,11 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     char *slash = strrchr(topic, '/');
     const char *cmd = slash ? slash + 1 : topic;
 
-    if (strcmp(cmd, "qos") == 0) {
+    if (strcmp(cmd, "wifi") == 0) {
+        /* set_wifi: expects JSON {"ssid":"...","pass":"..."} on tsn/cmd/<id>/wifi */
+        crate_set_wifi(payload);
+        send_ack(true, "");
+    } else if (strcmp(cmd, "qos") == 0) {
         int p = atoi(payload);
         wtsn_tsn_apply_qos(p, p, 0, 0, 0);
         send_ack(true, "");

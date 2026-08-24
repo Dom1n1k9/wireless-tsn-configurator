@@ -88,3 +88,8 @@ bool wtsn_cfg_save(const char *device_id, const char *wifi_ssid,
     nvs_set_int(KEY_MQTT_PORT, mqtt_port);
     return true;
 }
+
+void wtsn_cfg_set_wifi(const char *ssid, const char *pass) {
+    if (ssid) nvs_set_str(KEY_WIFI_SSID, ssid);
+    if (pass) nvs_set_str(KEY_WIFI_PASS, pass);
+}

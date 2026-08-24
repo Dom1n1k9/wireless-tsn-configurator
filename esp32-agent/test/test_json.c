@@ -47,6 +47,31 @@ int main(void) {
     if (wtsn_json_get_int("{}", "x", &e)) { printf("FAIL empty\n"); failures++; }
     else printf("ok   empty json handled\n");
 
+    /* GCL array parsing */
+    const char *gcl = "[{\"gate_state\":1,\"duration_ns\":300000},"
+                      "{\"gate_state\":3,\"duration_ns\":200000},"
+                      "{\"gate_state\":0,\"duration_ns\":500000}]";
+    int gates[32];
+    int64_t durs[32];
+    int n = wtsn_json_parse_gcl(gcl, gates, durs, 32);
+    if (n != 3) { printf("FAIL gcl count %d\n", n); failures++; }
+    else if (gates[0] != 1 || durs[0] != 300000LL) { printf("FAIL gcl[0]\n"); failures++; }
+    else if (gates[1] != 3 || durs[1] != 200000LL) { printf("FAIL gcl[1]\n"); failures++; }
+    else if (gates[2] != 0 || durs[2] != 500000LL) { printf("FAIL gcl[2]\n"); failures++; }
+    else printf("ok   gcl parse %d entries\n", n);
+
+    const char *snap2 = "{\"id\":\"x\",\"tas_cycle_ns\":1000000,\"gcl\":[{\"gate_state\":1,\"duration_ns\":400000},{\"gate_state\":0,\"duration_ns\":600000}]}";
+    const char *arr2 = NULL;
+    if (!wtsn_json_get_root_array(snap2, "gcl", &arr2)) { printf("FAIL array locate\n"); failures++; }
+    else {
+        int g2[4]; int64_t d2[4];
+        int n2 = wtsn_json_parse_gcl(arr2, g2, d2, 4);
+        if (n2 != 2) { printf("FAIL gcl2 count %d\n", n2); failures++; }
+        else if (g2[0] != 1 || d2[0] != 400000LL || g2[1] != 0 || d2[1] != 600000LL)
+        { printf("FAIL gcl2 values\n"); failures++; }
+        else printf("ok   array locate + parse\n");
+    }
+
     if (failures == 0) { printf("ALL TESTS PASSED\n"); return 0; }
     printf("%d FAILURES\n", failures);
     return 1;

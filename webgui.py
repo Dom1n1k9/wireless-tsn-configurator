@@ -562,9 +562,16 @@ def run_action(act, body):
                 if ts:
                     snap["timesync_mode"] = ts["mode"]
                     snap["grandmaster"] = ts["grandmaster"]
-                tas = con.execute("SELECT * FROM tas_schedules WHERE 1 LIMIT 1", ()).fetchone()
+                tas = con.execute("SELECT * FROM tas_schedules WHERE 1 LIMIT 1",
+                                 ()).fetchone()
                 if tas:
                     snap["tas_cycle_ns"] = tas["cycle_time_ns"]
+                    gcl = con.execute(
+                        "SELECT gate_state,duration_ns FROM gcl_entries "
+                        "WHERE schedule_id=? ORDER BY \"index\"", (tas["id"],)).fetchall()
+                    if gcl:
+                        snap["gcl"] = [{"gate_state": g["gate_state"],
+                                         "duration_ns": g["duration_ns"]} for g in gcl]
                 snapshots[did] = json.dumps(snap)
                 broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
                 broker.publish("tsn/cmd/%s/status" % did, "1")

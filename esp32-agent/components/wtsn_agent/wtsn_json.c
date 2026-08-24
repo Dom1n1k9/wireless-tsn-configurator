@@ -72,3 +72,34 @@ bool wtsn_json_get_str(const char *json, const char *key, char *out, size_t sz) 
     out[n] = '\0';
     return true;
 }
+
+/* Locate a top-level array value and return pointer to its '[' (or NULL).
+   Only sets *out if the value is an array (starts with '['). */
+bool wtsn_json_get_root_array(const char *json, const char *key, const char **out) {
+    int cmp = 0;
+    const char *p = (const char *)probe_value(json, key, &cmp);
+    if (!p || !cmp || *p != '[') return false;
+    if (out) *out = p;
+    return true;
+}
+
+/* Parse a JSON array of {"gate_state":N,"duration_ns":M} objects into
+   parallel arrays. Returns number of entries parsed (max max_entries). */
+int wtsn_json_parse_gcl(const char *arr, int *gates, int64_t *durations, int max_entries) {
+    if (!arr || !gates || !durations || max_entries <= 0) return 0;
+    const char *p = arr + 1; /* skip '[' */
+    int n = 0;
+    for (; p && *p && *p != ']' && n < max_entries; ) {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',' || *p == '{') p++;
+        if (!*p || *p == ']') break;
+        int gs = 0;
+        if (wtsn_json_get_int(p, "gate_state", &gs)) gates[n] = gs;
+        int64_t dur = 0;
+        if (wtsn_json_get_i64(p, "duration_ns", &dur)) durations[n] = dur;
+        n++;
+        /* advance past this object: find matching '}' */
+        p = strchr(p, '}');
+        if (p) p++;
+    }
+    return n;
+}
