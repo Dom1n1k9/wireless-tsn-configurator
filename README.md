@@ -20,7 +20,7 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
   and announces itself to the configurator. No soldering, no serial config.
 - New controllers (ESP32, later STM32 / NXP / RPi) use the **same agent
   protocol** — the host `tsn-node-agent` (Linux/RPi) and the embedded agents all
-  speak one JSON `/apply` snapshot, so onboarding Dockeries across hardware.
+  speak one JSON `/apply` snapshot, so onboarding works the same across hardware.
 - WiFi can be changed later remotely via the web GUI (`wifi` command on
   `tsn/cmd/<id>/wifi`).
 
@@ -31,6 +31,7 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 - **Automatic device discovery** via MQTT and plugins (extensible for future protocols)
 - **Device management** — online / offline / error states, and full info (ID, IP, firmware, last seen, supported TSN features)
 - **Centralized configuration (IEEE 802.1Qcc aligned)** — pushes QoS / VLAN / time-sync / schedules to the nodes
+- **IEEE 802.1Qcc TSN Stream reservation** — Talker / Listener streams with latency, interval, VLAN and priority; deploy to all nodes over MQTT (`tsn/cmd/<dev>/stream`)
 - **IEEE 802.1Q QoS** — priority 0-7, traffic classes, bandwidth reservation, latency requirements
 - **IEEE 802.1Q VLAN** — VLAN ID, group membership
 - **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local / external grandmaster modes
@@ -42,9 +43,24 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 - **Communication trace / monitoring** in the GUI
 
 All state is persisted in **SQLite**, so devices and configurations survive restarts.
-The front-end is a **Python web GUI** (module) replacing the old LVGL C GUI.
+The front-end is a **Python web GUI** (stdlib only) — no extra packages and no
+LWGL dependency. Persistence uses SQLite.
 
-All state is persisted in **SQLite**, so devices and configurations survive restarts.
+---
+
+## IEEE 802.1Qcc TSN Stream reservation
+
+The CNC defines **Talker / Listener streams** (the unit of time-sensitive traffic):
+
+- Each stream binds a **talker** (source) to one or more **listeners** (sinks)
+  on a given VLAN, with max latency, max interval, priority and data-frame priority.
+- Streams are validated (VLAN 1-4094, priority 0-7, ≥1 listener) and follow
+  an 802.1Qcc lifecycle: **configured → ready → (failed/standby)**.
+- Deploy (single or all) pushes the stream to every endpoint over MQTT on
+  `tsn/cmd/<device>/stream` with a JSON snapshot; both the host agent
+  (RPi/Linux) and the ESP32 agent understand it.
+- Managed in the web GUI under **IEEE 802.1Qcc → TSN Streams** and in the C
+  core via `src/stream/` (`wtsn_tsn_manager`).
 
 ---
 
@@ -192,6 +208,7 @@ src/
   device/     device model + manager
   discovery/  discovery framework
   qos|vlan|timesync|tas|sensors/   domain services
+  stream/      IEEE 802.1Qcc TSN stream reservation (talker/listener)
   mqtt|fxmqtt/        communication integrations
   trace/      communication monitor
   agent/      firmware agent for physical nodes
