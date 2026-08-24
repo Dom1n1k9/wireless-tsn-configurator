@@ -15,13 +15,30 @@ and reports status.
 - ESP32 board (DevKit recommended)
 - MQTT broker reachable from the board
 
-## Wiring / first-time configuration
+## First-time configuration (provisioning portal)
 
-The agent reads its settings from NVS. The defaults are compiled in:
+On first boot (no WiFi credentials in NVS) the agent enters **provisioning mode**:
+it starts a SoftAP named **`WTSN-Setup`** and serves a small configuration
+portal.
 
-- WiFi SSID / pass: edit `main` (see `wifi_init`) or provision via NVS
-- MQTT host: `192.168.1.100:1883` (see `wtsn_cfg.c`), override with
-  `idf.py menuconfig` if you add Kconfig, or edit `wtsn_cfg.c`.
+1. Power on the ESP32 — it broadcasts `WTSN-Setup`.
+2. Connect your phone/PC to that SoftAP.
+3. Open **http://192.168.4.1/** in a browser.
+4. Enter your WiFi SSID / password and the MQTT broker host, save.
+5. The agent stores it in NVS and reboots — it now joins your WiFi and connects
+   to the broker automatically.
+
+Subsequent boots skip provisioning because the credentials are already in NVS.
+To re-provision later, use the `wifi` MQTT command from the web GUI
+(`tsn/cmd/<id>/wifi` with JSON `{"ssid":...,"pass":...,"mqtt":...}`).
+
+## Out-of-band configuration via NVS
+
+You can also pre-seed settings in NVS (`idf.py menuconfig` not wired to these;
+write them via a small NVS utility or the portal above):
+
+- WiFi SSID / pass — stored in NVS under `wtsn` namespace
+- MQTT host: `192.168.1.100:1883` (see `wtsn_cfg.c`), override via portal
 - Device id: `esp32-01` (edit `g_device_id` in `main/main.c`)
 
 ## Build & flash
@@ -29,7 +46,6 @@ The agent reads its settings from NVS. The defaults are compiled in:
 ```bash
 cd esp32-agent
 idf.py set-target esp32        # or esp32s3, esp32c3 ...
-idf.py menuconfig             # optional: set WiFi + MQTT broker (or via NVS)
 idf.py build -p /dev/ttyUSB0 flash monitor
 ```
 

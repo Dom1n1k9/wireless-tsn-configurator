@@ -600,6 +600,21 @@ def run_action(act, body):
             if retried:
                 msg += "; %d retried (no ack)" % len(retried)
             return {"ok": True, "msg": msg}
+        if act == "set_wifi":
+            ssid = body.get("ssid", "")
+            pw = body.get("pass", "")
+            if MODE["mode"] == "real":
+                b = get_real_mqtt(con)
+                if b:
+                    did = body.get("device_id", "")
+                    if did:
+                        b.publish("tsn/cmd/%s/wifi" % did,
+                                  json.dumps({"ssid": ssid, "pass": pw}))
+                        add_event("config", "cnc", "wifi cmd -> %s (%s)" % (did, ssid))
+                        return {"ok": True, "msg": "WiFi command sent to " + did}
+                    return {"ok": False, "msg": "device_id required"}
+                return {"ok": False, "msg": "MQTT broker not reachable"}
+            return {"ok": True, "msg": "WiFi set (simulation; sent on Real mode)"}
         if act == "fx_send":
             b = get_real_mqtt(con) if MODE["mode"] == "real" else None
             add_event("fx", body.get("source", "cnc"),

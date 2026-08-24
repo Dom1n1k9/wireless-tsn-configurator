@@ -13,6 +13,7 @@
 #include "wtsn_mqtt.h"
 #include "wtsn_tsn.h"
 #include "wtsn_json.h"
+#include "wtsn_prov.h"
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
@@ -193,7 +194,16 @@ void app_main(void) {
                   wifi_ssid, sizeof(wifi_ssid), wifi_pass, sizeof(wifi_pass),
                   mqtt_host, sizeof(mqtt_host), &mqtt_port);
 
-    wifi_init(wifi_ssid[0] ? wifi_ssid : "WTSN", wifi_pass);
+    if (!wifi_ssid[0]) {
+        /* No WiFi configured yet -> enter provisioning (SoftAP + portal).
+           wtsn_prov_start blocks until the user submit credentials (then restarts). */
+        ESP_LOGW(TAG, "no WiFi in NVS -> entering provisioning mode");
+        wtsn_prov_start();
+        /* after provisioning we restart; loop protects against nothing happening */
+        for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    wifi_init(wifi_ssid, wifi_pass);
 
     g_mqtt = wtsn_mqtt_create(mqtt_host, mqtt_port, g_device_id, on_command,
                                on_connected, NULL);
