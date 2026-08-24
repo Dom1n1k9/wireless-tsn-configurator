@@ -232,8 +232,10 @@ def parse_listener_msg(con, topic, payload):
         pass
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB_REAL = os.environ.get("WTSN_DB", os.path.join(BASE, "build", "wtsn_gui.db"))
-DB_SIM = os.path.join(BASE, "build", "wtsn_sim.db")
+DB_DIR = os.path.join(BASE, "build")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_REAL = os.environ.get("WTSN_DB", os.path.join(DB_DIR, "wtsn_gui.db"))
+DB_SIM = os.path.join(DB_DIR, "wtsn_sim.db")
 PORT = int(os.environ.get("WTSN_PORT", "8000"))
 
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
