@@ -20,6 +20,7 @@ typedef enum {
     WTSN_ERR_NET,
     WTSN_ERR_NOT_IMPLEMENTED,
     WTSN_ERR_BUSY,
+    WTSN_ERR_NOT_READY,
     WTSN_ERR_LAST
 } wtsn_error;
 
@@ -35,6 +36,7 @@ static inline const char *wtsn_error_str(wtsn_error e) {
     case WTSN_ERR_NET: return "network error";
     case WTSN_ERR_NOT_IMPLEMENTED: return "not implemented";
     case WTSN_ERR_BUSY: return "busy";
+    case WTSN_ERR_NOT_READY: return "not ready";
     default: return "unknown error";
     }
 }

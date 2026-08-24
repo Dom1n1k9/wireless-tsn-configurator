@@ -35,21 +35,31 @@ wtsn_error wtsn_fxmqtt_start(wtsn_fxmqtt *f, wtsn_mqtt_client *mqtt) {
     wtsn_mqtt_client_subscribe(mqtt, WTSN_FXMQTT_TOPIC_FIELD);
     wtsn_mqtt_client_subscribe(mqtt, WTSN_FXMQTT_TOPIC_DATA);
     wtsn_mqtt_client_subscribe(mqtt, WTSN_FXMQTT_TOPIC_NODE);
+    f->mqtt = mqtt;
     f->started = true;
     wtsn_log(WTSN_LOG_INFO, "fx over mqtt started server_type=%d broker %s:%d",
              (int)f->server_type, f->broker_host, f->broker_port);
     return WTSN_OK;
 }
 
-wtsn_error wtsn_fxmqtt_field_publish(wtsn_fxmqtt *f, const char *payload) {
-    (void)f;
-    (void)payload;
-    return WTSN_OK;
+/* Send an FX payload destined for a specific node topic */
+wtsn_error wtsn_fxmqtt_field_publish_ex(wtsn_fxmqtt *f, const char *topic,
+                                        const char *payload) {
+    if (!f || !f->mqtt || !f->started) return WTSN_ERR_NOT_READY;
+    if (!payload) return WTSN_ERR_INVALID_ARG;
+    const char *t = topic && topic[0] ? topic : WTSN_FXMQTT_TOPIC_FIELD;
+    if (wtsn_mqtt_client_publish(f->mqtt, t, payload) == WTSN_OK) {
+        wtsn_log(WTSN_LOG_INFO, "fx field -> %s: %s", t, payload);
+        return WTSN_OK;
+    }
+    return WTSN_ERR_NET;
 }
 
+wtsn_error wtsn_fxmqtt_field_publish(wtsn_fxmqtt *f, const char *payload) {
+    return wtsn_fxmqtt_field_publish_ex(f, WTSN_FXMQTT_TOPIC_FIELD, payload);
+}
+
+/* Send a C2C field-exchange message to topic tsn/fx/<node> (or any FX topic) */
 wtsn_error wtsn_fxmqtt_send_c2c(wtsn_fxmqtt *f, const char *topic, const char *payload) {
-    (void)f;
-    (void)topic;
-    (void)payload;
-    return WTSN_OK;
+    return wtsn_fxmqtt_field_publish_ex(f, topic, payload);
 }

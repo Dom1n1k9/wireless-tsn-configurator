@@ -20,6 +20,7 @@ typedef struct {
     char broker_host[WTSN_MAX_STR];
     int broker_port;
     bool started;
+    wtsn_mqtt_client *mqtt;   /* broker channel used for publish */
 } wtsn_fxmqtt;
 
 wtsn_fxmqtt *wtsn_fxmqtt_create(void);
