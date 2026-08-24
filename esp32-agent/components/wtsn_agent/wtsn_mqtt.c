@@ -19,13 +19,17 @@ struct wtsn_mqtt {
 
 static void on_data(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     if (m->cb && e->topic) {
+        char *topic = malloc((size_t)e->topic_len + 1);
         char *payload = malloc((size_t)e->data_len + 1);
-        if (payload) {
+        if (topic && payload) {
+            memcpy(topic, e->topic, (size_t)e->topic_len);
+            topic[e->topic_len] = '\0';
             memcpy(payload, e->data, (size_t)e->data_len);
             payload[e->data_len] = '\0';
-            m->cb(e->topic, payload, m->ud);
-            free(payload);
+            m->cb(topic, payload, m->ud);
         }
+        free(topic);
+        free(payload);
     }
 }
 
@@ -72,7 +76,8 @@ wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
     m->ud = ud;
 
     esp_mqtt_client_config_t cfg = {
-        .broker = { .address = { .uri = NULL, .hostname = host, .port = port } },
+        .broker = { .address = { .uri = NULL, .hostname = host, .port = port,
+                                 .transport = MQTT_TRANSPORT_OVER_TCP } },
         .credentials = { .client_id = client_id },
         .session = { .keepalive = 30 },
     };

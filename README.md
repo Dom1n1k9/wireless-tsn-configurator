@@ -26,6 +26,93 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 
 ---
 
+## Setup guide (initialization, step by step)
+
+This walks you through getting a physical **ESP32 agent** online and controllable from
+the web GUI. Do these steps once when you set up the system.
+
+### 1. Install dependencies (host)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake libsqlite3-dev libmosquitto-dev mosquitto python3
+```
+
+### 2. Set up the MQTT broker
+
+The broker must listen on all interfaces so the ESP32 (on the same LAN) can reach it:
+
+```bash
+echo 'listener 1883 0.0.0.0'        | sudo tee /etc/mosquitto/conf.d/wtsn.conf
+echo 'allow_anonymous true'              | sudo tee -a /etc/mosquitto/conf.d/wtsn.conf
+sudo systemctl restart mosquitto
+```
+
+**Firewall:** the host firewall (UFW on Ubuntu) blocks inbound MQTT by default.
+Allow port 1883 (this was the final blocker when the ESP32 could not connect):
+
+```bash
+sudo ufw allow 1883/tcp
+```
+
+Check the broker is listening on all interfaces:
+
+```bash
+ss -tln | grep 1883        # expect LISTEN 0.0.0.0:1883
+```
+
+### 3. Get the LAN IP
+
+```bash
+ip -4 addr show | grep -oE "inet [0-9.]+" | grep -v 127.0.0.1
+# e.g. 192.168.0.149  <-- this is the broker address you will enter on the ESP32
+```
+
+### 4. Build & flash the ESP32 agent
+
+```bash
+cd esp32-agent
+source ~/esp/eim_workspace/v5.3/esp-idf/export.sh          # or your ESP-IDF path
+idf.py set-target esp32
+idf.py build
+idf.py -p /dev/ttyUSB0 flash
+```
+
+If `idf.py -p /dev/ttyUSB0 flash` reports the port is not readable, add yourself
+to the `dialout` group and re-login:
+
+```bash
+sudo usermod -aG dialout $USER
+# log out and back in, then retry the flash
+```
+
+On boot the firmware **blinks the onboard LED 3 times** to confirm a successful
+flash/reset, then joins your WiFi.
+
+### 5. Provision the WiFi (first boot only)
+
+With no WiFi stored, the agent starts a SoftAP `WTSN-Setup`:
+
+1. Connect your phone/PC to the `WTSN-Setup` SSID (no password).
+2. Open **http://192.168.4.1/**.
+3. Enter your WiFi SSID, password, and the broker address from step 3
+   (e.g. `192.168.0.149`).
+4. Save → the agent stores it in NVS, reboots, blinks, joins your WiFi and
+   announces itself on MQTT.
+
+### 6. Connect it in the GUI
+
+1. Open the web GUI: **http://127.0.0.1:8000**
+2. In the top-right corner switch the mode from **Simulation to REAL**.
+3. Set the broker to `192.168.0.149:1883` (FXMQTT / Settings page) and save.
+4. Go to **Devices**, add a device with id **`esp32-01`** (kind *ESP32*), Add.
+   It appears in the Devices table below.
+5. Configure TSN (QoS, VLAN, TimeSync, TAS...) for that device.
+6. Click **Execute settings on controller** (bottom bar). The GUI publishes a JSON
+   snapshot on `tsn/cmd/esp32-01/apply`; the agent replies on `tsn/ack/esp32-01`.
+
+---
+
 ## What it does
 
 - **Automatic device discovery** via MQTT and plugins (extensible for future protocols)

@@ -28,6 +28,32 @@ static bool have_wifi(void) {
     return err == ESP_OK && v[0] != '\0';
 }
 
+static int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Decode application/x-www-form-urlencoded value (in-place). */
+static void url_decode(char *s) {
+    char *r = s;
+    while (*s) {
+        if (*s == '%' && s[1] && s[2]) {
+            int hi = hex_val(s[1]);
+            int lo = hex_val(s[2]);
+            if (hi >= 0 && lo >= 0) {
+                *r++ = (char)((hi << 4) | lo);
+                s += 3;
+                continue;
+            }
+        }
+        if (*s == '+') { *r++ = ' '; s++; continue; }
+        *r++ = *s++;
+    }
+    *r = '\0';
+}
+
 static esp_err_t handle_config(httpd_req_t *req) {
     char body[512] = {0};
     int len = req->content_len;
@@ -40,21 +66,21 @@ static esp_err_t handle_config(httpd_req_t *req) {
     body[got] = '\0';
 
     char ssid[64] = {0}, mqtt[64] = {0}, pass[64] = {0};
-    const char *k, *v;
-    char *p = body;
-    while (*p && (k = strtok(p, "&"))) {
-        p = NULL;
+    char *save2 = NULL;
+    char *k = strtok_r(body, "&", &save2);
+    while (k) {
         char copy[128];
         snprintf(copy, sizeof(copy), "%s", k);
         char *eq = strchr(copy, '=');
-        if (!eq) continue;
+        if (!eq) { k = strtok_r(NULL, "&", &save2); continue; }
         *eq = '\0';
         char *key = copy;
         char *val = eq + 1;
-        /* URL-decode '%' style is skipped for simplicity; use non-special chars */
+        url_decode(val);
         if (strcmp(key, "ssid") == 0) snprintf(ssid, sizeof(ssid), "%s", val);
         else if (strcmp(key, "pass") == 0) snprintf(pass, sizeof(pass), "%s", val);
         else if (strcmp(key, "mqtt") == 0) snprintf(mqtt, sizeof(mqtt), "%s", val);
+        k = strtok_r(NULL, "&", &save2);
     }
     if (!ssid[0]) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");

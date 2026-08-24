@@ -4,6 +4,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_system.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "string.h"
@@ -164,12 +165,65 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     }
 }
 
+typedef struct {
+    char ssid[64];
+    char password[64];
+    char host[64];
+    int  port;
+} wifi_ctx_t;
+
+static wifi_ctx_t g_ctx;
+
+static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    (void)arg;
+    wifi_ctx_t *ctx = (wifi_ctx_t *)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        ESP_ERROR_CHECK(esp_wifi_connect());
+        ESP_LOGI(TAG, "wifi connecting to %s", ctx->ssid);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        /* will retry automatically via reconnect if enabled; reconnect manually */
+        esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
+        ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
+        if (!g_mqtt) {
+            g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
+                                       on_command, on_connected, NULL);
+            if (g_mqtt) wtsn_mqtt_start(g_mqtt);
+            ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
+        }
+    }
+}
+
+/* Blink onboard LED 3x at startup so a reboot/flash is visibly confirmed. */
+static void blink_led(void) {
+    gpio_config_t io = {0};
+    io.pin_bit_mask = (1ULL << GPIO_NUM_2);
+    io.mode = GPIO_MODE_OUTPUT;
+    gpio_config(&io);
+    for (int i = 0; i < 3; i++) {
+        gpio_set_level(GPIO_NUM_2, 1);
+        vTaskDelay(pdMS_TO_TICKS(250));
+        gpio_set_level(GPIO_NUM_2, 0);
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
 static void wifi_init(const char *ssid, const char *pass) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    snprintf(g_ctx.ssid, sizeof(g_ctx.ssid), "%s", ssid);
+    snprintf(g_ctx.password, sizeof(g_ctx.password), "%s", pass);
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, &g_ctx, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, &g_ctx, NULL));
+
     wifi_config_t wc = {
         .sta = {
             .ssid = "",
@@ -183,11 +237,11 @@ static void wifi_init(const char *ssid, const char *pass) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "wifi connecting to %s", ssid);
 }
 
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
+    blink_led();
 
     char wifi_ssid[64] = {0};
     char wifi_pass[64] = {0};
@@ -198,20 +252,15 @@ void app_main(void) {
                   mqtt_host, sizeof(mqtt_host), &mqtt_port);
 
     if (!wifi_ssid[0]) {
-        /* No WiFi configured yet -> enter provisioning (SoftAP + portal).
-           wtsn_prov_start blocks until the user submit credentials (then restarts). */
         ESP_LOGW(TAG, "no WiFi in NVS -> entering provisioning mode");
         wtsn_prov_start();
-        /* after provisioning we restart; loop protects against nothing happening */
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    wifi_init(wifi_ssid, wifi_pass);
+    snprintf(g_ctx.host, sizeof(g_ctx.host), "%s", mqtt_host);
+    g_ctx.port = mqtt_port;
 
-    g_mqtt = wtsn_mqtt_create(mqtt_host, mqtt_port, g_device_id, on_command,
-                               on_connected, NULL);
-    if (g_mqtt) wtsn_mqtt_start(g_mqtt);
-    ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, mqtt_host, mqtt_port);
+    wifi_init(wifi_ssid, wifi_pass);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
