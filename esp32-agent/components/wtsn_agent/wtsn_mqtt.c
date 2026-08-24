@@ -17,21 +17,20 @@ struct wtsn_mqtt {
     void *ud;
 };
 
-static void on_data(esp_mqtt_event_handle_t e) {
-    wtsn_mqtt *m = (wtsn_mqtt *)e->user_context;
+static void on_data(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     if (m->cb && e->topic) {
-        char *payload = malloc(e->payload_len + 1);
+        char *payload = malloc((size_t)e->data_len + 1);
         if (payload) {
-            memcpy(payload, e->payload, e->payload_len);
-            payload[e->payload_len] = '\0';
+            memcpy(payload, e->data, (size_t)e->data_len);
+            payload[e->data_len] = '\0';
             m->cb(e->topic, payload, m->ud);
             free(payload);
         }
     }
 }
 
-static void on_connected(esp_mqtt_event_handle_t e) {
-    wtsn_mqtt *m = (wtsn_mqtt *)e->user_context;
+static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
+    (void)e;
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/apply", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/qos", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/vlan", 0);
@@ -49,15 +48,15 @@ static void on_connected(esp_mqtt_event_handle_t e) {
 
 static void on_event(void *handler_args, esp_event_base_t base, int32_t event_id,
                     void *event_data) {
-    (void)base; (void)handler_args;
+    (void)base;
     esp_mqtt_event_handle_t e = (esp_mqtt_event_handle_t)event_data;
-    wtsn_mqtt *m = (wtsn_mqtt *)e->user_context;
+    wtsn_mqtt *m = (wtsn_mqtt *)handler_args;
     switch (event_id) {
     case MQTT_EVENT_CONNECTED:
-        on_connected(e);
+        on_connected(e, m);
         break;
     case MQTT_EVENT_DATA:
-        on_data(e);
+        on_data(e, m);
         break;
     default:
         break;

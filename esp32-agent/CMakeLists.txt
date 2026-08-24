@@ -1,2 +1,3 @@
-# The main component and components/ are auto-discovered by ESP-IDF.
+cmake_minimum_required(VERSION 3.16)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(wtsn_esp32_agent)

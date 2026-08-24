@@ -8,3 +8,5 @@ __pycache__/
 *.sqlite3
 .idea/
 .vscode/
+esp32-agent/sdkconfig
+esp32-agent/sdkconfig.old

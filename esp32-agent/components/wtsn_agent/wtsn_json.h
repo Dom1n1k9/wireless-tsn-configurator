@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 /* minimal single-pass JSON object getters (no allocation).
    Given a JSON object string, find top-level key and return int or copy string.
