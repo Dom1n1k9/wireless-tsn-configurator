@@ -39,8 +39,15 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     app->tas = wtsn_tas_manager_create(&app->db, app->bus);
     app->sensors = wtsn_sensor_manager_create(&app->db, app->bus);
 
+    wtsn_tsn_manager_config tcfg;
+    memset(&tcfg, 0, sizeof(tcfg));
+    tcfg.db = &app->db;
+    tcfg.bus = app->bus;
+    tcfg.mqtt = NULL;   /* assigned below once the MQTT client exists */
+    app->tsn = wtsn_tsn_manager_create(&tcfg);
+
     if (!app->devices || !app->qos || !app->vlan || !app->timesync ||
-        !app->tas || !app->sensors) return WTSN_ERR_NO_MEMORY;
+        !app->tas || !app->sensors || !app->tsn) return WTSN_ERR_NO_MEMORY;
 
     load_plugins(app);
     wtsn_device_manager_discover_once(app->devices);
@@ -55,6 +62,7 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
         wtsn_mqtt_client_connect(app->mqtt, cfg->mqtt_host, cfg->mqtt_port,
                                  "wtsn-configurator", NULL, NULL);
         wtsn_mqtt_client_loop_start(app->mqtt);
+        wtsn_tsn_manager_set_mqtt(app->tsn, app->mqtt);
         wtsn_fxmqtt          *fcfg = app->fxmqtt;
         fcfg->broker_port = cfg->mqtt_port;
         wtsn_strlcpy(fcfg->broker_host, cfg->mqtt_host, sizeof(fcfg->broker_host));
@@ -73,6 +81,7 @@ void wtsn_app_shutdown(wtsn_app *app) {
     if (app->mqtt) wtsn_mqtt_client_destroy(app->mqtt);
     if (app->trace) wtsn_trace_destroy(app->trace);
     if (app->sensors) wtsn_sensor_manager_destroy(app->sensors);
+    if (app->tsn) wtsn_tsn_manager_destroy(app->tsn);
     if (app->tas) wtsn_tas_manager_destroy(app->tas);
     if (app->timesync) wtsn_timesync_manager_destroy(app->timesync);
     if (app->vlan) wtsn_vlan_manager_destroy(app->vlan);

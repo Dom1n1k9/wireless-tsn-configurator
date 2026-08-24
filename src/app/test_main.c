@@ -1,9 +1,11 @@
 #include "common/common.h"
 #include "common/str_util.h"
 #include "db/db.h"
+#include "db/db_tsn.h"
 #include "device/device_manager.h"
 #include "qos/qos.h"
 #include "sensors/sensor.h"
+#include "stream/stream.h"
 #include "tas/tas.h"
 #include "timesync/timesync.h"
 #include "vlan/vlan.h"
@@ -114,6 +116,76 @@ static void test_db_roundtrip(void) {
     remove("test_wtsn.db");
 }
 
+static void test_stream_validate(void) {
+    wtsn_stream s;
+    memset(&s, 0, sizeof(s));
+    wtsn_strlcpy(s.stream_id, "stream-1", sizeof(s.stream_id));
+    wtsn_strlcpy(s.name, "Control", sizeof(s.name));
+    wtsn_strlcpy(s.talker, "esp32-01", sizeof(s.talker));
+    s.vlan_id = 100;
+    s.max_latency_ns = 1000000;
+    s.max_interval_ns = 100000;
+    s.priority = 5;
+    s.data_frame_prio = 5;
+    wtsn_strlcpy(s.listeners[0], "rpi-1", sizeof(s.listeners[0]));
+    s.listener_count = 1;
+
+    CHECK(wtsn_stream_validate(&s) == WTSN_OK);
+
+    wtsn_stream bad = s;
+    bad.priority = 8;
+    CHECK(wtsn_stream_validate(&bad) == WTSN_ERR_INVALID_ARG);
+
+    wtsn_stream nono = s;
+    nono.listener_count = 0;
+    nono.listener_all = 0;
+    CHECK(wtsn_stream_validate(&nono) == WTSN_ERR_INVALID_ARG);
+
+    CHECK(strcmp(wtsn_stream_status_str(WTSN_STREAM_READY), "ready") == 0);
+    CHECK(wtsn_stream_status_parse("failed") == WTSN_STREAM_FAILED);
+    CHECK(strcmp(wtsn_stream_role_str(WTSN_STREAM_ROLE_LISTENER), "listener") == 0);
+}
+
+static void test_stream_db_roundtrip(void) {
+    wtsn_db db;
+    CHECK(wtsn_db_open(&db, "test_stream.db") == WTSN_OK);
+
+    wtsn_stream s;
+    memset(&s, 0, sizeof(s));
+    wtsn_strlcpy(s.stream_id, "s1", sizeof(s.stream_id));
+    wtsn_strlcpy(s.name, "Control", sizeof(s.name));
+    wtsn_strlcpy(s.talker, "esp32-01", sizeof(s.talker));
+    s.vlan_id = 100;
+    s.max_latency_ns = 1000000;
+    s.max_interval_ns = 100000;
+    s.priority = 5;
+    s.data_frame_prio = 5;
+    s.status = WTSN_STREAM_CONFIGURED;
+    wtsn_strlcpy(s.listeners[0], "rpi-1", sizeof(s.listeners[0]));
+    s.listener_count = 1;
+
+    CHECK(wtsn_db_tsn_save(&db, &s) == WTSN_OK);
+
+    wtsn_stream loaded;
+    memset(&loaded, 0, sizeof(loaded));
+    CHECK(wtsn_db_tsn_load(&db, "s1", &loaded) == WTSN_OK);
+    CHECK(strcmp(loaded.talker, "esp32-01") == 0);
+    CHECK(loaded.listener_count == 1);
+    CHECK(strcmp(loaded.listeners[0], "rpi-1") == 0);
+    CHECK(loaded.priority == 5);
+
+    wtsn_db_tsn_set_status(&db, "s1", WTSN_STREAM_READY);
+    memset(&loaded, 0, sizeof(loaded));
+    CHECK(wtsn_db_tsn_load(&db, "s1", &loaded) == WTSN_OK);
+    CHECK(loaded.status == WTSN_STREAM_READY);
+
+    CHECK(wtsn_db_tsn_delete(&db, "s1") == WTSN_OK);
+    CHECK(wtsn_db_tsn_load(&db, "s1", &loaded) == WTSN_ERR_NOT_FOUND);
+
+    wtsn_db_close(&db);
+    remove("test_stream.db");
+}
+
 int main(void) {
     test_device();
     test_qos_validation();
@@ -122,6 +194,8 @@ int main(void) {
     test_timesync();
     test_sensor_type();
     test_db_roundtrip();
+    test_stream_validate();
+    test_stream_db_roundtrip();
 
     printf("%d tests, %d failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;

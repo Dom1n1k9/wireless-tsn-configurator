@@ -43,6 +43,16 @@ static const char *SCHEMA =
     ");"
     "CREATE TABLE IF NOT EXISTS settings ("
     "  key TEXT PRIMARY KEY, value TEXT"
+    ");"
+    "CREATE TABLE IF NOT EXISTS tsn_streams ("
+    "  stream_id TEXT PRIMARY KEY, name TEXT, talker TEXT, vlan_id INTEGER,"
+    "  max_latency_ns INTEGER, max_interval_ns INTEGER, priority INTEGER,"
+    "  data_frame_prio INTEGER, status INTEGER CHECK(status IN (0,1,2,3)),"
+    "  comment TEXT"
+    ");"
+    "CREATE TABLE IF NOT EXISTS tsn_stream_members ("
+    "  stream_id TEXT, role TEXT, device_id TEXT,"
+    "  FOREIGN KEY(stream_id) REFERENCES tsn_streams(stream_id)"
     ");";
 
 static wtsn_error run_migration(wtsn_db *db, const char *sql) {

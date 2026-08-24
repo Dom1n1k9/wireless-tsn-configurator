@@ -42,6 +42,7 @@ set(WTSN_SOURCES
   src/db/db_tas.c
   src/db/db_timesync.c
   src/db/db_sensors.c
+  src/db/db_tsn.c
   src/device/device.c
   src/device/device_manager.c
   src/discovery/discovery.c
@@ -56,6 +57,8 @@ set(WTSN_SOURCES
   src/tas/gcl.c
   src/sensors/sensor.c
   src/sensors/sensor_manager.c
+  src/stream/stream.c
+  src/stream/tsn_manager.c
   src/mqtt/mqtt_client.c
   src/fxmqtt/fxmqtt.c
   src/trace/trace.c

@@ -38,6 +38,7 @@ static void on_connected(esp_mqtt_event_handle_t e) {
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/wifi", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/timesync", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/tas", 0);
+    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/stream", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/preemption", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/status", 0);
     esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/fx", 0);

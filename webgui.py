@@ -238,7 +238,8 @@ PORT = int(os.environ.get("WTSN_PORT", "8000"))
 
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
           "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
-          "sensors", "preemption_configs", "settings"]
+          "sensors", "preemption_configs", "tsn_streams", "tsn_stream_members",
+          "settings"]
 
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
@@ -258,6 +259,10 @@ SCHEMA = (
     "offset_ns INTEGER,quality INTEGER);"
     "CREATE TABLE IF NOT EXISTS sensors(device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,"
     "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER);"
+    "CREATE TABLE IF NOT EXISTS tsn_streams(stream_id TEXT PRIMARY KEY,name TEXT,talker TEXT,"
+    "vlan_id INTEGER,max_latency_ns INTEGER,max_interval_ns INTEGER,priority INTEGER,"
+    "data_frame_prio INTEGER,status INTEGER CHECK(status IN (0,1,2,3)),comment TEXT);"
+    "CREATE TABLE IF NOT EXISTS tsn_stream_members(stream_id TEXT,role TEXT,device_id TEXT);"
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);"
 )
 
@@ -318,7 +323,8 @@ def sim_tick():
     try:
         for t in ["devices", "qos_configs", "vlan_groups", "vlan_members",
                   "tas_schedules", "gcl_entries", "timesync_status", "sensors",
-                  "device_tsn_features", "preemption_configs"]:
+                  "device_tsn_features", "preemption_configs", "tsn_streams",
+                  "tsn_stream_members"]:
             con.execute("DELETE FROM %s" % t)
         n = random.randint(3, 6)
         devs = []
@@ -615,6 +621,50 @@ def run_action(act, body):
                     return {"ok": False, "msg": "device_id required"}
                 return {"ok": False, "msg": "MQTT broker not reachable"}
             return {"ok": True, "msg": "WiFi set (simulation; sent on Real mode)"}
+        if act == "save_stream":
+            sid = body.get("stream_id") or ("stream-%d" % int(time.time()))
+            talker = body.get("talker", "")
+            listeners = body.get("listeners") or []
+            if talker:
+                con.execute("INSERT OR REPLACE INTO tsn_streams(stream_id,name,talker,"
+                            "vlan_id,max_latency_ns,max_interval_ns,priority,"
+                            "data_frame_prio,status,comment) VALUES(?,?,?,?,?,?,?,?,0,?)",
+                            (sid, body.get("name", ""), talker,
+                             clamp(body.get("vlan_id", 0), 0, 4094),
+                             clamp(body.get("max_latency_ns", 1000000), 1, 10**12),
+                             clamp(body.get("max_interval_ns", 100000), 1, 10**12),
+                             clamp(body.get("priority", 5), 0, 7),
+                             clamp(body.get("data_frame_prio", 5), 0, 7),
+                             body.get("comment", "")))
+                con.execute("DELETE FROM tsn_stream_members WHERE stream_id=?", (sid,))
+                con.execute("INSERT INTO tsn_stream_members(stream_id,role,device_id) "
+                            "VALUES(?,?,?)", (sid, "talker", talker))
+                for l in listeners:
+                    con.execute("INSERT INTO tsn_stream_members(stream_id,role,device_id) "
+                               "VALUES(?,?,?)", (sid, "listener", l))
+                con.commit()
+                add_event("config", "cnc", "stream %s talker=%s listeners=%d" %
+                         (sid, talker, len(listeners)))
+                return {"ok": True, "msg": "Stream saved"}
+            return {"ok": False, "msg": "talker required"}
+        if act == "delete_stream":
+            sid = body.get("stream_id", "")
+            con.execute("DELETE FROM tsn_streams WHERE stream_id=?", (sid,))
+            con.execute("DELETE FROM tsn_stream_members WHERE stream_id=?", (sid,))
+            con.commit()
+            return {"ok": True, "msg": "Stream deleted"}
+        if act == "deploy_stream":
+            sid = body.get("stream_id", "")
+            con.execute("UPDATE tsn_streams SET status=1 WHERE stream_id=?", (sid,))
+            con.commit()
+            add_event("config", "cnc", "802.1Qcc stream %s deployed" % sid)
+            return {"ok": True, "msg": "Stream marked ready"}
+        if act == "deploy_all_streams":
+            con.execute("UPDATE tsn_streams SET status=1")
+            con.commit()
+            n = con.execute("SELECT COUNT(*) FROM tsn_streams").fetchone()[0]
+            add_event("config", "cnc", "802.1Qcc all %d streams deployed" % n)
+            return {"ok": True, "msg": "%d streams deployed" % n}
         if act == "fx_send":
             b = get_real_mqtt(con) if MODE["mode"] == "real" else None
             add_event("fx", body.get("source", "cnc"),
@@ -766,7 +816,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div id="execbar"><h3>Controller / FXMQTT target</h3><button class="big" onclick="execAll()">Execute settings on controller</button></div>
 <div id="toast"></div>
 <script>
-const NAV=[["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","VLAN ID"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["OPC UA FX over MQTT",[["fxmqtt","OPC UA FX Config"]]],["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"],["settings","Settings"]]]];
+const NAV=[["IEEE 802.1Qcc",[["streams","TSN Streams"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","VLAN ID"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["OPC UA FX over MQTT",[["fxmqtt","OPC UA FX Config"]]],["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"],["settings","Settings"]]]];
 let D={};
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -786,8 +836,8 @@ function go(p){document.querySelectorAll("#nav button").forEach(b=>b.className=b
  else if(p==="qos")m.innerHTML=qos();
  else if(p==="vlan")m.innerHTML=vlan();
  else if(p==="tas")m.innerHTML=tas();
- else if(p==="preemption")m.innerHTML=preemption();
- else if(p==="timesync")m.innerHTML=timesync();
+ else if(p==="preemption")m.innerHTML=preemption(); else if(p==="timesync")m.innerHTML=timesync();
+ else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
  else if(p==="sensors")m.innerHTML=sensors();
@@ -873,6 +923,32 @@ function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><di
 function refreshMon(){if($("mon")){const ev=(D.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span>"+esc(e.data)+"</span></div>").join("");$("mon").innerHTML=ev||"<div class='monrow'><span>no traffic yet</span></div>"}}
 function sensors(){let r=D.sensors.map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+esc(s.sensor_id)+"</td><td>"+esc(s.type)+"</td><td>"+s.value+" "+esc(s.unit)+"</td><td class='"+(s.healthy?"":"') style='color:var(--err)")+"'>"+(s.healthy?"healthy":"fault")+"</td></tr>").join("");
  return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(D.sensors.length?("<table><tr><th>device</th><th>id</th><th>type</th><th>value</th><th>health</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="sim"?"Waiting for simulation sensors...":"Connect real sensors — none identified yet.")+"</div>")}
+function streams(){
+  const rows=(D.tsn_streams||[]).map(s=>{const memb=(D.tsn_stream_members||[]).filter(x=>x.stream_id==s.stream_id);
+    const talker=(memb.find(x=>x.role==="talker")||{}).device_id||s.talker||"";
+    const lsn=memb.filter(x=>x.role==="listener").map(x=>x.device_id).join(", ");
+    return "<tr><td>"+esc(s.stream_id)+"</td><td>"+esc(s.name)+"</td><td>"+esc(talker)+"</td><td>"+esc(lsn)+"</td><td>"+(s.vlan_id||0)+"</td><td>"+(["configured","ready","failed","standby"][s.status]||s.status)+"</td>"+
+    "<td><button class='ghost' onclick='api(\"deploy_stream\",{stream_id:\""+esc(s.stream_id)+"\"}).then(load)'>Deploy</button>"+
+    "<button class='danger' onclick='api(\"delete_stream\",{stream_id:\""+esc(s.stream_id)+"\"}).then(load)'>Del</button></td></tr>"
+  }).join("");
+  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
+  const lopt=D.devices.map(d=>"<label class=ck><input type=checkbox value='"+esc(d.id)+"'> "+esc(d.id)+"</label>").join("");
+  return "<h2>IEEE 802.1Qcc — TSN Streams</h2>"+
+   "<div class='card'><h3>Talker / Listener stream reservation</h3>"+
+   "<div class='row'><label>name</label><input id=s_name></div>"+
+   "<div class='row'><label>talker</label><select id=s_talker><option value=''>-</option>"+opts+"</select></div>"+
+   "<div class='row'><label>listeners</label><div id=s_lsn>"+lopt+"</div></div>"+
+   "<div class='row'><label>VLAN ID</label><input id=s_vlan type=number value=100></div>"+
+   "<div class='row'><label>latency ns</label><input id=s_lat type=number value=1000000></div>"+
+   "<div class='row'><label>interval ns</label><input id=s_itv type=number value=100000></div>"+
+   "<div class='row'><label>priority</label><input id=s_prio type=number value=5></div>"+
+   "<button onclick=saveStream()>Save Stream</button>"+
+   "<button class='ghost' onclick='api(\"deploy_all_streams\",{}).then(load)'>Deploy All</button></div>"+
+   "<h3>Streams</h3><table><tr><th>id</th><th>name</th><th>talker</th><th>listeners</th><th>vlan</th><th>status</th><th></th></tr>"+rows+"</table>"}
+function saveStream(){const lsn=[].slice.call(document.querySelectorAll("#s_lsn input:checked")).map(c=>c.value);
+ api("save_stream",{name:$("s_name").value,talker:$("s_talker").value,listeners:lsn,
+  vlan_id:$("s_vlan").value,max_latency_ns:$("s_lat").value,max_interval_ns:$("s_itv").value,
+  priority:$("s_prio").value,data_frame_prio:$("s_prio").value}).then(load)}
 function settings(){
  const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
  return "<h2>Settings</h2><div class='card'><div class='row'><label>mode</label><span>"+D.mode+"</span></div>"+

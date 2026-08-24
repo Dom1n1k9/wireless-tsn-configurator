@@ -125,6 +125,9 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     } else if (strcmp(cmd, "tas") == 0) {
         wtsn_tsn_apply_tas((int64_t)atoi(payload), NULL, NULL, 0);
         send_ack(true, "");
+    } else if (strcmp(cmd, "stream") == 0) {
+        apply_snapshot(payload);
+        send_ack(true, "");
     } else if (strcmp(cmd, "preemption") == 0) {
         char mode[8] = {0}, emac[32] = {0}, pmac[32] = {0};
         const char *p1 = payload;

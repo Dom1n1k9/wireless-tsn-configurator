@@ -197,6 +197,11 @@ wtsn_error wtsn_agent_handle_command(wtsn_agent *a, const char *command, const c
     } else if (strcmp(command, "tas") == 0) {
         int64_t cycle = atoll(payload ? payload : "0");
         return a->ops.apply_tas(a->state, cycle, NULL, 0);
+    } else if (strcmp(command, "stream") == 0) {
+        /* 802.1Qcc stream reservation: apply the stream as QoS/VLAN/TAS on
+           this device (talker or listener role). Uses the same JSON snapshot
+           schema as /apply. */
+        return apply_snapshot(a, payload);
     } else if (strcmp(command, "status") == 0) {
         if (a->mqtt) wtsn_mqtt_client_publish(a->mqtt, "tsn/status", a->device_id);
         return WTSN_OK;

@@ -10,6 +10,7 @@
 #include "plugin/plugin_manager.h"
 #include "qos/qos_manager.h"
 #include "sensors/sensor_manager.h"
+#include "stream/tsn_manager.h"
 #include "tas/tas_manager.h"
 #include "timesync/timesync_manager.h"
 #include "trace/trace.h"
@@ -33,6 +34,7 @@ typedef struct wtsn_app {
     wtsn_timesync_manager *timesync;
     wtsn_tas_manager *tas;
     wtsn_sensor_manager *sensors;
+    wtsn_tsn_manager *tsn;
     wtsn_mqtt_client *mqtt;
     wtsn_fxmqtt *fxmqtt;
     wtsn_trace *trace;
