@@ -28,7 +28,8 @@ cmake --build build -- -j$(nproc)
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -- -j$(nproc)
-./build/wtsn-configurator
+./build/wtsn-cli --headless # C CLI core
+python3 ../webgui.py        # Python web GUI front-end (from repo root: python3 webgui.py)
 ```
 
 > **Important:** cmake and the required libraries must be on `PATH`/`LD_LIBRARY_PATH` at
@@ -36,19 +37,36 @@ cmake --build build -- -j$(nproc)
 
 ## Options
 
-- `-DBUILD_GUI=ON`/`OFF` - build LVGL front-end (default ON)
+- `-DBUILD_GUI=ON`/`OFF` - install the Python web GUI (`webgui.py`) (default ON)
 - `-DBUILD_PLUGINS=ON`/`OFF` - build sample plugins (default ON)
 - `-DWTSN_DB_PATH` - override default sqlite database path
 
-## Running
+## Web GUI deployment
+
+`webgui.py` is a single-file, stdlib-only Python web server:
 
 ```bash
-# GUI mode (default)
-./build/wtsn-configurator
-
-# headless / CLI mode
-./build/wtsn-configurator --headless --db ./cfg.db
+python3 webgui.py --host 0.0.0.0 --port 8000
 ```
+
+Security notes:
+
+- Default bind is `127.0.0.1` (loopback only). Use `--host 0.0.0.0` to
+  expose, but then set HTTP Basic auth via env `WTSN_WEB_USER`/`WTSN_WEB_PASS`.
+- There is no TLS built in — put it behind a reverse proxy (nginx/caddy) for TLS.
+- MQTT broker address via `WTSN_BROKER=host:port`; broker auth via
+  `WTSN_USER`/`WTSN_PASS`.
+- Real-mode commands are only published when the mode is switched to **Real**.
+
+## Packaging
+
+```bash
+cmake --build build --target package   # uses CPack
+cpack -G TGZ                          # or ZIP on Windows
+```
+
+Installs `wtsn-cli`, `tsn-node-simulator`, `tsn-node-agent`, plugins,
+`webgui.py`, profiles and docs into `bin` / `share/wtsn-configurator`.
 
 ## TSN node firmware agent
 

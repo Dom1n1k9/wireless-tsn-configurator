@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build & test (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsqlite3-dev libmosquitto-dev python3
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -- -j$(nproc)
+
+      - name: Run tests
+        working-directory: build
+        run: ./wtsn-tests
+
+      - name: Check webgui.py compiles / parses
+        run: python3 -m py_compile webgui.py
+
+      - name: Run web GUI smoke test
+        run: |
+          python3 -c "import ast; ast.parse(open('webgui.py').read()); print('webgui.py syntax OK')"
+
+      - name: CPack package
+        working-directory: build
+        run: cpack -G TGZ
+
+  webgui-audit:
+    name: Web GUI static check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python
+        run: sudo apt-get update && sudo apt-get install -y python3
+      - name: Py compile
+        run: python3 -m py_compile webgui.py

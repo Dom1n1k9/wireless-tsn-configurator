@@ -21,7 +21,8 @@ struct wtsn_trace {
 static void stamp(wtsn_trace_entry *e) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
-    strftime(e->timestamp, sizeof(e->timestamp), "%H:%M:%S", tm ? tm : localtime(&now));
+    if (!tm) { e->timestamp[0] = '\0'; return; }
+    strftime(e->timestamp, sizeof(e->timestamp), "%H:%M:%S", tm);
 }
 
 wtsn_trace *wtsn_trace_create(wtsn_event_bus *bus) {

@@ -1,6 +1,6 @@
 # Wireless TSN Configurator
 
-A production-grade desktop application in pure C for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms.
+A production-grade application for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms. The **core is written in pure C** (C11) for the control plane, and a **Python web GUI** (`webgui.py`, stdlib only) is the front-end.
 
 It acts as a **central controller (CNC-style control plane, aligned with IEEE 802.1Qcc)** that discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization / schedule policies, reads sensors, and exposes the whole network over **FXMQTT** — OPC UA FX / C2C Field Exchange carried entirely over MQTT, with a firmware agent for physical devices, a node simulator for virtual ones, and a live communication trace.
 
@@ -31,17 +31,19 @@ All state is persisted in **SQLite**, so devices and configurations survive rest
 |--------------|----------------|--------------------------------|
 | SQLite3      | >= 3.30        | SQLite database                |
 | libmosquitto | >= 2.0 dev     | MQTT/FX client                 |
-| LVGL         | >= 9.0 dev     | GUI (optional, for GUI mode)  |
 | CMake        | >= 3.16        | Build system                  |
 | GCC/Clang    | C11 compiler   | Compiler                      |
+| Python       | >= 3.7         | Web GUI (`webgui.py`, stdlib) |
 
 Install on Debian/Ubuntu:
 
 ```bash
-sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev
+sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev python3
 ```
 
-> **GUI mode only:** LVGL must be installed as a pkg-config-visible library (e.g. `lvgl`, `liblvgl-dev`). If LVGL is not found, the build falls back to CLI-only automatically.
+> **GUI:** the front-end is a self-contained Python web GUI (`webgui.py`, stdlib
+> only — no extra Python packages). The LVGL C GUI was removed. To expose the web
+> GUI over TLS put it behind a reverse proxy (nginx/caddy) — see `webgui.py --help`.
 
 > **Build requirements:** cmake, a C11 compiler (gcc/clang), SQLite3, mosquitto. If you do not have root, you can install all dependencies locally (`$HOME/local`) and point CMake/pkg-config at them — see [docs/BUILD.md](docs/BUILD.md).
 
@@ -52,7 +54,7 @@ sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev
 ```bash
 cd wtsn-configurator
 
-# configure and build
+# configure and build (C core: CLI + tests + simulator + agent)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -- -j$(nproc)
 
@@ -62,8 +64,11 @@ cmake --build build -- -j$(nproc)
 # headless / CLI mode
 ./build/wtsn-cli --headless --db ./config.db
 
-# GUI mode (requires LVGL)
-./build/wtsn-configurator
+# web GUI (Python, stdlib only)
+python3 webgui.py
+
+# package the binaries
+cpack -G TGZ
 ```
 
 ### CLI options
@@ -167,9 +172,10 @@ src/
   agent/      firmware agent for physical nodes
   simulator/  generic node simulator
   plugin/     loadable protocol plugins (.so)
-  ui/         LVGL dark-theme GUI (optional)
+esp32-agent/  ESP-IDF ESP32 firmware agent component
 profiles/     device profile templates (.ini)
 docs/         ARCHITECTURE, BUILD, SIMULATOR
+webgui.py     Python web GUI (stdlib only)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
@@ -180,10 +186,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 - The core (database, device manager, QoS/VLAN/TimeSync/TAS/sensor logic, MVC,
   plugins, CLI, tests) is implemented.
-- The **GUI (LVGL 9 + SDL2 window)** shows the whole configurator: Dashboard
-  (live stats), Devices (tree with status/IP/firmware/TSN features), TSN/QoS
-  (802.1Q), TAS (802.1Qbv GCL), VLAN, TimeSync (gPTP), Sensors, FXMQTT,
-  MQTT, **Trace** and Settings — all populated with real data from the managers/DB.
+- The **web GUI (`webgui.py`, Python stdlib only)** shows the whole configurator:
+  Dashboard, Devices, QoS (802.1Q), VLAN, TAS (802.1Qbv GCL), Preemption
+  (802.1Qbu), TimeSync (gPTP), Sensors, FXMQTT and a live Monitor — it talks
+  to the MQTT broker with a bundled stdlib MQTT 3.1.1 client and persists to
+  the same sqlite schema.
 - The project has been built with GCC on Linux and the full test suite (`wtsn-tests`)
   passes; the CLI, node simulator and node agent all run headless.
 

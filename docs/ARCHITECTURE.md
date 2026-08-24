@@ -6,9 +6,9 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
 
 ```
                      ┌────────────────────────────────────────────┐
-                     │             GUI (LVGL)                  │
-                     │ Dash | Devices | TSN | VLAN | TimeSync   │
-                     │ FXMQTT | MQTT | Trace | Settings        │
+                     │        Web GUI (Python webgui.py)         │
+                     │ Dash | Devices | TSN | VLAN | TimeSync    │
+                     │ FXMQTT | Monitor | Sensors | Settings     │
                      └──────────────────┬─────────────────────────┘
                                         │ events / commands
                      ┌──────────────────▼─────────────────────────┐
@@ -57,7 +57,9 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
 8. **Simulator** (`src/simulator`) - generic TSN node simulator from profiles.
 9. **Trace** (`src/trace`) - communication monitor (comm/frame/config/multicast).
 10. **Plugins** (`src/plugin`) - loadable protocol plugins.
-11. **UI** (`src/ui`) - LVGL based pages + theme.
+11. **Web GUI** (`webgui.py`) - Python stdlib-only web front-end that
+    publishes/consumes the same MQTT topics and persists to the same sqlite
+    schema. (The old LVGL C GUI at `src/ui` was removed.)
 
 ## Data Flow
 
@@ -102,6 +104,9 @@ bus. The **Trace** page displays them live: timestamp, source, and kind
 
 ## Threading Model
 
-- Main thread: GUI event loop.
-- Worker threads: discovery pollers, MQTT callbacks, everything else.
-- Cross-thread communication via thread-safe event bus (mutex + queue).
+C core: Main thread runs the headless ops loop. Worker threads: discovery
+pollers, MQTT callbacks. Cross-thread communication via event bus.
+
+Web GUI: `ThreadingHTTPServer` spawns one thread per request (daemon).
+A background `sim_runner` thread and an `mqtt_listener_loop` thread run
+independently; sqlite connections are opened per-request/thread.

@@ -7,7 +7,17 @@ role, QoS (802.1Q, priority 0-7), VLAN (ID), TAS/GCL (802.1Qbv), gPTP
 and a live network/frame monitor. In simulation mode a background thread fabricates
 devices, sensors and a realistic frame flow so everything can be exercised without HW.
 
-Run:  python3 webgui.py [port]   ->  http://127.0.0.1:8000/
+Run:  python3 webgui.py [--host H] [--port P]   ->  http://127.0.0.1:8000/
+
+Deployment options (env also accepted):
+  --host / --port   bind address and port (default 127.0.0.1:8000)
+  WTSN_Host         bind address; use 0.0.0.0 to expose on the network
+  WTSN_PORT         port
+  WTSN_DB           real-mode sqlite path
+  WTSN_BROKER       MQTT broker address host:port (default 127.0.0.1:1883)
+  WTSN_USER/PASS    broker auth
+  WTSN_WEB_USER/PASS  optional HTTP Basic auth for the web UI
+TLS is not bundled: put it behind a reverse proxy (nginx/caddy) for production.
 """
 import json, os, random, sqlite3, threading, time, socket, struct
 from collections import deque
@@ -601,6 +611,16 @@ def run_action(act, body):
         con.close()
 
 
+WEB_HOST = os.environ.get("WTSN_HOST", "127.0.0.1")
+WEB_USER = os.environ.get("WTSN_WEB_USER") or None
+WEB_PASS = os.environ.get("WTSN_WEB_PASS") or ""
+MAX_BODY = 1 << 20
+
+def _basic_auth(user, pw):
+    import base64
+    return "Basic " + base64.b64encode(("%s:%s" % (user, pw)).encode("utf-8")).decode("ascii")
+
+
 def make_handler():
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -613,7 +633,18 @@ def make_handler():
             self.end_headers()
             self.wfile.write(b)
 
+        def _check_auth(self):
+            if WEB_USER is None:
+                return True
+            return self.headers.get("Authorization") == _basic_auth(WEB_USER, WEB_PASS)
+
         def do_GET(self):
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="WTSN Configurator"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             p = urlsplit(self.path).path
             if p == "/api/data":
                 d = load_all()
@@ -632,11 +663,20 @@ def make_handler():
                 self.wfile.write(body)
 
         def do_POST(self):
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="WTSN Configurator"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if urlsplit(self.path).path != "/api/action":
                 self.send_error(404)
                 return
             try:
                 n = int(self.headers.get("Content-Length", 0))
+                if n < 0 or n > MAX_BODY:
+                    self.send_error(413)
+                    return
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 body = {}
@@ -826,14 +866,64 @@ load();</script></body></html>
 
 if __name__ == "__main__":
     import sys
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
+    import signal
+
+    def usage():
+        print("Usage: python3 webgui.py [--host H] [--port P] [--help]")
+        print("  --host H      bind address (default %s, use 0.0.0.0 to expose)" % WEB_HOST)
+        print("  --port P      port (default %d)" % PORT)
+        print("Env: WTSN_HOST, WTSN_PORT, WTSN_DB, WTSN_BROKER, WTSN_USER,")
+        print("     WTSN_PASS, WTSN_WEB_USER, WTSN_WEB_PASS")
+        return
+
+    host = WEB_HOST
+    port = PORT
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] in ("-h", "--help"):
+            usage()
+            sys.exit(0)
+        elif args[i] == "--host" and i + 1 < len(args):
+            host = args[i + 1]; i += 2
+        elif args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1]); i += 2
+        else:
+            i += 1
+
+    LISTENER_STOP.clear()
     threading.Thread(target=sim_runner, daemon=True).start()
     threading.Thread(target=mqtt_listener_loop, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler())
-    print("WTSN web GUI: http://127.0.0.1:%d  (db=%s)" % (port, DB_REAL), flush=True)
+
+    class WTSNServer(ThreadingHTTPServer):
+        daemon_threads = True
+
+    srv = WTSNServer((host, port), make_handler())
+    srv.daemon_threads = True
+
+    def _shutdown(sig, frame):
+        srv.shutdown()
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    scheme = "http"  # TLS is not bundled; run behind a reverse proxy for TLS.
+    addr = "127.0.0.1" if host in ("127.0.0.1", "localhost") else host
+    print("WTSN web GUI: %s://%s:%d  (db=%s)" % (scheme, addr, port, DB_REAL), flush=True)
+    if host in ("127.0.0.1", "localhost"):
+        try:
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:%d/" % port)
+        except Exception:
+            pass
     try:
-        import webbrowser
-        webbrowser.open("http://127.0.0.1:%d/" % port)
-    except Exception:
+        srv.serve_forever()
+    except KeyboardInterrupt:
         pass
+    finally:
+        LISTENER_STOP.set()
+        if REAL_MQTT:
+            try: REAL_MQTT.close()
+            except Exception: pass
+        srv.server_close()
+        print("WTSN web GUI stopped", flush=True)
     srv.serve_forever()

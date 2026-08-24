@@ -15,8 +15,9 @@ if(BUILD_TESTING)
   enable_testing()
 endif()
 
-option(BUILD_GUI "Build LVGL GUI front-end" ON)
+option(BUILD_GUI "Install webgui.py (Python web front-end)" ON)
 option(BUILD_PLUGINS "Build sample protocol plugins" ON)
+set(WTSN_VERSION "1.0.0")
 
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -119,4 +120,41 @@ add_executable(tsn-node-agent ${AGENT_SOURCES})
 target_include_directories(tsn-node-agent PRIVATE ${MOSQUITTO_INCLUDE_DIRS} src)
 target_link_libraries(tsn-node-agent PRIVATE wtsn-core SQLite::SQLite3
   ${MOSQUITTO_LIBRARIES} Threads::Threads)
+
+# ---- Packaging / install -------------------------------------------------
+# The project ships a C core (CLI + agent + simulator) and a Python web GUI.
+# The LVGL C GUI was removed; webgui.py is the front-end. See docs/BUILD.md.
+
+set(WTSN_INSTALL_BINDIR bin)
+set(WTSN_INSTALL_DATADIR share/wtsn-configurator)
+
+install(TARGETS wtsn-cli tsn-node-simulator tsn-node-agent
+        RUNTIME DESTINATION ${WTSN_INSTALL_BINDIR})
+if(BUILD_PLUGINS)
+  install(TARGETS plugin-mqtt-discovery
+          LIBRARY DESTINATION ${WTSN_INSTALL_BINDIR}/plugins
+          RUNTIME DESTINATION ${WTSN_INSTALL_BINDIR}/plugins)
+endif()
+
+if(BUILD_GUI AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/webgui.py")
+  install(PROGRAMS webgui.py
+          DESTINATION ${WTSN_INSTALL_BINDIR})
+endif()
+
+install(DIRECTORY profiles DESTINATION ${WTSN_INSTALL_DATADIR})
+install(DIRECTORY docs DESTINATION ${WTSN_INSTALL_DATADIR})
+install(FILES README.md LICENSE DESTINATION ${WTSN_INSTALL_DATADIR})
+
+# CPack for simple binary packages (tar.gz on Linux; zip/sfx on Windows)
+set(CPACK_PACKAGE_NAME "wtsn-configurator")
+set(CPACK_PACKAGE_VERSION "${WTSN_VERSION}")
+set(CPACK_PACKAGE_VENDOR "Dom1n1k9")
+set(CPACK_PACKAGE_CONTACT "https://github.com/Dom1n1k9/wireless-tsn-configurator")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Wireless TSN Configurator (C core + Python web GUI)")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "TGZ")
+if(WIN32)
+  set(CPACK_GENERATOR "ZIP")
+endif()
+include(CPack)
 
