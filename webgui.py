@@ -1136,12 +1136,21 @@ if __name__ == "__main__":
 
     class WTSNServer(ThreadingHTTPServer):
         daemon_threads = True
+        allow_reuse_address = True
 
     srv = WTSNServer((host, port), make_handler())
     srv.daemon_threads = True
 
     def _shutdown(sig, frame):
-        srv.shutdown()
+        LISTENER_STOP.set()
+        try:
+            srv.shutdown()
+        except Exception:
+            pass
+        try:
+            os._exit(0)
+        except Exception:
+            pass
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
@@ -1151,7 +1160,9 @@ if __name__ == "__main__":
     if host in ("127.0.0.1", "localhost"):
         try:
             import webbrowser
-            webbrowser.open("http://127.0.0.1:%d/" % port)
+            threading.Thread(target=webbrowser.open,
+                           args=("http://127.0.0.1:%d/" % port,),
+                           daemon=True).start()
         except Exception:
             pass
     try:
@@ -1165,4 +1176,3 @@ if __name__ == "__main__":
             except Exception: pass
         srv.server_close()
         print("WTSN web GUI stopped", flush=True)
-    srv.serve_forever()

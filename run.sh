@@ -12,6 +12,7 @@ IDF_PATH="$HOME/esp/eim_workspace/v5.3/esp-idf"
 MQTT_HOST_FALLBACK="192.168.0.149"   # this PC IP (broker) - auto-detected below
 MQTT_PORT=1883
 GUI_PORT=8000
+GUI_LOG=/tmp/webgui.log
 
 # detect current LAN IP (first non-loopback)
 LAN_IP=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "127.0.0.1" | head -1 | sed 's/inet //')
@@ -59,21 +60,60 @@ ensure_broker() {
 }
 
 # ---------------- 2) web GUI ----------------
-ensure_gui() {
-    if ss -tln 2>/dev/null | grep -q ":$GUI_PORT "; then
-        log "web GUI already running on http://127.0.0.1:$GUI_PORT"
-        return
-    fi
-    log "starting web GUI (broker $LAN_IP:$MQTT_PORT) ..."
+gui_pid=""
+start_gui() {
     cd "$PROJ_DIR"
-    nohup python3 webgui.py --mqtt-host "$LAN_IP" --mqtt-port "$MQTT_PORT" \
-         > /tmp/webgui.log 2>&1 & disown
-    sleep 3
+    setsid python3 webgui.py --mqtt-host "$LAN_IP" --mqtt-port "$MQTT_PORT" \
+         < /dev/null > "$GUI_LOG" 2>&1 &
+    gui_pid=$!
+    disown
+}
+
+# monitor: if the server stops responding (frozen), restart it.
+monitor_gui() {
+    local stale=0
+    while true; do
+        sleep 4
+        # HTTP health check; 000 = connection refused/timeout (frozen or down)
+        if ! curl -fsS -m 3 "http://127.0.0.1:$GUI_PORT/" >/dev/null 2>&1; then
+            stale=$((stale + 1))
+            echo "$(date '+%H:%M:%S') [wtsn] GUI unhealthy, attempt $stale/2" >> /tmp/wtsn_mon.log
+            if [ $stale -ge 2 ]; then
+                echo "$(date '+%H:%M:%S') [wtsn] RESTARTING GUI" >> /tmp/wtsn_mon.log
+                pkill -9 -f "webgui.py" 2>/dev/null || true
+                sleep 1
+                start_gui
+                stale=0
+            fi
+        else
+            stale=0
+        fi
+    done
+}
+
+ensure_gui() {
+    # kill any stale webgui from previous runs so it never hangs on old state
+    pkill -f "webgui.py" 2>/dev/null || true
+    # wait for the port to actually be released by the old process
+    for i in $(seq 1 15); do
+        if ! ss -tln 2>/dev/null | grep -q ":$GUI_PORT "; then break; fi
+        if ! pgrep -f "webgui.py" >/dev/null 2>&1; then break; fi
+        sleep 1
+    done
+    start_gui
+    # poll up to 10s for the GUI to start
+    for i in $(seq 1 10); do
+        if ss -tln 2>/dev/null | grep -q ":$GUI_PORT "; then break; fi
+        sleep 1
+    done
     if ss -tln 2>/dev/null | grep -q ":$GUI_PORT "; then
         log "web GUI OK on http://127.0.0.1:$GUI_PORT"
     else
-        log "ERROR: web GUI failed to start - see /tmp/webgui.log"
+        log "ERROR: web GUI failed to start - see $GUI_LOG"
+        sed -n '1,20p' "$GUI_LOG"
     fi
+    # start the health monitor as a detached loop
+    ( monitor_gui ) < /dev/null & disown
 }
 
 # ---------------- 3) browser ----------------

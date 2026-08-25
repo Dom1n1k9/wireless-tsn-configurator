@@ -41,6 +41,40 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 ./run.sh --flash  # additionally build & flash the ESP32 agent first
 ```
 
+### Desktop launcher (double-click)
+
+Nemo / Nautilus file managers run an `Executable Text File` the wrong way (they
+just open it in an editor) — so double-clicking `run.sh` does nothing. Instead,
+launch with the **desktop shortcut** — a `.desktop` file is committed in
+[`launcher/`](launcher/):
+
+```bash
+# once: install the shortcut onto your Desktop
+./launcher/install.sh
+```
+
+Then double-click the **"WTSN Configurator"** icon on your Desktop — it opens a
+terminal and runs `run.sh` in it. (The shortcut is also pre-placed at
+`~/Desktop/WTSN Configurator.desktop`.)
+
+If you prefer, run it from a terminal with either:
+
+```bash
+./run.sh
+# or
+bash run.sh        # equivalent — run.sh is a bash script (not sh)
+```
+
+> Note: `sh run.sh` is **not** supported — `run.sh` uses bash-specific features.
+
+### Self-healing web GUI (watchdog)
+
+The GUI (Python stdlib `socketserver`) can, in rare races, wedge (its accept loop
+blocks) and stop answering HTTP. `run.sh` now runs a **health watchdog** that
+4-second HTTP checks the GUI and, if it stops responding, kills and restarts it —
+so the page always comes back. Watchdog restarts are logged to `/tmp/wtsn_mon.log`
+and the server output to `/tmp/webgui.log`.
+
 ---
 
 ## Setup guide (initialization, step by step)

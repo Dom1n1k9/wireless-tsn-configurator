@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=WTSN Configurator
+Comment=Start WTSN Configurator (run.sh)
+Exec=bash -lc "cd /home/dominik/Documents/wtsn-configurator && bash run.sh; read -p 'Press Enter to close...'"
+Icon=utilities-terminal
+Terminal=true
+Categories=Development;Utility;
