@@ -302,6 +302,12 @@ SIM_USER_DEVICES_LOCK = threading.Lock()
 def connect():
     con = sqlite3.connect(DB_SIM if MODE["mode"] == "sim" else DB_REAL, timeout=3)
     con.row_factory = sqlite3.Row
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA busy_timeout=5000")
+        con.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error:
+        pass
     ensure_schema(con)
     return con
 
