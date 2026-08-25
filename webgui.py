@@ -668,8 +668,14 @@ def run_action(act, body):
                     snap["preemption"] = pre["preemption"]
                 ts = con.execute("SELECT * FROM timesync_status WHERE id='main'", ()).fetchone()
                 if ts:
-                    snap["timesync_mode"] = ts["mode"]
-                    snap["grandmaster"] = ts["grandmaster"]
+                    gm = ts["grandmaster"]
+                    # GM device becomes grandmaster (mode 1); other devices are slaves (mode 2)
+                    if gm and gm != "PC":
+                        snap["timesync_mode"] = 1 if did == gm else 2
+                        snap["grandmaster"] = gm
+                    else:
+                        snap["timesync_mode"] = ts["mode"]
+                        snap["grandmaster"] = gm
                 tas = con.execute("SELECT * FROM tas_schedules WHERE 1 LIMIT 1",
                                  ()).fetchone()
                 if tas:
@@ -991,32 +997,44 @@ function preemption(){
 function prMode(){const on=$("pr_mode").value=="1";$("pr_mac").style.display=on?"block":"none"}
 function savePre(){const d=$("pr_dev").value;if(!d)return;api("save_preemption",{device_id:d,preemption:parseInt($("pr_mode").value),emac:$("pr_emac").value,pmac:$("pr_pmac").value})}
 function timesync(){const t=(D.timesync_status||[])[0]||{};
- const gm="PC";
+ const gm=t.grandmaster||"PC";
  const slaveNodes=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};
  const chosen=(slaveNodes.value||"").split(",").filter(Boolean);
  const nodes=D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(chosen.includes(d.id)?"selected":"")+">"+esc(d.id)+" (ID "+esc(nodeId(d))+")</option>").join("");
  const slaveRows=(chosen.length?chosen:[]).map(n=>"<tr><td>Slave</td><td>"+esc(n)+"</td><td>"+esc(nodeId({id:n}))+"</td><td><button class='ghost' onclick=delSlave(\""+esc(n)+"\")>Remove</button></td></tr>").join("");
- const setupTable=(chosen.length || gm==="PC")?("<div class='card'><table><tr><th>role</th><th>node</th><th>identity</th><th></th></tr>"+
-  "<tr><td>Master</td><td>PC (configurator)</td><td>"+esc(nodeId({id:"PC"}))+"</td><td></td></tr>"+
-  slaveRows+"</table></div>"):"";
+ const gmSel="<select id=ts_gm onchange=gmChanged()><option value='PC' "+(gm==='PC'?'selected':'')+">PC (configurator)</option>"+
+   D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(gm===d.id?'selected':'')+">"+esc(d.id)+"</option>").join("")+"</select>";
+ const usePc=gm==='PC';
+ const setupTable=("<div class='card'><table><tr><th>role</th><th>node</th><th>identity</th><th></th></tr>"+
+  "<tr><td>Master</td><td>"+(usePc?"PC (configurator)":esc(gm))+"</td><td>"+esc(nodeId(usePc?{id:"PC"}:{id:gm}))+"</td><td>"+(usePc?"":"<button class='dangergm' onclick='delGM()'>Clear</button>")+"</td></tr>"+
+  slaveRows+"</table></div>");
  return "<h2>IEEE 802.1AS — gPTP Time Synchronization</h2>"+
-  "<div class='card'><h3>Grandmaster (Sync Master)</h3><div class='row'><label>GM</label><span>PC (configurator)</span></div><div class='row'><label>identity</label><span>"+esc(nodeId({id:"PC"}))+"</span></div></div>"+
+  "<div class='card'><h3>Grandmaster (Sync Master)</h3><div class='row'><label>GM</label>"+gmSel+"</div>"+
+  "<div class='row'><label>identity</label><span id=gm_id>"+esc(nodeId(usePc?{id:"PC"}:{id:gm}))+"</span></div></div>"+
   "<div class='card'><h3>Sync Slave Nodes (follow the GM)</h3><select id=ts_slaves multiple size=6>"+nodes+"</select>"+
   "<div class='row'><span class=muted>Ctrl+click to select multiple</span></div></div>"+
   "<div class='card'><button class=big onclick=saveTimeSync()>Save 802.1AS Sync</button></div>"+
-  "<h3>Current setup</h3><div id=setupDraw></div>"}
+  "<h3>Current setup</h3><div id=setupDraw>"+setupTable+"</div>"}
+function gmChanged(){const g=$("ts_gm").value;const isPC=g==="PC";$("gm_id").textContent=nodeId(isPC?{id:"PC"}:{id:g});
+ // if an ESP device is chosen as GM, keep it highlighted but don't save until Save pressed
+ api("save_timesync",{mode:1,grandmaster:g,nodes:[]}).then(()=>{setSyncNodesLocal([]);redrawSetup()})}
 function nodeData(id){const dv=(D.devices||[]).find(d=>d.id===id);return dv||{id:id}}
 function syncNodeId(id){const dv=nodeData(id);return (dv.mac||"").replace(/:|\./g,"")||("0000"+String(id||"").split("").map(c=>(c.charCodeAt(0)).toString(16)).join("")).slice(-16)}
 function nodeId(d){const id=(d&&d.id)||"PC";if(id==="PC")return "80:00:11:ff:fe:00:00:01";const dv=nodeData(id);if(dv&&dv.mac){const m=dv.mac.split(":").filter(Boolean);if(m.length===4)return "80:00:11:ff:fe:"+m.map(x=>x.padStart(2,"0")).join(":")}return "80:00:11:ff:fe:"+[0,0,2,3].map(()=>Math.floor(Math.random()*256).toString(16).padStart(2,"0")).join(":")}
-function redrawSetup(){const el=$("setupDraw");if(!el)return;const slaveNodes=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};const chosen=(slaveNodes.value||"").split(",").filter(Boolean);const rows=chosen.map(n=>"<tr><td>Slave</td><td>"+esc(n)+"</td><td>"+esc(nodeId({id:n}))+"</td><td><button class='ghost' onclick=delSlave(\""+esc(n)+"\")>Remove</button></td></tr>").join("");el.innerHTML="<table><tr><th>role</th><th>node</th><th>identity</th><th></th></tr><tr><td>Master</td><td>PC (configurator)</td><td>"+esc(nodeId({id:"PC"}))+"</td><td></td></tr>"+rows+"</table>"}
+function redrawSetup(){const el=$("setupDraw");if(!el)return;const ts=(D.timesync_status||[])[0]||{};const gm=ts.grandmaster||"PC";
+ const slaveNodes=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};const chosen=(slaveNodes.value||"").split(",").filter(Boolean);
+ const isPC=gm==="PC";const rows=chosen.map(n=>"<tr><td>Slave</td><td>"+esc(n)+"</td><td>"+esc(nodeId({id:n}))+"</td><td><button class='ghost' onclick=delSlave(\""+esc(n)+"\")>Remove</button></td></tr>").join("");
+ const setupTable="<table><tr><th>role</th><th>node</th><th>identity</th><th></th></tr><tr><td>Master</td><td>"+(isPC?"PC (configurator)":esc(gm))+"</td><td>"+esc(nodeId(isPC?{id:"PC"}:{id:gm}))+"</td><td>"+(isPC?"":"<button class='dangergm' onclick='delGM()'>Clear</button>")+"</td></tr>"+rows+"</table>";
+ el.innerHTML=setupTable}
 function setSyncNodesLocal(nodes){let sv=(D.settings||[]).find(s=>s.key==="sync_nodes");if(!sv){if(!D.settings)return;sv={key:"sync_nodes",value:""};D.settings.push(sv)}sv.value=(nodes||[]).join(",")}
-function gmNodeList(){return "PC"}
-function delGM(){api("save_timesync",{grandmaster:"PC",nodes:[]}).then(()=>{setSyncNodesLocal([]);redrawSetup()})}
+function gmNodeList(){return (D.timesync_status||[])[0]?D.timesync_status[0].grandmaster||"PC":"PC"}
+function delGM(){api("save_timesync",{mode:1,grandmaster:"PC",nodes:[]}).then(()=>{setSyncNodesLocal([]);redrawSetup()})}
 function delSlave(n){const cur=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};
  const rest=(cur.value||"").split(",").filter(Boolean).filter(x=>x!==n);
- api("save_timesync",{grandmaster:"PC",nodes:rest}).then(()=>{setSyncNodesLocal(rest);redrawSetup()})}
+ api("save_timesync",{mode:1,grandmaster:(D.timesync_status||[])[0]?D.timesync_status[0].grandmaster||"PC":"PC",nodes:rest}).then(()=>{setSyncNodesLocal(rest);redrawSetup()})}
 function saveTimeSync(){const n=[].slice.call(document.querySelectorAll("#ts_slaves option:checked")).map(o=>o.value);
- api("save_timesync",{grandmaster:"PC",offset_ns:(D.timesync_status||[])[0]?D.timesync_status[0].offset_ns||0:0,quality:0,mode:1,nodes:n}).then(()=>{setSyncNodesLocal(n);redrawSetup()})}
+ const g=$("ts_gm").value;
+ api("save_timesync",{grandmaster:g,offset_ns:(D.timesync_status||[])[0]?D.timesync_status[0].offset_ns||0:0,quality:0,mode:1,nodes:n}).then(()=>{setSyncNodesLocal(n);redrawSetup()})}
 function fxmqtt(){
  const srv=(D.settings||[]).find(s=>s.key==="server_type")||{};
  const srvid=(D.settings||[]).find(s=>s.key==="server_id")||{};
