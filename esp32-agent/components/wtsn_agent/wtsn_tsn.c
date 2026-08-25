@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include "wtsn_ptp.h"
+
 static const char *TAG = "tsn";
 
 static wtsn_tsn_state g_state;
@@ -28,6 +30,7 @@ int wtsn_tsn_apply_vlan(int vlan_id, const char *group) {
 int wtsn_tsn_apply_timesync(int mode, const char *gm) {
     g_state.timesync_mode = mode;
     ESP_LOGI(TAG, "time sync mode=%d gm=%s", mode, gm ? gm : "");
+    wtsn_ptp_apply(mode, gm);
     return 0;
 }
 

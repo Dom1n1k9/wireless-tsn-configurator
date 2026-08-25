@@ -13,6 +13,7 @@
 #include "wtsn_cfg.h"
 #include "wtsn_mqtt.h"
 #include "wtsn_tsn.h"
+#include "wtsn_ptp.h"
 #include "wtsn_json.h"
 #include "wtsn_prov.h"
 
@@ -190,6 +191,8 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
                                        on_command, on_connected, NULL);
             if (g_mqtt) wtsn_mqtt_start(g_mqtt);
+            wtsn_ptp_setup(g_device_id, g_mqtt);
+            wtsn_ptp_start();
             ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
         }
     }
