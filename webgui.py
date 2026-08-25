@@ -891,7 +891,7 @@ nav button{display:block;width:100%;padding:10px 14px;background:none;border:non
 nav button.on{color:var(--text);background:var(--surf2);border-left:3px solid var(--pri)}
 .navgroup{margin-bottom:4px}
 .navtitle{color:var(--sec);font-size:11px;font-weight:700;letter-spacing:.04em;padding:10px 14px 4px;text-transform:uppercase}
-main{flex:1;overflow:auto;padding:18px;padding-bottom:90px}
+main{flex:1;overflow:auto;padding:18px;padding-bottom:140px}
 #execbar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surf);border-top:1px solid var(--sec);padding:10px 16px}
 #execbar h3{margin:0 0 8px;color:var(--sec);font-size:13px}
 button.big{width:100%;font-size:14px;padding:11px;background:var(--sec);color:#04121c;font-weight:700}
@@ -962,6 +962,7 @@ function devices(){
   "<div class='row'><label>ip</label><input id=dip></div>"+
   "<button onclick=saveDev()>Add Device</button></div>"+
   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th></tr>"+rows+"</table>"}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+(["online","offline","error"][d.status]||d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc((D.device_tsn_features||[]).filter(f=>f.device_id==d.id).map(f=>f.feature).join(", "))+"</td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th></tr>"+rows}}
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:"",kind:0,status:0,tsn:[]}})}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
@@ -1083,8 +1084,16 @@ function settings(){
   "<div class='card'><div class='row'><label>db</label><span>"+esc(D.db||"wtsn_gui.db")+"</span></div>"+
   "<div class='row'><label>push</label><span>in <b>Real</b> mode /apply is sent over MQTT to devices</span></div></div>"}
 function saveBroker(){api("set_server",{type:((D.settings||[]).find(s=>s.key==="server_type")||{}).value||"node",id:"",broker:$("broker_in").value}).then(load)}
-setInterval(async()=>{const r=await fetch("/api/events");const j=await r.json();if(j.mode){D.mode=j.mode}if($("mon")){const ev=(j.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}},2000);
-load();</script></body></html>
+async function pollEvents(){const r=await fetch("/api/events");const j=await r.json();if(j.mode){D.mode=j.mode}
+ // refresh device list so newly discovered nodes appear without a manual page refresh
+ const dr=await fetch("/api/data");const dj=await dr.json();
+ const added=D.devices.filter(d=>!dj.devices.some(n=>n.id===d.id));
+ const removed=D.devices.some(d=>!dj.devices.some(n=>n.id===d.id));
+ const statusChanged=D.devices.length!==dj.devices.length||D.devices.some((d,i)=>dj.devices[i]&&d.status!==dj.devices[i].status);
+ if((added.length||removed||statusChanged)&&cur==="devices"){D.devices=dj.devices;if($("main"))devices_render()}
+ if($("mon")){const ev=(dj.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}
+ D.events=dj.events;D.devices=dj.devices}
+setInterval(pollEvents,2000);</script></body></html>
 """
 
 
