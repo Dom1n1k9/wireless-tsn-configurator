@@ -930,7 +930,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div id="execbar"><h3>Controller / FXMQTT target</h3><button class="big" onclick="execAll()">Execute settings on controller</button></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","VLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices";
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -972,20 +972,19 @@ function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3"
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:"",kind:0,status:0,tsn:[]}})}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
- let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.bandwidth_kbps+"</td><td>"+q.latency_ms+" ms</td></tr>").join("");
+ let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
  const prio=PRIOS.map(p=>"<option value='"+p[0]+"' "+(String(def)==String(p[0])?"selected":"")+">Priority "+p[0]+" — "+esc(p[1])+"</option>").join("");
  return "<h2>IEEE 802.1Q — QoS Priority</h2><div class='card'>"+
   "<div class='row'><label>device</label><select id=q_dev><option value=''>-</option>"+opts+"</select></div>"+
   "<div class='row'><label>priority</label><select id=q_prio>"+prio+"</select></div>"+
-  "<div class='row'><label>bandwidth kbps</label><input id=q_bw type=number value=1000></div>"+
   "<div class='row'><label>latency ms</label><input id=q_lat type=number value=2></div>"+
   "<button onclick=saveQ()>Save QoS</button></div>"+
-  "<h3>Current settings</h3><div class=card><p class=muted>Traffic class follows the priority automatically. Preemption is configured on the <b>IEEE 802.1Qbu</b> page.</p></div>"+
-  "<table><tr><th>device</th><th>priority</th><th>bw kbps</th><th>latency ms</th></tr>"+rows+"</table>"}
-function saveQ(){const d=$("q_dev").value;const p=parseInt($("q_prio").value);api("save_qos",{device_id:d,priority:p,traffic_class:p,bandwidth_kbps:parseInt($("q_bw").value),latency_ms:parseInt($("q_lat").value),preemption:(D.qos_configs.find(q=>q.device_id==d)||{}).preemption||0})}
-function vlan(){let rows=D.vlan_groups.map(g=>"<tr><td>"+esc(g.id)+"</td><td>"+esc(g.name)+"</td><td>"+g.vlan_id+"</td><td>"+esc((D.vlan_members||[]).filter(x=>x.group_id==g.id).map(x=>x.device_id).join(", "))+"</td></tr>").join("");
- return "<h2>VLAN (IEEE 802.1Q)</h2><div class='card'><div class='row'><label>name</label><input id=v_name></div><div class='row'><label>VLAN ID 1-4094</label><input id=v_id type=number value=100></div><button onclick='api(\"save_vlan\",{id:\"v_\"+Math.random().toString(36).slice(2,6),name:$(\"v_name\").value,vlan_id:parseInt($(\"v_id\").value)})'>Add group</button></div><table><tr><th>id</th><th>name</th><th>vlan</th><th>members</th></tr>"+rows+"</table>"}
+  "<h3>Current settings</h3>"+
+  "<table><tr><th>device</th><th>priority</th><th>latency ms</th><th></th></tr>"+rows+"</table>"}
+function saveQ(){const d=$("q_dev").value;const p=parseInt($("q_prio").value);api("save_qos",{device_id:d,priority:p,traffic_class:p,latency_ms:parseInt($("q_lat").value),preemption:(D.qos_configs.find(q=>q.device_id==d)||{}).preemption||0})}
+function vlan(){let rows=D.vlan_groups.map(g=>"<tr><td>"+esc(g.id)+"</td><td>"+esc(g.name)+"</td><td>"+g.vlan_id+"</td><td>"+esc((D.vlan_members||[]).filter(x=>x.group_id==g.id).map(x=>x.device_id).join(", "))+"</td><td><button class='danger' onclick='api(\"delete_vlan\",{id:\""+esc(g.id)+"\"}).then(load)'>Clear</button></td></tr>").join("");
+ return "<h2>WVLAN ID (IEEE 802.1Q)</h2><div class='card'><div class='row'><label>name</label><input id=v_name></div><div class='row'><label>WVLAN ID 1-4094</label><input id=v_id type=number value=100></div><button onclick='api(\"save_vlan\",{id:\"v_\"+Math.random().toString(36).slice(2,6),name:$(\"v_name\").value,vlan_id:parseInt($(\"v_id\").value)})'>Add group</button></div><table><tr><th>id</th><th>name</th><th>wvlan</th><th>members</th><th></th></tr>"+rows+"</table>"}
 function tas(){let bl=D.tas_schedules.map(s=>{const g=(D.gcl_entries||[]).filter(e=>e.schedule_id==s.id).map(e=>e.gate_state+":"+e.duration_ns).join(", ");return "<div class='card'><h3>"+esc(s.name)+"</h3><div class='row'><label>id</label><span>"+esc(s.id)+"</span></div><div class='row'><label>cycle</label><span>"+s.cycle_time_ns+" ns</span></div><div class='row'><label>deploy</label><span>"+esc(s.deploy_target)+"</span></div><div class='row'><label>GCL</label><span>"+esc(g)+"</span></div></div>"}).join("");
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
  return "<h2>TAS (IEEE 802.1Qbv) — Gate Control List</h2><div class='card'><div class='row'><label>name</label><input id=t_name></div><div class='row'><label>cycle ns</label><input id=t_cyc type=number value=1000000></div><div class='row'><label>deploy target</label><select id=t_dev>"+opts+"</select></div><div class='row'><label>GCL</label><input id=t_gcl value='1:300000,3:200000,0:500000'></div><button onclick=tSave()>Save / Deploy</button></div>"+bl}
