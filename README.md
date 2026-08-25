@@ -26,6 +26,23 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 
 ---
 
+## One-launcher script (`run.sh`)
+
+`run.sh` launches everything needed in one go:
+
+- **MQTT broker** (mosquitto on `0.0.0.0:1883`, auto-detects your LAN IP)
+- **Web GUI** (`webgui.py`) on http://127.0.0.1:8000 and opens the browser
+- **A new terminal** with the **WiFi provisioning helper** for the ESP32 — it
+  shows the exact steps to connect to the `WTSN-Setup` SoftAP and open
+  http://192.168.4.1/
+
+```bash
+./run.sh          # broker + GUI + browser + provisioning helper terminal
+./run.sh --flash  # additionally build & flash the ESP32 agent first
+```
+
+---
+
 ## Setup guide (initialization, step by step)
 
 This walks you through getting a physical **ESP32 agent** online and controllable from

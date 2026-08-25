@@ -79,7 +79,58 @@ ensure_gui() {
 # ---------------- 3) browser ----------------
 open_browser() { xdg-open "http://127.0.0.1:$GUI_PORT" >/dev/null 2>&1 & }
 
-# ---------------- 4) optional flash ----------------
+# ---------------- 4) provisioning helper in a new terminal ----------------
+PROV_SCRIPT="/tmp/wtsn_prov_helper.sh"
+write_prov_script() {
+    MASTER_IP="$LAN_IP"
+    cat > "$PROV_SCRIPT" <<EOF
+#!/usr/bin/env bash
+sleep 1
+echo '============================================'
+echo ' WTSN ESP32 WiFi provisioning'
+echo '============================================'
+echo
+echo '1. Connect this machine to the ESP SoftAP:'
+echo '   SSID:   WTSN-Setup'
+echo '   (no password)'
+echo
+echo '2. Then open in the browser:'
+echo '   http://192.168.4.1/'
+echo
+echo '3. Enter your WiFi SSID/password and MQTT broker:'
+echo "   ${MASTER_IP}  (this PC)"
+echo
+echo '4. Save - ESP32 reboots, blinks LED 3x and joins your WiFi,'
+echo '   then announces itself on MQTT.'
+echo
+echo 'TIP: many routers isolate WiFi client multicast, so for PTP'
+echo '  between two ESP32 nodes use an AP without client isolation.'
+exec bash
+EOF
+    chmod +x "$PROV_SCRIPT"
+}
+open_prov_terminal() {
+    write_prov_script
+    local term=""
+    for t in gnome-terminal konsole xfce4-terminal x-terminal-emulator; do
+        if command -v "$t" >/dev/null 2>&1; then term="$t"; break; fi
+    done
+    if [ -n "$term" ]; then
+        log "opening provisioning helper in a new terminal ($term)"
+        case "$term" in
+            gnome-terminal)   nohup gnome-terminal -- bash "$PROV_SCRIPT" >/dev/null 2>&1 & ;;
+            konsole)         nohup konsole -e bash "$PROV_SCRIPT" >/dev/null 2>&1 & ;;
+            xfce4-terminal)  nohup xfce4-terminal -e bash "$PROV_SCRIPT" >/dev/null 2>&1 & ;;
+            x-terminal-emulator) nohup "$term" -e bash "$PROV_SCRIPT" >/dev/null 2>&1 & ;;
+        esac
+    else
+        log "no graphical terminal found; run provisioning manually:"
+        log "   iwctl station wlan0 connect WTSN-Setup   (or NetworkManager GUI)"
+        log "   then open http://192.168.4.1/"
+    fi
+}
+
+# ---------------- 5) optional flash ----------------
 do_flash() {
     if [ ! -f "$ESP_DIR/build/wtsn_esp32_agent.bin" ]; then
         log "firmware not built - building ..."
@@ -99,8 +150,10 @@ main() {
     ensure_broker
     ensure_gui
     open_browser
+    open_prov_terminal
     log "Done. Broker=$LAN_IP:$MQTT_PORT  GUI=http://127.0.0.1:$GUI_PORT"
     log "ESP32: switch web GUI to REAL, add device id=esp32-01, then Deploy."
+    log "New terminal opened with WiFi provisioning helper for the ESP32."
     if [ "$1" = "--flash" ]; then do_flash; fi
 }
 
