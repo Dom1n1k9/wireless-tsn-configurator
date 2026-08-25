@@ -1015,7 +1015,7 @@ function delGM(){api("save_timesync",{grandmaster:"PC",nodes:[]}).then(()=>{setS
 function delSlave(n){const cur=(D.settings||[]).find(s=>s.key==="sync_nodes")||{};
  const rest=(cur.value||"").split(",").filter(Boolean).filter(x=>x!==n);
  api("save_timesync",{grandmaster:"PC",nodes:rest}).then(()=>{setSyncNodesLocal(rest);redrawSetup()})}
-function saveTimeSync(){const n=[].slice.call(document.querySelectorAll("#ts_slaves option:checked")).map(o=>o.value;
+function saveTimeSync(){const n=[].slice.call(document.querySelectorAll("#ts_slaves option:checked")).map(o=>o.value);
  api("save_timesync",{grandmaster:"PC",offset_ns:(D.timesync_status||[])[0]?D.timesync_status[0].offset_ns||0:0,quality:0,mode:1,nodes:n}).then(()=>{setSyncNodesLocal(n);redrawSetup()})}
 function fxmqtt(){
  const srv=(D.settings||[]).find(s=>s.key==="server_type")||{};
