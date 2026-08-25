@@ -173,6 +173,8 @@ typedef struct {
     int  port;
 } wifi_ctx_t;
 
+static void set_led(int on);
+
 static wifi_ctx_t g_ctx;
 
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
@@ -183,10 +185,12 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGI(TAG, "wifi connecting to %s", ctx->ssid);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         /* will retry automatically via reconnect if enabled; reconnect manually */
+        set_led(0);
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
+        set_led(1);   /* solid on = connected to WiFi */
         if (!g_mqtt) {
             g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
                                        on_command, on_connected, NULL);
@@ -199,17 +203,30 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
 }
 
 /* Blink onboard LED 3x at startup so a reboot/flash is visibly confirmed. */
-static void blink_led(void) {
-    gpio_config_t io = {0};
-    io.pin_bit_mask = (1ULL << GPIO_NUM_2);
-    io.mode = GPIO_MODE_OUTPUT;
-    gpio_config(&io);
-    for (int i = 0; i < 3; i++) {
-        gpio_set_level(GPIO_NUM_2, 1);
-        vTaskDelay(pdMS_TO_TICKS(250));
-        gpio_set_level(GPIO_NUM_2, 0);
-        vTaskDelay(pdMS_TO_TICKS(250));
+static void set_led(int on) {
+    static bool cfg = false;
+    if (!cfg) {
+        gpio_config_t io = {0};
+        io.pin_bit_mask = (1ULL << GPIO_NUM_2);
+        io.mode = GPIO_MODE_OUTPUT;
+        gpio_config(&io);
+        cfg = true;
     }
+    gpio_set_level(GPIO_NUM_2, on ? 1 : 0);
+}
+
+static void blink_led(void) {
+    set_led(1);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    set_led(0);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    set_led(1);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    set_led(0);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    set_led(1);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    set_led(0);
 }
 
 static void wifi_init(const char *ssid, const char *pass) {
