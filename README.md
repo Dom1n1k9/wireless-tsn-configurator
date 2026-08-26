@@ -159,7 +159,7 @@ With no WiFi stored, the agent starts a SoftAP `WTSN-Setup`:
 4. Go to **Devices**, add a device with id **`esp32-01`** (kind *ESP32*), Add.
    It appears in the Devices table below.
 5. Configure TSN (QoS, VLAN, TimeSync, TAS...) for that device.
-6. Click **Execute settings on controller** (bottom bar). The GUI publishes a JSON
+6. Click **Execute settings on controller** (blue button in the header). The GUI publishes a JSON
    snapshot on `tsn/cmd/esp32-01/apply`; the agent replies on `tsn/ack/esp32-01`.
 
 ---
@@ -175,6 +175,7 @@ With no WiFi stored, the agent starts a SoftAP `WTSN-Setup`:
 - **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local / external grandmaster modes
 - **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), cycle time, deploy schedules, visualize gate windows (full GCL is pushed to the node over `/apply`)
 - **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt preemptable classes to protect time-critical traffic
+- **Persistent per-device config on the ESP32 agent** — QoS / VLAN / TimeSync / TAS-GCL / Preemption are stored to NVS (`wtsn_cfg_save_tsn_state`) and restored on reboot, so a node keeps its applied settings across restarts
 - **Sensor management** — auto-detect temperature, pressure, IMU, distance, GPIO sensors with diagnostics
 - **OPC UA FX over MQTT (FXMQTT)** — PubSub / C2C Field Exchange over MQTT
 - **MQTT client** — the single communication channel

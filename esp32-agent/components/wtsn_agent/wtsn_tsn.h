@@ -5,6 +5,8 @@
 #include <stdbool.h>
 
 #define WTSN_GCL_MAX 32
+#define WTSN_STREAM_MAX_LISTENERS 8
+#define WTSN_STREAM_ID_LEN 48
 
 /* Full configuration snapshot received on tsn/cmd/<id>/apply */
 typedef struct {
@@ -31,9 +33,13 @@ typedef struct {
     int vlan_id;
     int timesync_mode;
     int64_t tas_cycle_ns;
+    int gcl_entries;
+    int gates[WTSN_GCL_MAX];
+    int64_t durations[WTSN_GCL_MAX];
 } wtsn_tsn_state;
 
 wtsn_tsn_state *wtsn_tsn_get_state(void);
+void wtsn_tsn_restore(void);
 
 /* apply a full snapshot, return 0 on success (used by /apply handler) */
 int wtsn_tsn_apply_snapshot(const wtsn_config_snapshot *cfg);
@@ -43,5 +49,24 @@ int wtsn_tsn_apply_vlan(int vlan_id, const char *group);
 int wtsn_tsn_apply_timesync(int mode, const char *gm);
 int wtsn_tsn_apply_tas(int64_t cycle_ns, const int *gates, const int64_t *durations, int entries);
 int wtsn_tsn_apply_preemption(int preemption, const char *emac_csv, const char *pmac_csv);
+
+/* 802.1Qcc stream reservation received over FXMQTT (tsn/fx/...) */
+typedef struct {
+    char stream_id[WTSN_STREAM_ID_LEN];
+    char name[64];
+    char talker[64];
+    char listeners[WTSN_STREAM_MAX_LISTENERS][64];
+    int listener_count;
+    int vlan_id;
+    int64_t max_latency_ns;
+    int64_t max_interval_ns;
+    int priority;
+    int data_frame_prio;
+} wtsn_stream;
+extern wtsn_stream *wtsn_tsn_streams;
+extern int wtsn_tsn_stream_count;
+
+int wtsn_tsn_apply_stream(const wtsn_stream *s);
+wtsn_stream *wtsn_tsn_find_stream(const char *id);
 
 #endif

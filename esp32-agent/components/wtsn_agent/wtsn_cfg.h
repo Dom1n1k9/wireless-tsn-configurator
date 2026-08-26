@@ -15,6 +15,16 @@ bool wtsn_cfg_save(const char *device_id, const char *wifi_ssid,
                    const char *wifi_pass, const char *mqtt_host, int mqtt_port);
 void wtsn_cfg_set_wifi(const char *ssid, const char *pass);
 
+/* Persist the applied TSN configuration so it survives a restart. */
+bool wtsn_cfg_save_tsn_state(const int priority, const int traffic_class,
+                             const int vlan_id, const int preemption,
+                             const int timesync_mode, const int64_t tas_cycle_ns,
+                             const int *gates, const int64_t *durations,
+                             const int gcl_entries);
+bool wtsn_cfg_load_tsn_state(int *priority, int *traffic_class, int *vlan_id,
+                             int *preemption, int *timesync_mode, int64_t *tas_cycle_ns,
+                             int *gates, int64_t *durations, int *gcl_entries);
+
 /* tiny substitute for the host-side str_util */
 void wtsn_strlcpy(char *dst, const char *src, size_t sz);
 

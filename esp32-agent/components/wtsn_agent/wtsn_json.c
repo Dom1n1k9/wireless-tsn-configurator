@@ -83,6 +83,31 @@ bool wtsn_json_get_root_array(const char *json, const char *key, const char **ou
     return true;
 }
 
+/* Parse a JSON array of plain strings ["a","b","c"] into out[][]. Returns count. */
+int wtsn_json_parse_str_array(const char *arr, char out[][64], int max_entries) {
+    if (!arr || !out || max_entries <= 0) return 0;
+    const char *p = arr + 1; /* skip '[' */
+    int n = 0;
+    for (; p && *p && *p != ']' && n < max_entries; ) {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (!*p || *p == ']') break;
+        if (*p == '"') {
+            const char *s = p + 1;
+            const char *e = strchr(s, '"');
+            if (!e) break;
+            size_t len = (size_t)(e - s);
+            if (len >= 64) len = 63;
+            memcpy(out[n], s, len);
+            out[n][len] = '\0';
+            n++;
+            p = e + 1;
+        } else {
+            break;
+        }
+    }
+    return n;
+}
+
 /* Parse a JSON array of {"gate_state":N,"duration_ns":M} objects into
    parallel arrays. Returns number of entries parsed (max max_entries). */
 int wtsn_json_parse_gcl(const char *arr, int *gates, int64_t *durations, int max_entries) {

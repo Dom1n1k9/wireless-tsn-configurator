@@ -128,8 +128,27 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         wtsn_tsn_apply_tas((int64_t)atoi(payload), NULL, NULL, 0);
         send_ack(true, "");
     } else if (strcmp(cmd, "stream") == 0) {
-        apply_snapshot(payload);
-        send_ack(true, "");
+        wtsn_stream s;
+        memset(&s, 0, sizeof(s));
+        int v;
+        wtsn_json_get_str(payload, "stream_id", s.stream_id, sizeof(s.stream_id));
+        wtsn_json_get_str(payload, "name", s.name, sizeof(s.name));
+        wtsn_json_get_str(payload, "talker", s.talker, sizeof(s.talker));
+        if (wtsn_json_get_int(payload, "vlan_id", &v)) s.vlan_id = v;
+        int64_t l;
+        if (wtsn_json_get_i64(payload, "max_latency_ns", &l)) s.max_latency_ns = l;
+        if (wtsn_json_get_i64(payload, "max_interval_ns", &l)) s.max_interval_ns = l;
+        if (wtsn_json_get_int(payload, "priority", &v)) s.priority = v;
+        if (wtsn_json_get_int(payload, "data_frame_prio", &v)) s.data_frame_prio = v;
+        const char *arr = NULL;
+        if (wtsn_json_get_root_array(payload, "listeners", &arr)) {
+            s.listener_count = wtsn_json_parse_str_array(arr, s.listeners,
+                                                        WTSN_STREAM_MAX_LISTENERS);
+        }
+        if (s.stream_id[0] && wtsn_tsn_apply_stream(&s) == 0)
+            send_ack(true, "");
+        else
+            send_ack(false, "stream_invalid");
     } else if (strcmp(cmd, "preemption") == 0) {
         char mode[8] = {0}, emac[32] = {0}, pmac[32] = {0};
         const char *p1 = payload;
@@ -153,11 +172,14 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         send_ack(true, "");
     } else if (strcmp(cmd, "status") == 0) {
         wtsn_tsn_state *st = wtsn_tsn_get_state();
-        char buf[160];
+        char buf[256];
         snprintf(buf, sizeof(buf),
                  "{\"id\":\"%s\",\"status\":\"online\",\"prio\":%d,\"vlan\":%d,"
-                 "\"preempt\":%d,\"tc\":%d}",
-                 g_device_id, st->priority, st->vlan_id, st->preemption, st->traffic_class);
+                 "\"preempt\":%d,\"tc\":%d,\"tas_cycle_ns\":%lld,\"gcl_entries\":%d,"
+                 "\"timesync_mode\":%d}",
+                 g_device_id, st->priority, st->vlan_id, st->preemption,
+                 st->traffic_class, (long long)st->tas_cycle_ns, st->gcl_entries,
+                 st->timesync_mode);
         wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
     } else if (strcmp(cmd, "fx") == 0) {
         char buf[64];
@@ -279,6 +301,8 @@ void app_main(void) {
 
     snprintf(g_ctx.host, sizeof(g_ctx.host), "%s", mqtt_host);
     g_ctx.port = mqtt_port;
+
+    wtsn_tsn_restore();
 
     wifi_init(wifi_ssid, wifi_pass);
 
