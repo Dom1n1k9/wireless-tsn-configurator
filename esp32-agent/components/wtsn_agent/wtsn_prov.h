@@ -6,4 +6,9 @@
    or immediately if NVS already has WiFi. */
 void wtsn_prov_start(void);
 
+/* Start provisioning SoftAP + portal even when WiFi is already stored in NVS.
+   Fallback so a device that cannot reach its saved network can be re-provisioned
+   to a new network over the air (no USB/flash required). */
+void wtsn_prov_start_ap(void);
+
 #endif

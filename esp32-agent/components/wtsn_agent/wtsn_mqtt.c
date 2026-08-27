@@ -15,7 +15,16 @@ struct wtsn_mqtt {
     wtsn_cmd_cb cb;
     wtsn_connected_cb conn_cb;
     void *ud;
+    char device_id[32];
 };
+
+/* Subscriptions keyed to this node's own device_id so each ESP/TT device only
+ * handles its own commands (previously it subscribed to tsn/cmd/+/... and any
+ * node could consume another node's config). */
+void wtsn_mqtt_set_device_id(wtsn_mqtt *m, const char *id) {
+    if (!m) return;
+    snprintf(m->device_id, sizeof(m->device_id), "%s", id ? id : "");
+}
 
 static void on_data(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     if (m->cb && e->topic) {
@@ -35,18 +44,35 @@ static void on_data(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
 
 static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     (void)e;
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/apply", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/qos", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/vlan", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/wifi", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/timesync", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/tas", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/stream", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/preemption", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/status", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/cmd/+/fx", 0);
-    esp_mqtt_client_subscribe(m->c, "tsn/fx/#", 0);
-    ESP_LOGI(TAG, "subscribed to commands");
+    char t[64];
+    snprintf(t, sizeof(t), "tsn/cmd/%s/apply", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/qos", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/vlan", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/wifi", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/timesync", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/tas", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/stream", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/preemption", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/status", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/fx", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/actor", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/identify", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/ping", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    esp_mqtt_client_subscribe(m->c, "tsn/fx/cmd/#", 0);
+    ESP_LOGI(TAG, "subscribed to commands for device '%s'", m->device_id);
     if (m->conn_cb) m->conn_cb("", m->ud);
 }
 
@@ -94,5 +120,5 @@ void wtsn_mqtt_start(wtsn_mqtt *m) {
 
 void wtsn_mqtt_publish(wtsn_mqtt *m, const char *topic, const char *payload) {
     if (!m || !m->c) return;
-    esp_mqtt_client_publish(m->c, topic, payload, 0, 1, 0);
+    esp_mqtt_client_publish(m->c, topic, payload, 0, 0, 0);
 }

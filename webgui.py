@@ -25,126 +25,126 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 # --- minimal MQTT 3.1.1 client (stdlib only, no paho dependency) ---
+import paho.mqtt.client as mqttlib
+
 class MqttBroker:
-    """Minimal MQTT 3.1.1 client: connect, subscribe, publish, keepalive.
-    Used in real mode to send commands to the ESP32 agent via a broker."""
+    """MQTT 3.1.1 client wrapper (backed by paho-mqtt) with a small,
+    synchronous, thread-safe surface used by the rest of the app.
+
+    Methods: connect/subscribe/publish/close/recv_publish.
+    recv_publish blocks for the next inbound publication and returns (topic,payload),
+    or None when the connection is lost.
+    """
+
     def __init__(self, host="127.0.0.1", port=1883, client_id="wtsn-webgui"):
         self.host, self.port, self.client_id = host, port, client_id
         self.username = os.environ.get("WTSN_USER", "")
         self.password = os.environ.get("WTSN_PASS", "")
-        self._sock = None
-        self._msg_id = 1
+        self._paho = None
+        self._inbox = deque()
+        self._inbox_cv = threading.Condition()
+        self._connected = False
         self._lock = threading.Lock()
 
-    def _write(self, hdr, body):
-        # variable header: byte 1 is remaining length
-        remaining = len(body)
-        enc = bytearray([(remaining % 128) | (0x80 if remaining >= 128 else 0)])
-        if remaining >= 128:
-            enc.append(remaining // 128)
-        self._sock.sendall(hdr + bytes(enc) + body)
-
-    def _read_packet(self):
-        sock = self._sock
-        # fixed header
-        fh = sock.recv(2)
-        if len(fh) < 2: return None
-        rem = fh[1]
-        mult, rem_len = 1, rem
-        while rem & 0x80:
-            r = sock.recv(1)
-            if not r: return None
-            rem_len += (r[0] & 0x7f) * mult
-            mult *= 128
-            rem = r[0]
-        body = b""
-        while len(body) < rem_len:
-            chunk = sock.recv(rem_len - len(body))
-            if not chunk: return None
-            body += chunk
-        return fh[0], body
-
-    def _send_str(self, body, s):
-        b = s.encode("utf-8")
-        return body + struct.pack(">H", len(b)) + b
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        self._connected = (reason_code == 0) if hasattr(reason_code, "is_failure") else (reason_code == 0)
 
     def connect(self):
-        with self._lock:
-            try:
-                self._sock = socket.create_connection((self.host, self.port), timeout=5)
-            except OSError:
-                self._sock = None
-                return False
-            # CONNECT (MQTT 3.1.1)
-            flags = 0x02  # clean session
-            vh = b"\x00\x04MQTT\x04" + bytes([flags]) + struct.pack(">H", 30)
-            payload = self._send_str(b"", self.client_id)
+        try:
+            existing = self._paho
+            self._paho = None
+            self._connected = False
+            if existing:
+                try:
+                    existing.loop_stop()
+                except Exception:
+                    pass
+                try:
+                    existing.disconnect()
+                except Exception:
+                    pass
+            c = mqttlib.Client(mqttlib.CallbackAPIVersion.VERSION2,
+                                client_id=self.client_id)
             if self.username:
-                flags |= 0x80
-                vh = b"\x00\x04MQTT\x04" + bytes([flags]) + struct.pack(">H", 30)
-                payload = self._send_str(payload, self.username)
-                payload = self._send_str(payload, self.password)
-            body = vh + payload
-            self._write(b"\x10", body)
-            resp = self._read_packet()
-            ok = resp and resp[0] == 0x20 and len(resp[1]) > 0 and resp[1][0] == 0
-            if not ok:
-                self._sock.close(); self._sock = None
-            return ok
+                c.username_pw_set(self.username, self.password)
+            c.on_connect = self._on_connect
+            c.on_message = self._on_message
+            c.reconnect_delay_set(min_delay=1, max_delay=5)
+            c.connect(self.host, self.port, keepalive=60)
+            c.loop_start()
+            self._paho = c
+            self._connected = True
+            return True
+        except Exception:
+            self._paho = None
+            self._connected = False
+            return False
 
-    def publish(self, topic, payload, qos=0):
-        if not self._sock: return False
-        with self._lock:
-            body = self._send_str(b"", topic)
-            body += bytes([qos << 6])
-            body += payload.encode("utf-8") if isinstance(payload, str) else payload
-            try:
-                self._write(b"\x30" if qos == 0 else b"\x32", body)
-                return True
-            except OSError:
-                self._sock = None
-                return False
+    def _on_message(self, client, userdata, msg):
+        with self._inbox_cv:
+            self._inbox.append((msg.topic, msg.payload.decode("utf-8", "replace")))
+            self._inbox_cv.notify()
 
     def subscribe(self, topic, qos=0):
-        if not self._sock: return False
-        with self._lock:
-            self._msg_id += 1
-            body = struct.pack(">H", self._msg_id) + self._send_str(b"", topic) + bytes([qos])
-            try:
-                self._write(b"\x82", body)
-                return True
-            except OSError:
-                self._sock = None
-                return False
+        if not self._paho or not self._connected:
+            return False
+        try:
+            self._paho.subscribe(topic, qos)
+            return True
+        except Exception:
+            return False
+
+    def publish(self, topic, payload, qos=0):
+        if not self._paho or not self._connected:
+            return False
+        try:
+            self._paho.publish(topic, payload, qos)
+            return True
+        except Exception:
+            return False
+
+    def recv_publish(self, timeout=None):
+        """Block until an inbound publication arrives, then return (topic,payload).
+        Returns None when the underlying connection is gone/closing."""
+        with self._inbox_cv:
+
+            def closed():
+                return not self._paho or (not self._connected and not self._inbox)
+
+            import time as _t
+
+            if timeout is None:
+                while not self._inbox:
+                    if closed():
+                        return None
+                    if not self._inbox_cv.wait(timeout=1.0):
+                        continue
+            else:
+                deadline = _t.monotonic() + timeout
+                while not self._inbox:
+                    if closed():
+                        return None
+                    remaining = deadline - _t.monotonic()
+                    if remaining <= 0:
+                        return None
+                    self._inbox_cv.wait(timeout=min(1.0, remaining))
+            if self._inbox:
+                return self._inbox.popleft()
+            return None
 
     def close(self):
         with self._lock:
-            if self._sock:
-                try: self._sock.close()
-                except OSError: pass
-                self._sock = None
-
-    def recv_publish(self):
-        """Read one inbound message. Returns (topic, payload) or None."""
-        try:
-            pkt = self._read_packet()
-        except OSError:
-            pkt = None
-        if not pkt:
-            try: self.close()
-            except Exception: pass
-            return None
-        ptype, body = pkt
-        if (ptype >> 4) == 3:
-            qos = (ptype >> 1) & 0x3
-            tl = struct.unpack(">H", body[:2])[0]
-            topic = body[2:2 + tl].decode("utf-8", "replace")
-            off = 2 + tl
-            if qos > 0:
-                off += 2
-            payload = body[off:].decode("utf-8", "replace")
-            return topic, payload
-        return None
+            if self._paho:
+                try:
+                    self._paho.loop_stop()
+                    self._paho.disconnect()
+                except Exception:
+                    pass
+                self._paho = None
+            self._connected = False
+            with self._inbox_cv:
+                self._inbox.clear()
+                self._inbox_cv.notify_all()
 
 REAL_MQTT = None
 def get_real_mqtt(con):
@@ -172,9 +172,25 @@ def mqtt_listener_loop():
     """Background thread: subscribes to status/ack/discover and updates state."""
     brk = host = port = None
     cons = None
+    last_db = None
     while not LISTENER_STOP.is_set():
         try:
-            con = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
+            wanted_db = DB_REAL if MODE["mode"] == "real" else DB_SIM
+            if wanted_db != last_db:
+                if cons:
+                    try:
+                        cons.close()
+                    except Exception:
+                        pass
+                    cons = None
+                    if brk:
+                        try:
+                            brk.close()
+                        except Exception:
+                            pass
+                        brk = None
+                last_db = wanted_db
+            con = sqlite3.connect(wanted_db, timeout=3)
             con.row_factory = sqlite3.Row
             ensure_schema(con)
             row = con.execute("SELECT value FROM settings WHERE key='broker'").fetchone()
@@ -196,13 +212,15 @@ def mqtt_listener_loop():
             brk.subscribe("tsn/fx/#")
             brk.subscribe("tsn/ptp")
             brk.subscribe("tsn/fx/stream")
+            brk.subscribe("tsn/sensors")
             if cons is None:
-                cons = sqlite3.connect(DB_REAL if MODE["mode"] == "real" else DB_SIM, timeout=3)
+                cons = sqlite3.connect(wanted_db, timeout=3)
                 cons.row_factory = sqlite3.Row
                 ensure_schema(cons)
             while not LISTENER_STOP.is_set():
-                r = brk.recv_publish()
+                r = brk.recv_publish(timeout=1.0)
                 if r is None:
+                    # reconnect to re-evaluate mode / broker address if it changed
                     break
                 parse_listener_msg(cons, r[0], r[1])
             if cons:
@@ -234,6 +252,32 @@ def parse_listener_msg(con, topic, payload):
                      (j.get("offset_ns", 0), j.get("jitter_ns", 0),
                       ["in sync", "holdover", "unsync"][j.get("state", 2) % 3]),
                      proto="IEEE 802.1AS")
+            con.commit()
+            return
+        elif "/sensors" in topic and did:
+            s_list = j.get("sensors", [])
+            brief = ", ".join("%s=%s%s" % (s.get("sensor_id", "?"), s.get("value"), s.get("unit", ""))
+                            for s in s_list if s.get("sensor_id"))
+            if not brief:
+                brief = payload
+            add_event("sensor", did, "sensors: " + brief)
+            dev = con.execute("SELECT id FROM devices WHERE id=?", (did,)).fetchone()
+            if not dev:
+                con.execute("INSERT OR REPLACE INTO devices(id,name,status,last_seen)"
+                           " VALUES(?,?,0,strftime('%s','now'))", (did, did))
+            for s in s_list:
+                sid = s.get("sensor_id", "")
+                typ = s.get("type", 0)
+                val = s.get("value", 0)
+                unit = s.get("unit", "")
+                healthy = s.get("healthy", 1)
+                if not sid:
+                    continue
+                con.execute(
+                    "INSERT OR REPLACE INTO sensors(device_id,sensor_id,type,name,"
+                    "value,unit,healthy,last_update) "
+                    "VALUES(?,?,?,?,?,?,?,strftime('%s','now'))",
+                    (did, sid, typ, sid, val, unit, healthy))
             con.commit()
             return
         con.commit()
@@ -270,7 +314,8 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS timesync_status(id TEXT,mode INTEGER,grandmaster TEXT,"
     "offset_ns INTEGER,quality INTEGER);"
     "CREATE TABLE IF NOT EXISTS sensors(device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,"
-    "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER);"
+    "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER,"
+    "PRIMARY KEY(device_id,sensor_id));"
     "CREATE TABLE IF NOT EXISTS tsn_streams(stream_id TEXT PRIMARY KEY,name TEXT,talker TEXT,"
     "vlan_id INTEGER,max_latency_ns INTEGER,max_interval_ns INTEGER,priority INTEGER,"
     "data_frame_prio INTEGER,status INTEGER CHECK(status IN (0,1,2,3)),comment TEXT);"
@@ -281,6 +326,24 @@ SCHEMA = (
 def ensure_schema(con):
     con.executescript(SCHEMA)
     con.commit()
+    try:
+        # Older DBs created 'sensors' without a primary key, so INSERT OR REPLACE
+        # appended duplicate rows. Rebuild a deduplicated table if needed.
+        rows = con.execute("PRAGMA table_info(sensors)").fetchall()
+        if rows and not any(r[5] for r in rows):
+            con.execute("""CREATE TABLE sensors_tmp(
+                device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,
+                value REAL,unit TEXT,healthy INTEGER,last_update INTEGER,
+                PRIMARY KEY(device_id,sensor_id))""")
+            con.execute("""
+                INSERT OR REPLACE INTO sensors_tmp(device_id,sensor_id,type,name,value,unit,healthy,last_update)
+                SELECT device_id,sensor_id,MAX(type),MAX(name),value,MAX(unit),MAX(healthy),MAX(last_update)
+                FROM sensors GROUP BY device_id,sensor_id""")
+            con.execute("DROP TABLE sensors")
+            con.execute("ALTER TABLE sensors_tmp RENAME TO sensors")
+            con.commit()
+    except Exception:
+        pass
 
 PROFILES = [(0, "esp32", "192.168.1.10", "ESP32 Gateway"),
             (2, "rpi", "192.168.1.20", "Raspberry Pi"),
@@ -298,6 +361,7 @@ RECENT_ACKS = {}
 ACK_LOCK = threading.Lock()
 SIM_USER_DEVICES = set()
 SIM_USER_DEVICES_LOCK = threading.Lock()
+OFFLINE_AFTER = 20
 SIM_STABLE_DEVICES = None
 SIM_STABLE_LOCK = threading.Lock()
 
@@ -342,6 +406,13 @@ def load_all():
                 out[t] = [dict(r) for r in con.execute("SELECT * FROM %s" % t)]
             except sqlite3.Error:
                 out[t] = []
+        # stale detection: a device that has not reported within OFFLINE_AFTER
+        # seconds is shown as offline even if it is still marked online in the DB.
+        now = int(time.time())
+        for d in out.get("devices", []):
+            ls = d.get("last_seen") or 0
+            if ls and (now - ls) > OFFLINE_AFTER and MODE["mode"] == "real":
+                d["status"] = 1
     finally:
         con.close()
     return out
@@ -903,6 +974,18 @@ def run_action(act, body):
                 b.publish("tsn/fx/field", body.get("msg", ""))
                 return {"ok": True, "msg": "FX published on broker"}
             return {"ok": True, "msg": "FX sent (no broker / simulation)"}
+        if act == "ping_device":
+            did = body.get("id", "")
+            if not did:
+                return {"ok": False, "msg": "missing device id"}
+            b = get_real_mqtt(con) if MODE["mode"] == "real" else None
+            if not b:
+                add_event("config", "cnc", "identify %s (no broker)" % did)
+                return {"ok": False, "msg": "no broker in real mode"}
+            b.publish("tsn/cmd/%s/identify" % did, "1")
+            b.publish("tsn/cmd/%s/status" % did, "1")
+            add_event("config", "cnc", "ping %s -> Identify LED + status" % did)
+            return {"ok": True, "msg": "ping sent to " + did}
         if act == "clear_events":
             EVENTS.clear()
             return {"ok": True, "msg": "monitor cleared"}
@@ -1046,7 +1129,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["monitor","Monitor"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices";
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -1070,18 +1153,17 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
- else if(p==="sensors")m.innerHTML=sensors();
  else if(p==="settings")m.innerHTML=settings();}
 function execAll(){api("exec_all",{}).then(load)}
 function devices(){
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
- const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+(["online","offline","error"][d.status]||d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");
+  const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+(["online","offline","error"][d.status]||d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");
   return "<h2>Devices</h2><div class='card'><h3>Add TSN device</h3>"+
    "<div class='row'><label>id</label><input id=did></div>"+
    "<div class='row'><label>name</label><input id=dname></div>"+
    "<div class='row'><label>ip</label><input id=dip></div>"+
    "<button onclick=saveDev()>Add Device</button></div>"+
-   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th></tr>"+rows+"</table>"}
+   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th><th></th></tr>"+rows+"</table>"}
 function tsnFor(id){
  const f=(D.device_tsn_features||[]).filter(x=>x.device_id===id).map(x=>x.feature);
  if((D.qos_configs||[]).some(q=>q.device_id===id))f.push("802.1Q QoS");
@@ -1091,7 +1173,7 @@ function tsnFor(id){
  if((D.tas_schedules||[]).some(t=>t.deploy_target===id))f.push("802.1Qbv TAS");
  return Array.from(new Set(f)).join(", ")}
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:"",kind:0,status:0,tsn:[]}}).then(load)}
-function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+(["online","offline","error"][d.status]||d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th></tr>"+rows}}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+(["online","offline","error"][d.status]||d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th><th></th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
  let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");

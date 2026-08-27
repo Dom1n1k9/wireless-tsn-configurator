@@ -4,6 +4,8 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_system.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,10 +18,13 @@
 #include "wtsn_ptp.h"
 #include "wtsn_json.h"
 #include "wtsn_prov.h"
+#include "wtsn_sensor.h"
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
 static wtsn_mqtt *g_mqtt = NULL;
+static void ensure_device_id(void);
+static void identify_start(void);
 
 static void send_ack(bool ok, const char *reason) {
     char buf[128];
@@ -185,6 +190,18 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         char buf[64];
         snprintf(buf, sizeof(buf), "tsn/fx/%s", g_device_id);
         wtsn_mqtt_publish(g_mqtt, buf, payload);
+    } else if (strcmp(cmd, "actor") == 0) {
+        int mode = atoi(payload);
+        int prev = wtsn_sensor_actor_set(mode);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"ok\":true,\"mode\":%d,\"prev\":%d}",
+                 g_device_id, mode, prev);
+        wtsn_mqtt_publish(g_mqtt, "tsn/ack/%s", buf);
+        return;
+    } else if (strcmp(cmd, "identify") == 0 || strcmp(cmd, "ping") == 0) {
+        identify_start();
+        send_ack(true, "");
+        return;
     }
 }
 
@@ -199,6 +216,46 @@ static void set_led(int on);
 
 static wifi_ctx_t g_ctx;
 
+/* After this long without joining the saved WiFi, bring up the provisioning AP. */
+#ifndef FALLBACK_PROV_MS
+#define FALLBACK_PROV_MS 15000
+#endif
+
+/* Tracks the last desired steady-state LED (1=wifi connected,0=not) so an
+ * identify blink can restore it afterwards. */
+static volatile int g_led_steady = 0;
+/* 1 while an identify blink task is running; the wifi event handler should not fight it. */
+static volatile int g_identifying = 0;
+/* 1 once we are connected to WiFi (GOT_IP). Used to decide whether to fall back
+ * to the provisioning SoftAP when the saved network cannot be reached. */
+static volatile int g_wifi_ready = 0;
+static volatile int g_prov_fallback_started = 0;
+
+/* Fallback: if the device cannot join the saved WiFi within FALLBACK_PROV_MS,
+ * start the provisioning SoftAP so the user can re-point it at a new network
+ * over the air (no USB flash needed). */
+static void prov_fallback_task(void *arg) {
+    (void)arg;
+    int waited_ms = 0;
+    while (waited_ms < FALLBACK_PROV_MS) {
+        if (g_wifi_ready) {
+            ESP_LOGI(TAG, "wifi connected -> skip fallback AP");
+            vTaskDelete(NULL);
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+        waited_ms += 500;
+    }
+    if (g_wifi_ready) { vTaskDelete(NULL); return; }
+    if (!g_prov_fallback_started) {
+        g_prov_fallback_started = 1;
+        ESP_LOGW(TAG, "could not join '%s' within %d ms -> starting provisioning AP",
+                 g_ctx.ssid, FALLBACK_PROV_MS);
+        wtsn_prov_start_ap();  /* blocks serving the portal; user config -> restart */
+    }
+    vTaskDelete(NULL);
+}
+
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg;
     wifi_ctx_t *ctx = (wifi_ctx_t *)arg;
@@ -207,18 +264,26 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGI(TAG, "wifi connecting to %s", ctx->ssid);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         /* will retry automatically via reconnect if enabled; reconnect manually */
-        set_led(0);
+        wifi_event_sta_disconnected_t *e2 = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG, "STA disconnected reason=%d", e2 ? e2->reason : -1);
+        g_led_steady = 0;
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        g_wifi_ready = 1;
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
-        set_led(1);   /* solid on = connected to WiFi */
+        g_led_steady = 1;
+        if (!g_identifying) set_led(1);   /* solid on = connected to WiFi */
         if (!g_mqtt) {
             g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
-                                       on_command, on_connected, NULL);
-            if (g_mqtt) wtsn_mqtt_start(g_mqtt);
+                                        on_command, on_connected, NULL);
+            if (g_mqtt) {
+                wtsn_mqtt_set_device_id(g_mqtt, g_device_id);
+                wtsn_mqtt_start(g_mqtt);
+            }
             wtsn_ptp_setup(g_device_id, g_mqtt);
             wtsn_ptp_start();
+            wtsn_sensor_init(g_device_id, g_mqtt);
             ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
         }
     }
@@ -249,6 +314,31 @@ static void blink_led(void) {
     set_led(1);
     vTaskDelay(pdMS_TO_TICKS(250));
     set_led(0);
+}
+
+/* identify: blink the onboard LED so the user can tell which physical board is
+ * device 1 vs 2 (when the WiFi LED is solid on it is otherwise hard to tell apart).
+ * Runs in its own task so it does not block MQTT processing. After blinking restores
+ * the steady-state LED. */
+static void identify_task(void *arg) {
+    (void)arg;
+    ESP_LOGI(TAG, "identify: blinking LED");
+    for (int i = 0; i < 5; i++) {
+        set_led(1);
+        vTaskDelay(pdMS_TO_TICKS(120));
+        set_led(0);
+        vTaskDelay(pdMS_TO_TICKS(120));
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+    g_identifying = 0;
+    set_led(g_led_steady ? 1 : 0);
+    vTaskDelete(NULL);
+}
+
+static void identify_start(void) {
+    if (g_identifying) return;
+    g_identifying = 1;
+    xTaskCreatePinnedToCore(&identify_task, "wtsn_ident", 2048, NULL, 5, NULL, 1);
 }
 
 static void wifi_init(const char *ssid, const char *pass) {
@@ -289,6 +379,7 @@ void app_main(void) {
     char wifi_pass[64] = {0};
     char mqtt_host[64] = {0};
     int mqtt_port = 1883;
+    ensure_device_id();
     wtsn_cfg_load(g_device_id, sizeof(g_device_id),
                   wifi_ssid, sizeof(wifi_ssid), wifi_pass, sizeof(wifi_pass),
                   mqtt_host, sizeof(mqtt_host), &mqtt_port);
@@ -306,7 +397,37 @@ void app_main(void) {
 
     wifi_init(wifi_ssid, wifi_pass);
 
+    /* If the saved network is unreachable, start provisioning AP after a timeout. */
+    g_wifi_ready = 0;
+    g_prov_fallback_started = 0;
+    xTaskCreatePinnedToCore(&prov_fallback_task, "wtsn_provfb", 4096, NULL, 5, NULL, 1);
+
+    int64_t last_beat = 0;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        wtsn_sensor_tick();
+        /* periodic heartbeat so the webgui can mark offline if we disappear */
+        if (g_mqtt && esp_timer_get_time() - last_beat >= 10000000) {
+            last_beat = esp_timer_get_time();
+            char buf[96];
+            snprintf(buf, sizeof(buf),
+                    "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\"}",
+                    g_device_id);
+            wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
+}
+
+static void ensure_device_id(void) {
+    char saved[32] = {0};
+    size_t sz = sizeof(saved);
+    if (wtsn_cfg_load_device_id(saved, &sz) && saved[0]) {
+        snprintf(g_device_id, sizeof(g_device_id), "%s", saved);
+        return;
+    }
+    /* default unique-ish id if none stored */
+    snprintf(g_device_id, sizeof(g_device_id), "esp32-%02d",
+             (int)((esp_random() % 98) + 1));
+    wtsn_cfg_set_device_id(g_device_id);
+    ESP_LOGI(TAG, "generated device id %s", g_device_id);
 }

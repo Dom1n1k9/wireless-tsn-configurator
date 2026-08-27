@@ -61,15 +61,33 @@ static void wtsn_nvs_set_int(const char *key, int val) {
     nvs_close(h);
 }
 
+void wtsn_cfg_set_device_id(const char *device_id) {
+    if (device_id) wtsn_nvs_set_str(KEY_DEVICE_ID, device_id);
+}
+
+bool wtsn_cfg_load_device_id(char *out, size_t *sz) {
+    nvs_handle_t h;
+    if (nvs_open(WTSN_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return false;
+    esp_err_t err = nvs_get_str(h, KEY_DEVICE_ID, out, sz);
+    nvs_close(h);
+    return err == ESP_OK && out[0] != '\0';
+}
+
 bool wtsn_cfg_load(char *device_id, size_t device_id_sz,
                    char *wifi_ssid, size_t ssid_sz,
                    char *wifi_pass, size_t pass_sz,
                    char *mqtt_host, size_t host_sz,
                    int *mqtt_port) {
-    (void)device_id; (void)device_id_sz; /* device id defaults are handled in main */
+    if (device_id && device_id_sz) wtsn_strlcpy(device_id, "", device_id_sz);
     nvs_handle_t h = 0;
     if (nvs_open(WTSN_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return false;
     nvs_close(h);
+    if (device_id && device_id_sz) {
+        char tmp[32] = {0};
+        if (wtsn_nvs_get_str(KEY_DEVICE_ID, tmp, sizeof(tmp), "")) {
+            wtsn_strlcpy(device_id, tmp, device_id_sz);
+        }
+    }
     wtsn_strlcpy(wifi_ssid, "", ssid_sz);
     wtsn_nvs_get_str(KEY_WIFI_SSID, wifi_ssid, ssid_sz, "");
     wtsn_nvs_get_str(KEY_WIFI_PASS, wifi_pass, pass_sz, "");

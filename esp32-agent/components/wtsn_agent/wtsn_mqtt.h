@@ -16,5 +16,6 @@ wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
                              wtsn_cmd_cb cb, wtsn_connected_cb conn_cb, void *ud);
 void wtsn_mqtt_start(wtsn_mqtt *m);
 void wtsn_mqtt_publish(wtsn_mqtt *m, const char *topic, const char *payload);
+void wtsn_mqtt_set_device_id(wtsn_mqtt *m, const char *id);
 
 #endif

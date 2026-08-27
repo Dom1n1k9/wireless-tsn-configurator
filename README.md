@@ -140,16 +140,26 @@ sudo usermod -aG dialout $USER
 On boot the firmware **blinks the onboard LED 3 times** to confirm a successful
 flash/reset, then joins your WiFi.
 
-### 5. Provision the WiFi (first boot only)
+### 5. Provision the WiFi
 
-With no WiFi stored, the agent starts a SoftAP `WTSN-Setup`:
+The agent starts a SoftAP `WTSN-Setup` in two cases:
+
+1. On **first boot** with no WiFi stored, or
+2. As a **fallback**: if it cannot join the saved WiFi within ~15 s (e.g. you
+   moved to a new network) it automatically brings up the SoftAP — **no USB flash
+   needed to re-provision**.
+
+To provision:
 
 1. Connect your phone/PC to the `WTSN-Setup` SSID (no password).
 2. Open **http://192.168.4.1/**.
-3. Enter your WiFi SSID, password, and the broker address from step 3
-   (e.g. `192.168.0.149`).
+3. Enter a **Device ID** (optional, leave empty to keep the existing one), your
+   WiFi SSID, password, and the broker address from step 3 (e.g. `192.168.0.149`).
 4. Save → the agent stores it in NVS, reboots, blinks, joins your WiFi and
    announces itself on MQTT.
+
+> **Note:** when provisioned from a *phone/mac hotspot*, client isolation can stop the
+> node from joining even with the correct password. Prefer a normal router WiFi.
 
 ### 6. Connect it in the GUI
 

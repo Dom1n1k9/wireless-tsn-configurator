@@ -14,6 +14,8 @@ bool wtsn_cfg_load(char *device_id, size_t device_id_sz,
 bool wtsn_cfg_save(const char *device_id, const char *wifi_ssid,
                    const char *wifi_pass, const char *mqtt_host, int mqtt_port);
 void wtsn_cfg_set_wifi(const char *ssid, const char *pass);
+void wtsn_cfg_set_device_id(const char *device_id);
+bool wtsn_cfg_load_device_id(char *out, size_t *sz);
 
 /* Persist the applied TSN configuration so it survives a restart. */
 bool wtsn_cfg_save_tsn_state(const int priority, const int traffic_class,
