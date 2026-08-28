@@ -22,6 +22,7 @@
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
+static char g_ip[16] = "0.0.0.0";
 static wtsn_mqtt *g_mqtt = NULL;
 static void ensure_device_id(void);
 static void identify_start(void);
@@ -198,7 +199,15 @@ static void on_command(const char *topic, const char *payload, void *ud) {
                  g_device_id, mode, prev);
         wtsn_mqtt_publish(g_mqtt, "tsn/ack/%s", buf);
         return;
-    } else if (strcmp(cmd, "identify") == 0 || strcmp(cmd, "ping") == 0) {
+    } else if (strcmp(cmd, "ping") == 0) {
+        /* reply with the device IP so the CNC can show src(PC)->dst(ESP) in the monitor,
+         * and blink the LED so the responder is visually identifiable */
+        identify_start();
+        char ack[160];
+        snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true,\"ip\":\"%s\"}", g_device_id, g_ip);
+        wtsn_mqtt_publish(g_mqtt, "tsn/ack/%s", ack);
+        return;
+    } else if (strcmp(cmd, "identify") == 0) {
         identify_start();
         send_ack(true, "");
         return;
@@ -272,6 +281,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         g_wifi_ready = 1;
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
+        snprintf(g_ip, sizeof(g_ip), IPSTR, IP2STR(&e->ip_info.ip));
         g_led_steady = 1;
         if (!g_identifying) set_led(1);   /* solid on = connected to WiFi */
         if (!g_mqtt) {

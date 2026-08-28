@@ -93,7 +93,7 @@ bool wtsn_cfg_load(char *device_id, size_t device_id_sz,
     wtsn_nvs_get_str(KEY_WIFI_PASS, wifi_pass, pass_sz, "");
     wtsn_strlcpy(mqtt_host, "", host_sz);
     if (!wtsn_nvs_get_str(KEY_MQTT_HOST, mqtt_host, host_sz, "")
-        || mqtt_host[0] == '\0') wtsn_strlcpy(mqtt_host, "192.168.1.100", host_sz);
+        || mqtt_host[0] == '\0') wtsn_strlcpy(mqtt_host, "192.168.1.10", host_sz);
     *mqtt_port = wtsn_nvs_get_int(KEY_MQTT_PORT, 1883);
     return true;
 }

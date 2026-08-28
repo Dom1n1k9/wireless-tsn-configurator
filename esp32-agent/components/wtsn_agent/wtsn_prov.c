@@ -87,7 +87,7 @@ static esp_err_t handle_config(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
         return ESP_FAIL;
     }
-    if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "192.168.1.100");
+    if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "192.168.1.10");
     wtsn_cfg_save(devid[0] ? devid : NULL, ssid, pass, mqtt, 1883);
 
     char ok[160];
@@ -115,7 +115,7 @@ static esp_err_t handle_root(httpd_req_t *req) {
         "<p><label>Device ID <input name='devid' placeholder='leave empty to keep' value='%s'></label></p>"
         "<p><label>WiFi SSID <input name='ssid' required></label></p>"
         "<p><label>WiFi password <input name='pass' type='password'></label></p>"
-        "<p><label>MQTT broker host <input name='mqtt' value='192.168.1.100'></label></p>"
+        "<p><label>MQTT broker host <input name='mqtt' value='192.168.1.10'></label></p>"
         "<button>Save &amp; connect</button>"
         "</form></body></html>", cur_dev);
     httpd_resp_sendstr(req, html);

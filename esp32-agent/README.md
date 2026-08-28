@@ -38,7 +38,7 @@ You can also pre-seed settings in NVS (`idf.py menuconfig` not wired to these;
 write them via a small NVS utility or the portal above):
 
 - WiFi SSID / pass — stored in NVS under `wtsn` namespace
-- MQTT host: `192.168.1.100:1883` (see `wtsn_cfg.c`), override via portal
+- MQTT host: `192.168.1.10:1883` (see `wtsn_cfg.c`), override via portal
 - Device id: `esp32-01` (edit `g_device_id` in `main/main.c`)
 
 ## Build & flash
@@ -90,6 +90,7 @@ status / ack / FX on:
 | `tsn/fx/#`                | FX / C2C field exchange                 |
 | `tsn/fx/field`            | in/out: C2C field exchange             |
 | `tsn/fx/<id>`             | in/out: device field exchange           |
+| `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: per-sensor readable topics |
 
 ## Limitations on ESP32
 

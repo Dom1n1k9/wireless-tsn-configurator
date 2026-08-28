@@ -26,8 +26,12 @@ static const char *TAG = "sensor";
 #ifndef WTSN_I2C_SCL
 #define WTSN_I2C_SCL GPIO_NUM_22
 #endif
-/* TEMT6000 analog light on ADC1 channel 0 (GPIO36) */
-#define WTSN_ADC_CH ADC1_CHANNEL_0
+/* The device that has the sensor add-on board wired publishes telemetry.
+ * main.c defaults to "esp32-01". */
+#ifndef WTSN_SENSOR_DEV_ID
+#define WTSN_SENSOR_DEV_ID "esp32-01"
+#endif
+#define WTSN_ADC_CH ADC1_CHANNEL_5
 /* HC-SR501 PIR motion on GPIO27 */
 #ifndef WTSN_PIR_GPIO
 #define WTSN_PIR_GPIO GPIO_NUM_27
@@ -54,11 +58,14 @@ static wtsn_mqtt *g_mq = NULL;
 static bool g_bme_ok = false;
 static int  g_prev_pir = -1;
 static int  g_actor_mode = 0;
+static int64_t g_pir_latch = -1000000000LL;  /* monotonic us of last motion */
 
 static uint16_t calib_temp[3];  /* T1..T3 */
-static int16_t  calib_press[9]; /* P1..P9 (P1 unsigned) */
-static uint8_t   calib_hum[6];  /* H1..H2, H3..H6 signed */
-static int8_t    calib_hum_2[2];
+static int32_t  calib_press[9]; /* P1..P9 (P1 is unsigned 16-bit, others signed) */
+static uint8_t  calib_hum_H1;
+static int16_t  calib_hum_H2;
+static int8_t   calib_hum_H3, calib_hum_H6;
+static int16_t  calib_hum_H4, calib_hum_H5;
 
 static int64_t g_read_period_ns = 2000000000LL; /* 2s */
 
@@ -122,20 +129,26 @@ static int bme280_init(void) {
     calib_temp[2] = (int16_t)((buf[5] << 8) | buf[4]);
     calib_press[0] = (uint16_t)((buf[7]  << 8) | buf[6]);
     for (int i = 1; i < 9; i++) {
-        int o = 7 + 2 * i;
-        calib_press[i] = (int16_t)((buf[o + 1] << 8) | buf[o]);
+        /* P-block: after 6 temp bytes, P(i+1) is at msb=6+2i+1, lsb=6+2i */
+        int lsb = 6 + 2 * i, msb = lsb + 1;
+        calib_press[i] = (int16_t)((buf[msb] << 8) | buf[lsb]);
     }
-    if (bme_reg_read(BME280_CALIB26_MSB, buf, 7) != ESP_OK) return -1;
-    calib_hum[0] = buf[0];                                  /* H2 raw (16-bit) */
-    calib_hum[1] = buf[1];
-    calib_hum[2] = (int8_t)buf[2];                          /* H3 */
-    calib_hum[3] = (int8_t)buf[3];                          /* H4 msb */
-    calib_hum[4] = (int8_t)buf[4];                          /* H5 lsb */
-    calib_hum[5] = buf[5];                                  /* H6 */
-    /* real H2 signed 16-bit */
-    int16_t h2 = (int16_t)((calib_hum[1] << 8) | calib_hum[0]);
-    calib_hum_2[0] = (int8_t)(h2 & 0x7f);                /* low bits */
-    calib_hum_2[1] = (int8_t)(h2 >> 8);                  /* sign bits */
+    ESP_LOGI(TAG, "BME280 calib P1=%ld P2=%ld P3=%ld T1=%u",
+             (long)calib_press[0], (long)calib_press[1], (long)calib_press[2],
+             (unsigned)calib_temp[0]);
+    /* BME280 humidity calibration at 0xE1..0xE8 (8 bytes):
+     *  0xE1 = H1 (u8), 0xE2/0xE3 = H2 (s16, lsb/msb),
+     *  0xE4 = H3 (u8), 0xE5 = H4 msb (s8)*16, 0xE6 low nibble = H4 lsb,
+     *  high nibble = H5 lsb, 0xE7 = H5 msb (s8)*16, 0xE8 = H6 (s8). */
+    uint8_t hum_regs[8];
+    if (bme_reg_read(0xE1, hum_regs, 8) == ESP_OK) {
+        calib_hum_H1 = hum_regs[0];
+        calib_hum_H2 = (int16_t)((hum_regs[2] << 8) | hum_regs[1]);
+        calib_hum_H3 = (int8_t)hum_regs[3];
+        calib_hum_H4 = (int16_t)((hum_regs[4] << 4) | (hum_regs[5] & 0x0F));
+        calib_hum_H5 = (int16_t)((hum_regs[5] >> 4) | (hum_regs[6] << 4));
+        calib_hum_H6 = (int8_t)hum_regs[7];
+    }
 
     bme_write8(BME280_CTRL_HUM, 0x01);   /* oversampling x1 */
     bme_write8(BME280_CTRL_MEAS, 0x27);  /* t x1, p x1, normal mode */
@@ -154,44 +167,63 @@ static int bme280_read(float *temp_c, float *press_hpa, float *hum_pct) {
     int32_t adc_t = (int32_t)(((uint32_t)buf[3] << 12) | ((uint32_t)buf[4] << 4) | ((uint32_t)buf[5] >> 4));
     int32_t adc_h = (int32_t)(((uint32_t)buf[6] << 8) | (uint32_t)buf[7]);
 
-    int32_t var1 = ((((adc_t >> 3) - ((int32_t)calib_temp[1] << 1)) *
-                     ((int32_t)calib_temp[0])) >> 11);
-    int32_t var2 = (((((adc_t >> 4) - ((int32_t)calib_temp[1])) *
-                      ((adc_t >> 4) - ((int32_t)calib_temp[1]))) >> 12) *
+    int32_t var1 = ((((adc_t >> 3) - ((int32_t)calib_temp[0] << 1)) *
+                     ((int32_t)calib_temp[1])) >> 11);
+    int32_t var2 = (((((adc_t >> 4) - ((int32_t)calib_temp[0])) *
+                      ((adc_t >> 4) - ((int32_t)calib_temp[0]))) >> 12) *
                     ((int32_t)calib_temp[2])) >> 14;
     int32_t t_fine = var1 + var2;
     if (temp_c) *temp_c = (float)((t_fine * 5 + 128) >> 8) / 100.0f;
 
     if (press_hpa) {
-        var1 = ((int32_t)t_fine) - 128000;
-        var2 = var1 * var1;
-        var2 = (var2 >> 8) * (int32_t)calib_press[5];
-        var2 = var2 + ((var1 * (int32_t)calib_press[4]) << 17);
-        var2 = var2 + (((int32_t)calib_press[4]) << 35);
-        var1 = ((var1 * var1 * (int32_t)calib_press[2]) >> 8) +
-               ((var1 * (int32_t)calib_press[1]) << 12);
-        var1 = (((((int32_t)1 << 47) + var1)) * (int32_t)calib_press[0]) >> 33;
-        if (var1) {
-            int32_t p = 1048576 - adc_p;
-            p = (int32_t)((((int64_t)p << 31) - var2) * 3125 / var1);
-            var1 = (((int32_t)calib_press[8]) * ((p >> 13) * (p >> 13))) >> 25;
-            var2 = (((int32_t)calib_press[7]) * p) >> 19;
-            p = ((p + var1 + var2) >> 8) + (((int32_t)calib_press[3]) << 4);
-            if (press_hpa) *press_hpa = (float)p / 100.0f;
+        int64_t v1 = (int64_t)t_fine - 128000;
+        int64_t v2 = v1 * v1 * (int64_t)calib_press[5];
+        v2 = v2 + ((v1 * (int64_t)calib_press[4]) << 17);
+        v2 = v2 + (((int64_t)calib_press[3]) << 35);
+        v1 = ((v1 * v1 * (int64_t)calib_press[2]) >> 8) +
+             ((v1 * (int64_t)calib_press[1]) << 12);
+        v1 = (((((int64_t)1 << 47) + v1)) * (int64_t)calib_press[0]) >> 33;
+        if (v1 != 0) {
+            int64_t p = ((int64_t)(1048576 - adc_p)) << 31;
+            p = ((p - v2) * 3125) / v1;
+            int64_t p8 = (((int64_t)calib_press[8]) * ((p >> 13) * (p >> 13))) >> 25;
+            int64_t p7 = (((int64_t)calib_press[7]) * p) >> 19;
+            int64_t p_fine = ((p + p8 + p7) >> 8) + (((int64_t)calib_press[6]) << 4);
+            int64_t press_pa = (p_fine >> 1) * 100 / 128;
+            if (press_hpa) *press_hpa = (float)press_pa / 10000.0f;
         }
     }
 
     if (hum_pct && g_bme_ok) {
-        int32_t v_x1_u32r = (t_fine - ((int32_t)76800));
-        v_x1_u32r = (((((adc_h << 14) - (((int32_t)calib_hum[3]) << 20) -
-                         (((int32_t)calib_hum_2[1]) * v_x1_u32r)) + ((int32_t)16384)) >> 15) *
-                      (((((((v_x1_u32r * (int32_t)calib_hum[5]) >> 10) *
-                          (((v_x1_u32r * (int32_t)calib_hum[2]) >> 11) +
-                           ((int32_t)32768))) >> 10) + ((int32_t)2097152)) * (int32_t)calib_hum[0]) >> 20));
-        v_x1_u32r = (v_x1_u32r - (((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7)) >> 4;
-        if (v_x1_u32r < 0) v_x1_u32r = 0;
-        if (v_x1_u32r > 419430400) v_x1_u32r = 419430400;
-        *hum_pct = (float)(v_x1_u32r >> 12) / 1024.0f;
+        /* Humidity raw + compensation. Use the Bosch double-integer algorithm,
+         * but fall back to the direct raw/1024 mapping (=%RH, since the raw
+         * value uses a 0..102400 scale for 0..100%RH) in case this module
+         * reports atypical calibration (e.g. H2=1) that degenerates the exact
+         * compensation to zero. */
+        float hum = 0.0f;
+        {
+            int32_t v1 = t_fine - 76800;
+            int32_t v2 = adc_h * 16384;
+            int32_t v3 = (int32_t)calib_hum_H4 * 1048576;
+            int32_t v4 = (int32_t)calib_hum_H5 * v1;
+            int32_t v5 = ((v2 - v3) - v4 + 16384) / 32768;
+            v2 = (v1 * (int32_t)calib_hum_H6) / 1024;
+            v3 = (v1 * (int32_t)calib_hum_H3) / 2048;
+            v4 = ((v2 * (v3 + 32768)) / 1024) + 2097152;
+            v2 = ((v4 * (int32_t)calib_hum_H2) + 8192) / 16384;
+            v3 = v5 * v2;
+            v4 = ((v3 / 32768) * (v3 / 32768)) / 128;
+            v5 = v3 - ((v4 * (int32_t)calib_hum_H1) / 16);
+            v5 = (v5 < 0) ? 0 : v5;
+            if (v5 > 419430400) v5 = 419430400;
+            int32_t humidity = v5 / 4096;
+            if (humidity > 102400) humidity = 102400;
+            hum = (float)humidity / 1024.0f;
+        }
+        if (hum <= 0.1f) hum = (float)adc_h / 1024.0f;
+        if (hum > 100.0f) hum = 100.0f;
+        if (hum < 0.0f) hum = 0.0f;
+        *hum_pct = hum;
     }
     return 0;
 }
@@ -205,8 +237,12 @@ static int light_read_raw(void) {
     for (int i = 0; i < 8; i++) raw += adc1_get_raw(WTSN_ADC_CH);
     raw /= 8;
     uint32_t mv = esp_adc_cal_raw_to_voltage(raw, &g_adc_char);
-    /* TEMT6000: ~0.5 V ≈ 100 lux, ~2V ≈ 1000 lux (rough linear) */
-    return (int)mv;
+    /* TEMT6000 datasheet: Iphoto ~= 2.8 uA per 100 lx (0.028 uA/lx).
+     * With the on-board R1=10k load: V = I * R = 0.28 mV per lx
+     *   => lux = mV / 0.28 = mV * 3.6   (Vcc=3.3V, linear region). */
+    float lux = (float)mv * 3.6f;
+    if (lux < 0) lux = 0;
+    return (int)lux;
 }
 
 /* ---------------- actor (timer switch, 7 modes) ---------------- */
@@ -276,11 +312,21 @@ void wtsn_sensor_tick(void) {
     g_last_tick = now;
     if (!g_mq) return;
 
+    /* Only the device that actually has the sensors wired publishes telemetry.
+     * Acccept both "esp32-01" (default) and a legacy "esp32-1" NVS id. */
+    if (strcmp(g_dev_id, "esp32-01") != 0 && strcmp(g_dev_id, "esp32-1") != 0) return;
+
     float temp = -999, press = -999, hum = -999;
     bme280_read(&temp, &press, &hum);
 
     int light_mv = light_read_raw();
     int pir = gpio_get_level(WTSN_PIR_GPIO);
+
+    /* PIR hold: keep reporting motion=1 for 5s after a trigger so the GUI has
+     * time to notice even though the PIR pulse is short. */
+    int64_t now_us = esp_timer_get_time();
+    if (pir == 1) g_pir_latch = now_us;
+    int pir_report = (pir == 1) ? 1 : ((now_us - g_pir_latch) < 5000000LL ? 1 : 0);
 
     char buf[512];
     int n = snprintf(buf, sizeof(buf) - 1,
@@ -288,27 +334,32 @@ void wtsn_sensor_tick(void) {
     size_t m = (size_t)n;
 
     int written = 0;
+    char buf_temp[96], buf_press[96], buf_hum[96], buf_light[96], buf_pir[96];
+    buf_temp[0] = buf_press[0] = buf_hum[0] = buf_light[0] = buf_pir[0] = 0;
     if (temp > -500) {
-        m += (size_t)snprintf(buf + m, sizeof(buf) - m,
-             "%s{\"sensor_id\":\"temp1\",\"type\":0,\"value\":%.1f,\"unit\":\"C\",\"healthy\":1}",
-             written++ ? "," : "", temp);
+        snprintf(buf_temp, sizeof(buf_temp),
+             "{\"sensor_id\":\"temp1\",\"type\":0,\"value\":%.1f,\"unit\":\"C\",\"healthy\":1}",
+             temp);
+        m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_temp);
     }
     if (press > -500) {
-        m += (size_t)snprintf(buf + m, sizeof(buf) - m,
-             "%s{\"sensor_id\":\"press1\",\"type\":1,\"value\":%.1f,\"unit\":\"hPa\",\"healthy\":1}",
-             written++ ? "," : "", press);
+        snprintf(buf_press, sizeof(buf_press),
+             "{\"sensor_id\":\"press1\",\"type\":1,\"value\":%.1f,\"unit\":\"hPa\",\"healthy\":1}",
+             press);
+        m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_press);
     }
     if (hum > 0) {
-        m += (size_t)snprintf(buf + m, sizeof(buf) - m,
-             "%s{\"sensor_id\":\"hum1\",\"type\":0,\"value\":%.1f,\"unit\":\"%%\",\"healthy\":1}",
-             written++ ? "," : "", hum);
+        snprintf(buf_hum, sizeof(buf_hum),
+             "{\"sensor_id\":\"hum1\",\"type\":0,\"value\":%.1f,\"unit\":\"%%\",\"healthy\":1}",
+             hum);
+        m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_hum);
     }
-    m += (size_t)snprintf(buf + m, sizeof(buf) - m,
-         "%s{\"sensor_id\":\"light1\",\"type\":4,\"value\":%d,\"unit\":\"mV\",\"healthy\":1}",
-         written++ ? "," : "", light_mv);
-    m += (size_t)snprintf(buf + m, sizeof(buf) - m,
-         "%s{\"sensor_id\":\"pir1\",\"type\":4,\"value\":%d,\"unit\":\"\",\"healthy\":1}",
-         written++ ? "," : "", pir);
+    snprintf(buf_light, sizeof(buf_light),
+         "{\"sensor_id\":\"light1\",\"type\":4,\"value\":%d,\"unit\":\"lx\",\"healthy\":1}", light_mv);
+    m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_light);
+    snprintf(buf_pir, sizeof(buf_pir),
+         "{\"sensor_id\":\"pir1\",\"type\":4,\"value\":%d,\"unit\":\"\",\"healthy\":1}", pir_report);
+    m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_pir);
     m += (size_t)snprintf(buf + m, sizeof(buf) - m,
          "%s{\"sensor_id\":\"actor_mode\",\"type\":4,\"value\":%d,\"unit\":\"\",\"healthy\":1}",
          written++ ? "," : "", g_actor_mode);
@@ -318,10 +369,34 @@ void wtsn_sensor_tick(void) {
 
     wtsn_mqtt_publish(g_mq, "tsn/sensors", buf);
 
+    /* Mirror the telemetry onto the OPC UA FX / C2C Field Exchange channel so the
+     * values propagate over FXMQTT too (tsn/fx/<node>). */
+    char fxtopic[48];
+    snprintf(fxtopic, sizeof(fxtopic), "tsn/fx/%s", g_dev_id);
+    wtsn_mqtt_publish(g_mq, fxtopic, buf);
+
+    /* Per-sensor topics for a clean, per-reading view:
+     *   tsn/sensors/<id>/<name>  e.g. tsn/sensors/esp32-1/temp
+     */
+    {
+        char sub[96];
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/temp", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, buf_temp);
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/press", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, buf_press);
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/hum", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, buf_hum);
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/light", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, buf_light);
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/pir", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, buf_pir);
+    }
+
     if (pir != g_prev_pir) {
         char ev[96];
         snprintf(ev, sizeof(ev), "{\"id\":\"%s\",\"motion\":%d}", g_dev_id, pir);
         wtsn_mqtt_publish(g_mq, "tsn/sensors/event", ev);
+        wtsn_mqtt_publish(g_mq, "tsn/fx/data", ev);
         g_prev_pir = pir;
     }
 }

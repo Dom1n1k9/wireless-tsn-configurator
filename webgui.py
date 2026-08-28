@@ -146,6 +146,18 @@ class MqttBroker:
                 self._inbox.clear()
                 self._inbox_cv.notify_all()
 
+def get_self_ip():
+    """Return the CNC (this PC) LAN IP used as the ping source address."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return "127.0.0.1"
+
 REAL_MQTT = None
 def get_real_mqtt(con):
     """Return connected broker client (cached), connecting from settings or env."""
@@ -243,7 +255,15 @@ def parse_listener_msg(con, topic, payload):
             ok = j.get("ok", False)
             with ACK_LOCK:
                 RECENT_ACKS[did] = (ok, time.time())
-            add_event("config", "cnc", "ack %s %s" % (did, "OK" if ok else "FAIL"))
+            if "ip" in j:
+                cnc_ip = get_self_ip()
+                add_event("mqtt", did,
+                          "PONG <- %s: ping reply from %s (%s)" % (did, did, j.get("ip", "?")),
+                          src_ip=j.get("ip", ""), dst_ip=cnc_ip, dest=did, proto="MQTT")
+                con.execute("UPDATE devices SET ip=?,last_seen=strftime('%s','now') WHERE id=?",
+                            (j.get("ip", ""), did))
+            else:
+                add_event("config", "cnc", "ack %s %s" % (did, "OK" if ok else "FAIL"))
             con.commit()
             return
         elif "/ptp" in topic and did:
@@ -982,9 +1002,10 @@ def run_action(act, body):
             if not b:
                 add_event("config", "cnc", "identify %s (no broker)" % did)
                 return {"ok": False, "msg": "no broker in real mode"}
-            b.publish("tsn/cmd/%s/identify" % did, "1")
-            b.publish("tsn/cmd/%s/status" % did, "1")
-            add_event("config", "cnc", "ping %s -> Identify LED + status" % did)
+            b.publish("tsn/cmd/%s/ping" % did, "1")
+            cnc_ip = get_self_ip()
+            add_event("mqtt", "cnc", "PING -> %s" % did, src_ip=cnc_ip, dst_ip="",
+                      dest=did, proto="MQTT")
             return {"ok": True, "msg": "ping sent to " + did}
         if act == "clear_events":
             EVENTS.clear()
@@ -1129,7 +1150,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices";
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -1153,6 +1174,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
+ else if(p==="sensors")m.innerHTML=sensors();
  else if(p==="settings")m.innerHTML=settings();}
 function execAll(){api("exec_all",{}).then(load)}
 function devices(){
@@ -1267,8 +1289,21 @@ function fsMode(){const pc=$("fs_type").value==="pc";$("fs_node").disabled=pc;if
 function fsSave(){const type=$("fs_type").value;api("set_server",{type:type,id:(type==="node"?$("fs_node").value:""),broker:$("fs_broker").value||"127.0.0.1:1883"}).then(load)}
 function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><div class='row'><span>"+(D.mode==="sim"?"Live simulated flow (MQTT, FX over MQTT, raw frames)":"Real traffic — waiting for real nodes")+"</span>"+"<span class='spacer'></span><button class='ghost' onclick='api(\"clear_events\",{})'>Clear</button></div><div class='monrow'><span class='t'>time</span><span class='s'>source</span><span class='ip'>src IP</span><span class='s'>destination</span><span class='ip'>dst IP</span><span class='pro'>protocol</span><span>message</span></div><div id=mon></div></div>"}
 function refreshMon(){if($("mon")){const ev=(D.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||"<div class='monrow'><span>no traffic yet</span></div>"}}
-function sensors(){let r=D.sensors.map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+esc(s.sensor_id)+"</td><td>"+s.value+" "+esc(s.unit)+"</td><td class='"+(s.healthy?"":"') style='color:var(--err)")+"'>"+(s.healthy?"healthy":"fault")+"</td></tr>").join("");
- return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(D.sensors.length?("<table><tr><th>device</th><th>id</th><th>value</th><th>health</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="sim"?"Waiting for simulation sensors...":"Connect real sensors — none identified yet.")+"</div>")}
+function sensors(){
+  const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
+  const now=Math.floor(Date.now()/1000);
+  function age(s){if(!s||!s.last_update)return"";const a=now-(s.last_update>1000000000000?s.last_update/1000:s.last_update);return a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
+  function stat(s){const a=s?now-(s.last_update>1000000000000?s.last_update/1000:s.last_update):9999;return a<30?"<span class='ok'>updated</span>":"<span class='warn'>stale</span>"}
+  let r="";
+  for(const dev in byDev){
+    const g=byDev[dev],t=g.temp1,h=g.hum1,p=g.press1;
+    if(!(t||h||p))continue;
+    const any=t||h||p;
+    if(t||h||p){const parts=[];if(h)parts.push("hum "+h.value+" %");if(t)parts.push("temp "+t.value+" °C");if(p)parts.push("press "+p.value+" hPa");r+="<tr><td>"+esc(dev)+"</td><td>BME280</td><td>"+esc(parts.join(" • "))+"</td><td>"+age(any)+"</td><td>"+stat(any)+"</td></tr>"}
+    if(g.light1){r+="<tr><td>"+esc(dev)+"</td><td>Light</td><td>"+Math.round(g.light1.value)+" lx</td><td>"+age(g.light1)+"</td><td>"+stat(g.light1)+"</td></tr>"}
+    if(g.pir1){const d=g.pir1.value?1:0;r+="<tr><td>"+esc(dev)+"</td><td>Motion</td><td>"+(d?"motion detected":"no motion")+"</td><td>"+age(g.pir1)+"</td><td class='"+(d?"det":"ok")+"'>"+(d?"detected":"")+"</td></tr>"}
+  }
+  return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(r?("<table><tr><th>device</th><th>sensor</th><th>value</th><th>last updated</th><th>status</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="real"?"Connect real sensors — none identified yet.":"Waiting for simulation sensors...")+"</div>")}
 function streams(){
   const rows=(D.tsn_streams||[]).map(s=>{const memb=(D.tsn_stream_members||[]).filter(x=>x.stream_id==s.stream_id);
     const talker=(memb.find(x=>x.role==="talker")||{}).device_id||s.talker||"";
@@ -1308,7 +1343,9 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  const statusChanged=D.devices.length!==dj.devices.length||D.devices.some((d,i)=>dj.devices[i]&&d.status!==dj.devices[i].status);
  if((added.length||removed||statusChanged)&&cur==="devices"){D.devices=dj.devices;if($("main"))devices_render()}
  if($("mon")){const ev=(dj.events||[]).slice(0,120).map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}
- D.events=dj.events;D.devices=dj.devices}
+ D.events=dj.events;D.devices=dj.devices;
+ // refresh sensor values live so the Sensors page updates in real time
+ if(JSON.stringify(D.sensors)!==JSON.stringify(dj.sensors)){D.sensors=dj.sensors;if(cur==="sensors"&&$("main"))$("main").innerHTML=sensors()}}
 setInterval(pollEvents,2000);</script></body></html>
 """
 
