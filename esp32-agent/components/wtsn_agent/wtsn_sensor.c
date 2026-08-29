@@ -5,6 +5,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/adc.h"
+#include "driver/uart.h"
 #include "esp_adc_cal.h"
 #include "mqtt_client.h"
 #include "freertos/FreeRTOS.h"
@@ -41,6 +42,16 @@ static const char *TAG = "sensor";
 #define WTSN_ACTOR_GPIO GPIO_NUM_26
 #endif
 
+/* UART link to a micro:bit display. The ESP sends compact sensor JSON down this TX
+ * line (GPIO17 = UART2_TXD); the micro:bit shows it on its LED matrix and sounds
+ * its speaker on motion. Wire ESP TX(GPIO17) -> micro:bit P0(RX), share GND. */
+#ifndef WTSN_UART_TX
+#define WTSN_UART_TX GPIO_NUM_17
+#endif
+#ifndef WTSN_UART_PORT
+#define WTSN_UART_PORT UART_NUM_2
+#endif
+
 #define WTSN_I2C_FREQ_HZ 100000
 #define BME280_ADDR     0x76
 #define BME280_ID_REG   0xD0
@@ -68,6 +79,10 @@ static int8_t   calib_hum_H3, calib_hum_H6;
 static int16_t  calib_hum_H4, calib_hum_H5;
 
 static int64_t g_read_period_ns = 2000000000LL; /* 2s */
+
+/* cached last readings for the BLE panel */
+static float g_last_temp = 0, g_last_hum = 0;
+static int g_last_light = 0, g_last_pir = 0;
 
 static esp_adc_cal_characteristics_t g_adc_char;
 static bool g_adc_cal = false;
@@ -265,6 +280,14 @@ void wtsn_sensor_actor_set_pin(void) {
     gpio_config(&io);
 }
 
+static int already_sent_mb_init = 0;
+static void microbit_send(const char *json_line) {
+    if (already_sent_mb_init) uart_wait_tx_done(WTSN_UART_PORT, 0);
+    uart_write_bytes(WTSN_UART_PORT, json_line, strlen(json_line));
+    uart_write_bytes(WTSN_UART_PORT, "\n", 1);
+    ESP_LOGI(TAG, "microbit-> %.*s", (int)(strlen(json_line) > 80 ? 80 : strlen(json_line)), json_line);
+}
+
 void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
     if (device_id) snprintf(g_dev_id, sizeof(g_dev_id), "%s", device_id);
     g_mq = mq;
@@ -300,7 +323,22 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
     wtsn_sensor_actor_set_pin();
     actor_apply(0);
 
-    ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-SR501, actor",
+    /* micro:bit link on UART2 (TX GPIO17). */
+    uart_config_t uc = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+    uart_param_config(WTSN_UART_PORT, &uc);
+    uart_set_pin(WTSN_UART_PORT, WTSN_UART_TX, UART_PIN_NO_CHANGE,
+                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(WTSN_UART_PORT, 1024, 2048, 0, NULL, 0);
+    already_sent_mb_init = 1;
+    microbit_send("{\"id\":\"" WTSN_SENSOR_DEV_ID "\",\"event\":\"init\"}");
+
+    ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501, actor",
              g_dev_id);
 }
 
@@ -368,6 +406,13 @@ void wtsn_sensor_tick(void) {
     snprintf(buf + m, sizeof(buf) - m, "]}");
 
     wtsn_mqtt_publish(g_mq, "tsn/sensors", buf);
+    microbit_send(buf);   /* mirror full JSON to the micro:bit display */
+
+    /* cache for BLE panel */
+    if (temp > -500) g_last_temp = temp;
+    if (hum > 0) g_last_hum = hum;
+    g_last_light = light_mv;
+    g_last_pir = pir_report;
 
     /* Mirror the telemetry onto the OPC UA FX / C2C Field Exchange channel so the
      * values propagate over FXMQTT too (tsn/fx/<node>). */
@@ -409,4 +454,14 @@ int wtsn_sensor_actor_set(int mode) {
 
 int wtsn_sensor_actor_get(void) {
     return g_actor_mode;
+}
+
+int wtsn_sensor_light(void) { return g_last_light; }
+int wtsn_sensor_motion(void) { return g_last_pir; }
+void wtsn_sensor_last(float *temp_c, float *hum_pct, int *light, int *pir, int *actor) {
+    if (temp_c) *temp_c = g_last_temp;
+    if (hum_pct) *hum_pct = g_last_hum;
+    if (light) *light = g_last_light;
+    if (pir) *pir = g_last_pir;
+    if (actor) *actor = g_actor_mode;
 }

@@ -20,7 +20,37 @@ LAN_IP=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "127.0.
 
 log() { echo -e "\033[1;36m[wtsn]\033[0m $*"; }
 
+get_lan_ip() {
+    local ip=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "^inet 127" | head -1 | sed 's/inet //')
+    [ -z "$ip" ] && ip="$MQTT_HOST_FALLBACK"
+    echo "$ip"
+}
+
 # ---------------- 1) MQTT broker ----------------
+# mDNS: advertise this PC as "wtsn-broker.local" so ESP32 nodes can find the
+# broker by name instead of by a hardcoded IP that goes stale when this PC changes
+# network / gets a new DHCP address.
+ensure_mdns() {
+    if ! command -v avahi-publish >/dev/null 2>&1; then
+        log "avahi-publish not found - nodes must use a static broker IP"
+        return
+    fi
+    avahi-publish-address wtsn-broker.local "$LAN_IP" >/dev/null 2>&1 &
+    PUB_PID=$!
+    # keep the A-record in sync with the current IP (kill+re-publish on change)
+    ( while kill -0 $PUB_PID 2>/dev/null; do
+          cur=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "127.0.0.1" | head -1 | sed 's/inet //')
+          if [ -n "$cur" ] && [ "$cur" != "$LAN_IP" ]; then
+              LAN_IP="$cur"
+              kill $PUB_PID 2>/dev/null
+              avahi-publish-address wtsn-broker.local "$LAN_IP" >/dev/null 2>&1 &
+              PUB_PID=$!
+          fi
+          sleep 5
+      done ) </dev/null & disown
+    log "advertising broker on LAN as wtsn-broker.local ($LAN_IP)"
+}
+
 ensure_broker() {
     # make sure mosquitto listens on 0.0.0.0 (reachable from ESP32).
     # NOTE: this needs sudo. If you are not root, run these once manually:
@@ -187,13 +217,19 @@ do_flash() {
 }
 
 main() {
+    LAN_IP="$(get_lan_ip)"
+    ensure_mdns
     ensure_broker
     ensure_gui
-    open_browser
-    open_prov_terminal
     log "Done. Broker=$LAN_IP:$MQTT_PORT  GUI=http://127.0.0.1:$GUI_PORT"
-    log "ESP32: switch web GUI to REAL, add device id=esp32-01, then Deploy."
-    log "New terminal opened with WiFi provisioning helper for the ESP32."
+    if [ "$1" != "--headless" ]; then
+        open_browser
+        open_prov_terminal
+        log "ESP32: switch web GUI to REAL, add device id=esp32-01, then Deploy."
+        log "New terminal opened with WiFi provisioning helper for the ESP32."
+    else
+        log "headless: auto-start services only (broker + GUI + mDNS)."
+    fi
     if [ "$1" = "--flash" ]; then do_flash; fi
 }
 

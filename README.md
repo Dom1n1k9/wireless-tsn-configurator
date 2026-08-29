@@ -24,6 +24,18 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 - WiFi can be changed later remotely via the web GUI (`wifi` command on
   `tsn/cmd/<id>/wifi`).
 
+### Automatic re-provisioning on a lost network
+
+If a node has WiFi credentials stored in NVS but can no longer reach that network
+(it was renamed, moved, or your whole setup changed networks), the agent used to flap
+forever between connect- and disconnect without ever giving up — and the `WTSN-Setup`
+SoftAP never came back, so you could not re-point it without re-flashing.
+
+It now gives up after a few failed reconnects and **automatically restarts the
+`WTSN-Setup` SoftAP + portal** so you can enter the new network over the air.
+Each board advertises a **unique SSID** (`WTSN-Setup-<device-id>`) so you can
+tell multiple boards apart when they are all in setup mode.
+
 ---
 
 ## One-launcher script (`run.sh`)
@@ -39,7 +51,17 @@ It acts as a **central controller (CNC-style control plane, aligned with IEEE 80
 ```bash
 ./run.sh          # broker + GUI + browser + provisioning helper terminal
 ./run.sh --flash  # additionally build & flash the ESP32 agent first
+./run.sh --headless  # services only (broker + GUI + mDNS), no browser/terminal
 ```
+
+`run.sh` also **advertises this PC as the MQTT broker via mDNS**
+(`wtsn-broker.local`) so ESP32 nodes can find the broker by name instead of by a
+hardcoded IP that goes stale whenever this PC changes network or gets a new DHCP
+address. Details in the [mDNS broker discovery](#mdns-broker-discovery) section.
+
+> **Auto-start at login:** the helper copies a desktop autostart entry that runs
+> `run.sh --headless` whenever you log in, so the broker + GUI + mDNS come up by
+> themselves. Disable it if you prefer manual control.
 
 ### Desktop launcher (double-click)
 
@@ -74,6 +96,31 @@ blocks) and stop answering HTTP. `run.sh` now runs a **health watchdog** that
 4-second HTTP checks the GUI and, if it stops responding, kills and restarts it —
 so the page always comes back. Watchdog restarts are logged to `/tmp/wtsn_mon.log`
 and the server output to `/tmp/webgui.log`.
+
+### mDNS broker discovery
+
+Previously, each ESP32 stored the broker's **IP address** in NVS. When this PC
+changed networks or picked up a new DHCP address, the nodes joined the WiFi but kept
+trying the old, now-unreachable broker IP — so they showed "online" yet never
+appeared on MQTT.
+
+The firmware now defaults the broker hostname to **`wtsn-broker.local`**
+(lwIP mDNS queries are enabled via `CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y`),
+and `run.sh` advertises that name with **avahi** — so nodes always resolve to the
+PC's current IP.
+
+- To use it, install avahi and run `run.sh` (it must stay running; it is also
+  auto-started at login via `--headless`):
+  ```bash
+  sudo apt install -y avahi-daemon avahi-utils
+  ./run.sh --headless   # or just ./run.sh, or login autostart
+  ```
+- Nodes without a stored hostname / stored IP still work — the default is
+  `wtsn-broker.local`. If you previously saved an IP, re-enter the broker name via
+  the setup portal (`MQTT broker host: wtsn-broker.local`).
+
+> If you prefer a fixed IP-based broker, ignore this — nothing changes unless you rely on
+> the auto-discovery default.
 
 ---
 
@@ -364,6 +411,8 @@ src/
   simulator/  generic node simulator
   plugin/     loadable protocol plugins (.so)
 esp32-agent/  ESP-IDF ESP32 firmware agent component
+microbit-sensor/  micro:bit V2 display: BLE panel (MakeCode `main.ts`) + wired UART
+built-in MicroPython variant (`main.py`); the ESP32 agent pushes live sensor values
 profiles/     device profile templates (.ini)
 docs/         ARCHITECTURE, BUILD, SIMULATOR
 webgui.py     Python web GUI (stdlib only)

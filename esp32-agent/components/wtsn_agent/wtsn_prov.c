@@ -15,8 +15,31 @@
 
 static const char *TAG = "prov";
 
-#define PROV_AP_SSID "WTSN-Setup"
 #define PROV_AP_PASS ""
+
+/* Build a unique SSID so multiple boards do not all broadcast identical "WTSN-Setup"
+ * APs (which makes them indistinguishable). SSID = "WTSN-Setup-<shortid>" e.g.
+ * "WTSN-Setup-esp32-01" -> we use the device id tail to keep it readable. */
+static char g_ap_ssid[32] = "WTSN-Setup";
+static const char *ap_ssid(void) {
+    if (g_ap_ssid[0] && strcmp(g_ap_ssid, "WTSN-Setup") != 0) return g_ap_ssid;
+    char dev[32] = {0};
+    size_t sz = sizeof(dev);
+    if (wtsn_cfg_load_device_id(dev, &sz) && dev[0]) {
+        /* strip leading non-alnum chars and cap length so SSID stays <=32 bytes */
+        char tail[16] = {0};
+        const char *p = dev;
+        size_t t = 0;
+        for (; *p && t < sizeof(tail) - 1; p++) {
+            char c = *p;
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '_') tail[t++] = c;
+        }
+        tail[t] = '\0';
+        if (tail[0]) snprintf(g_ap_ssid, sizeof(g_ap_ssid), "WTSN-Setup-%s", tail);
+    }
+    return g_ap_ssid;
+}
 
 static bool have_wifi(void) {
     nvs_handle_t h;
@@ -87,7 +110,7 @@ static esp_err_t handle_config(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
         return ESP_FAIL;
     }
-    if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "192.168.1.10");
+    if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "wtsn-broker.local");
     wtsn_cfg_save(devid[0] ? devid : NULL, ssid, pass, mqtt, 1883);
 
     char ok[160];
@@ -156,35 +179,41 @@ static void ap_on_existing(void) {
     esp_netif_create_default_wifi_ap();
     wifi_config_t ap = {
         .ap = {
-            .ssid = PROV_AP_SSID,
-            .ssid_len = strlen(PROV_AP_SSID),
+            .ssid = "",
+            .ssid_len = 0,
             .password = PROV_AP_PASS,
             .max_connection = 4,
             .authmode = PROV_AP_PASS[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
         },
     };
+    const char *ssid = ap_ssid();
+    snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", ssid);
+    ap.ap.ssid_len = (uint8_t)strlen(ssid);
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_AP, &ap);
     esp_wifi_start();
     ESP_LOGI(TAG, "SoftAP '%s' started; connect and open http://192.168.4.1/",
-             PROV_AP_SSID);
+             ssid);
 }
 
 static void configure_ap(void) {
     wifi_config_t ap = {
         .ap = {
-            .ssid = PROV_AP_SSID,
-            .ssid_len = strlen(PROV_AP_SSID),
+            .ssid = "",
+            .ssid_len = 0,
             .password = PROV_AP_PASS,
             .max_connection = 4,
             .authmode = PROV_AP_PASS[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
         },
     };
+    const char *ssid = ap_ssid();
+    snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", ssid);
+    ap.ap.ssid_len = (uint8_t)strlen(ssid);
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_AP, &ap);
     esp_wifi_start();
     ESP_LOGI(TAG, "SoftAP '%s' started; connect and open http://192.168.4.1/",
-             PROV_AP_SSID);
+             ssid);
 }
 
 void wtsn_prov_start(void) {

@@ -115,7 +115,7 @@ static esp_err_t prov_config_handler(httpd_req_t *req) {
         k = strtok_r(NULL, "&", &save);
     }
     if (!ssid[0]) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required"); return ESP_FAIL; }
-    if (!mqtt[0]) snprintf(mqtt, sizeof(mqtt), "192.168.1.100");
+    if (!mqtt[0]) snprintf(mqtt, sizeof(mqtt), "wtsn-broker.local");
     if (id[0]) nvs_str_set("device_id", id);
     nvs_str_set("wifi_ssid", ssid);
     nvs_str_set("wifi_pass", pass);
@@ -135,7 +135,7 @@ static esp_err_t prov_root_handler(httpd_req_t *req) {
         "<form method='POST' action='/config'>"
         "<p><label>WiFi SSID <input name='ssid' required></label></p>"
         "<p><label>WiFi password <input name='pass' type='password'></label></p>"
-        "<p><label>MQTT broker host <input name='mqtt' value='192.168.1.100'></label></p>"
+        "<p><label>MQTT broker host <input name='mqtt' value='wtsn-broker.local'></label></p>"
         "<p><label>Node id <input name='id' value='esp32-cam-01'></label></p>"
         "<button>Save &amp; connect</button>"
         "</form></body></html>";
@@ -169,6 +169,31 @@ static void start_prov_ap(void) {
         httpd_register_uri_handler(server, &r2);
         ESP_LOGI(TAG, "provisioning portal ready on http://192.168.4.1/");
     }
+}
+
+/* Re-provision variant: the STA stack (netif + esp_wifi_init) is already up from the
+ * normal boot path, so only add the AP netif and switch to APSTA. Serves the same
+ * config portal. */
+static void start_reprov_ap(void) {
+    esp_netif_create_default_wifi_ap();
+    wifi_config_t ap = {
+        .ap = {
+            .ssid = "WTSN-Setup", .ssid_len = strlen("WTSN-Setup"),
+            .password = "", .max_connection = 4, .authmode = WIFI_AUTH_OPEN,
+        },
+    };
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
+    esp_wifi_set_config(WIFI_IF_AP, &ap);
+    esp_wifi_start();
+    httpd_handle_t server = NULL;
+    httpd_config_t conf = HTTPD_DEFAULT_CONFIG();
+    conf.lru_purge_enable = true;
+    ESP_ERROR_CHECK(httpd_start(&server, &conf));
+    httpd_uri_t r1 = { .uri = "/", .method = HTTP_GET, .handler = prov_root_handler, .user_ctx = NULL };
+    httpd_uri_t r2 = { .uri = "/config", .method = HTTP_POST, .handler = prov_config_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &r1);
+    httpd_register_uri_handler(server, &r2);
+    ESP_LOGI(TAG, "re-provisioning portal ready on http://192.168.4.1/");
 }
 
 /* ---------------- camera init ---------------- */
@@ -268,7 +293,7 @@ static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_
 
 static esp_err_t mqtt_start(void) {
     char host[64] = {0}; nvs_str_get("mqtt_host", host, sizeof(host));
-    if (!host[0]) snprintf(host, sizeof(host), "192.168.1.100");
+    if (!host[0]) snprintf(host, sizeof(host), "wtsn-broker.local");
     esp_mqtt_client_config_t cfg = {
         .broker = { .address = { .hostname = host, .port = 1883, .transport = MQTT_TRANSPORT_OVER_TCP } },
         .credentials = { .client_id = g_device_id },
@@ -288,12 +313,38 @@ typedef struct {
 } wifi_ctx_t;
 static wifi_ctx_t g_ctx;
 
+/* Re-provision fallback: after this many consecutive disconnects with no IP, give up
+ * retrying the dead network and bring back the WTSN-Setup SoftAP so the CAM can be
+ * re-pointed at a new network over the air (no USB flash needed). */
+#ifndef PROV_FALLBACK_DISCONNECTS
+#define PROV_FALLBACK_DISCONNECTS 6
+#endif
+static volatile int g_wifi_ready = 0;
+static volatile int g_disconnect_streak = 0;
+static volatile int g_reprov_started = 0;
+
+static void reprov_task(void *arg) {
+    (void)arg;
+    if (g_reprov_started) { vTaskDelete(NULL); return; }
+    g_reprov_started = 1;
+    ESP_LOGW(TAG, "unable to connect on '%s' -> starting provisioning AP", g_ctx.ssid);
+    start_reprov_ap();   /* blocks serving the portal; user config -> restart */
+    vTaskDelete(NULL);
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW(TAG, "STA disconnected, retrying");
         esp_wifi_connect();
+        if (++g_disconnect_streak >= PROV_FALLBACK_DISCONNECTS &&
+            !g_wifi_ready && !g_reprov_started) {
+            xTaskCreatePinnedToCore(&reprov_task, "cam_reprov", 4096, NULL, 5, NULL, 1);
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        g_wifi_ready = 1;
+        g_disconnect_streak = 0;
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
         if (!g_mqtt) {

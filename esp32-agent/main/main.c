@@ -19,6 +19,7 @@
 #include "wtsn_json.h"
 #include "wtsn_prov.h"
 #include "wtsn_sensor.h"
+#include "wtsn_ble.h"
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
@@ -239,6 +240,25 @@ static volatile int g_identifying = 0;
  * to the provisioning SoftAP when the saved network cannot be reached. */
 static volatile int g_wifi_ready = 0;
 static volatile int g_prov_fallback_started = 0;
+/* Count of consecutive STA disconnects with no GOT_IP in between. When it climbs
+ * past PROV_FALLBACK_DISCONNECTS the device gives up retrying and brings back the
+ * WTSN-Setup provisioning SoftAP so it can be re-pointed at a new network. */
+static volatile int g_disconnect_streak = 0;
+#ifndef PROV_FALLBACK_DISCONNECTS
+#define PROV_FALLBACK_DISCONNECTS 6
+#endif
+
+/* Immediately bring up the provisioning SoftAP (from the wifi event handler, when we
+ * have been flapping without ever getting an IP). Runs in its own task so it does
+ * not block the wifi event handler. */
+static void prov_fallback_now(void *arg) { (void)arg;
+    if (g_prov_fallback_started) { vTaskDelete(NULL); return; }
+    g_prov_fallback_started = 1;
+    ESP_LOGW(TAG, "could not stabilise on '%s' -> starting provisioning AP",
+             g_ctx.ssid);
+    wtsn_prov_start_ap();   /* starts AP + portal; user config -> restart */
+    vTaskDelete(NULL);
+}
 
 /* Fallback: if the device cannot join the saved WiFi within FALLBACK_PROV_MS,
  * start the provisioning SoftAP so the user can re-point it at a new network
@@ -277,8 +297,16 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGW(TAG, "STA disconnected reason=%d", e2 ? e2->reason : -1);
         g_led_steady = 0;
         esp_wifi_connect();
+        /* If we keep dropping without ever getting an IP, stop hammering the dead
+         * network and bring back WTSN-Setup so the user can re-point us. */
+        if (++g_disconnect_streak >= PROV_FALLBACK_DISCONNECTS &&
+            !g_wifi_ready && !g_prov_fallback_started) {
+            xTaskCreatePinnedToCore(&prov_fallback_now, "wtsn_reprov", 4096,
+                                   NULL, 5, NULL, 1);
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         g_wifi_ready = 1;
+        g_disconnect_streak = 0;
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
         snprintf(g_ip, sizeof(g_ip), IPSTR, IP2STR(&e->ip_info.ip));
@@ -294,6 +322,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             wtsn_ptp_setup(g_device_id, g_mqtt);
             wtsn_ptp_start();
             wtsn_sensor_init(g_device_id, g_mqtt);
+            wtsn_ble_start();
             ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
         }
     }
