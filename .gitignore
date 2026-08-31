@@ -10,3 +10,4 @@ __pycache__/
 .vscode/
 esp32-agent/sdkconfig
 esp32-agent/sdkconfig.old
+webgui_*.log

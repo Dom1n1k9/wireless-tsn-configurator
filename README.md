@@ -4,37 +4,47 @@
 > Linux inline with IEEE 802.1Qcc. **Zero-touch node onboarding**: flash the
 > agent, connect it to power, and it provisions itself.
 
-A production-grade application for the configuration and control of **Wireless Time Sensitive Networking (Wireless TSN / W-TSN)** nodes such as ESP32, Raspberry Pi, STM32, NXP, Linux and other microcontroller platforms. The **core is written in pure C (C11)** for the control plane, and a **Python web GUI** (`webgui.py`, stdlib only) is the front-end.
+A production-grade application for the configuration and control of **Wireless Time
+Sensitive Networking (W-TSN)** nodes — ESP32, Raspberry Pi, STM32, NXP, Linux and
+other microcontroller platforms. The **control-plane core is written in pure C (C11)**,
+and the front-end is a **Python web GUI** (`webgui.py`).
 
-It acts as a **central controller (CNC-style control plane, aligned with IEEE 802.1Qcc)** that discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization / schedule policies, reads sensors, and exposes the whole network over **FXMQTT** — OPC UA FX / C2C Field Exchange carried entirely over MQTT, with a firmware agent for physical devices, a node simulator for virtual ones, and a live communication trace.
+It acts as a **centralized controller (CNC-style control plane, aligned with IEEE
+802.1Qcc)** that discovers wireless nodes, manages them, applies QoS / VLAN /
+time-synchronization / schedule policies, reads sensors, and exposes the whole network over
+**FXMQTT** — OPC UA FX / C2C Field Exchange carried over MQTT. It ships a
+firmware agent for physical devices, a generic node simulator for virtual ones, and a live
+communication trace.
 
 ---
 
-## Zero-touch onboarding
+## Quick start
 
-**Flash it. Power it. It connects itself.**
+Everything runs from one machine. See [Setup guide](#setup-guide-initialization-step-by-step)
+for a physical **ESP32** node.
 
-- On first boot a node with no WiFi credentials starts a **SoftAP `WTSN-Setup`**
-  and serves a config portal at **http://192.168.4.1/** — enter your WiFi SSID /
-  password and MQTT broker, and it saves them to NVS, reboots, joins your network
-  and announces itself to the configurator. No soldering, no serial config.
-- New controllers (ESP32, later STM32 / NXP / RPi) use the **same agent
-  protocol** — the host `tsn-node-agent` (Linux/RPi) and the embedded agents all
-  speak one JSON `/apply` snapshot, so onboarding works the same across hardware.
-- WiFi can be changed later remotely via the web GUI (`wifi` command on
-  `tsn/cmd/<id>/wifi`).
+```bash
+# host dependencies (Linux)
+sudo apt update
+sudo apt install -y build-essential cmake libsqlite3-dev libmosquitto-dev mosquitto python3 python3-pip
 
-### Automatic re-provisioning on a lost network
+# python package for the web GUI (MQTT client)
+python3 -m pip install paho-mqtt
 
-If a node has WiFi credentials stored in NVS but can no longer reach that network
-(it was renamed, moved, or your whole setup changed networks), the agent used to flap
-forever between connect- and disconnect without ever giving up — and the `WTSN-Setup`
-SoftAP never came back, so you could not re-point it without re-flashing.
+# build (C core: CLI + tests + simulator + agent)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -- -j$(nproc)
 
-It now gives up after a few failed reconnects and **automatically restarts the
-`WTSN-Setup` SoftAP + portal** so you can enter the new network over the air.
-Each board advertises a **unique SSID** (`WTSN-Setup-<device-id>`) so you can
-tell multiple boards apart when they are all in setup mode.
+# run the tests
+./build/wtsn-tests
+
+# web GUI  ->  http://127.0.0.1:8000
+python3 webgui.py
+```
+
+> **Windows:** the web GUI runs on Windows too and only needs `paho-mqtt`:
+> `python -m pip install paho-mqtt`, then `python webgui.py`. The C core targets
+> Linux/ESP-IDF.
 
 ---
 
@@ -44,9 +54,8 @@ tell multiple boards apart when they are all in setup mode.
 
 - **MQTT broker** (mosquitto on `0.0.0.0:1883`, auto-detects your LAN IP)
 - **Web GUI** (`webgui.py`) on http://127.0.0.1:8000 and opens the browser
-- **A new terminal** with the **WiFi provisioning helper** for the ESP32 — it
-  shows the exact steps to connect to the `WTSN-Setup` SoftAP and open
-  http://192.168.4.1/
+- **A new terminal** with the **WiFi provisioning helper** for the ESP32 — it shows
+  exactly how to reach the `WTSN-Setup` SoftAP and open http://192.168.4.1/
 
 ```bash
 ./run.sh          # broker + GUI + browser + provisioning helper terminal
@@ -54,335 +63,252 @@ tell multiple boards apart when they are all in setup mode.
 ./run.sh --headless  # services only (broker + GUI + mDNS), no browser/terminal
 ```
 
-`run.sh` also **advertises this PC as the MQTT broker via mDNS**
-(`wtsn-broker.local`) so ESP32 nodes can find the broker by name instead of by a
-hardcoded IP that goes stale whenever this PC changes network or gets a new DHCP
-address. Details in the [mDNS broker discovery](#mdns-broker-discovery) section.
+`run.sh` also advertises this PC as the MQTT broker via **mDNS**
+(`wtsn-broker.local`) so ESP32 nodes find the broker by name. Details in
+[mDNS broker discovery](#mdns-broker-discovery).
 
-> **Auto-start at login:** the helper copies a desktop autostart entry that runs
-> `run.sh --headless` whenever you log in, so the broker + GUI + mDNS come up by
-> themselves. Disable it if you prefer manual control.
+> **Auto-start at login:** the helper installs a desktop autostart entry that runs
+> `run.sh --headless` so the broker + GUI + mDNS come up on login. Disable it if
+> you prefer manual control. The GUI is also self-healing: a watchdog re-checks it
+> every 4 s and restarts it if it wedges (log: `/tmp/wtsn_mon.log`).
 
 ### Desktop launcher (double-click)
 
-Nemo / Nautilus file managers run an `Executable Text File` the wrong way (they
-just open it in an editor) — so double-clicking `run.sh` does nothing. Instead,
-launch with the **desktop shortcut** — a `.desktop` file is committed in
-[`launcher/`](launcher/):
+Nemo / Nautilus execute text files the wrong way, so double-clicking `run.sh` does
+nothing. Instead install the **desktop shortcut** once:
 
 ```bash
-# once: install the shortcut onto your Desktop
 ./launcher/install.sh
 ```
 
-Then double-click the **"WTSN Configurator"** icon on your Desktop — it opens a
-terminal and runs `run.sh` in it. (The shortcut is also pre-placed at
-`~/Desktop/WTSN Configurator.desktop`.)
-
-If you prefer, run it from a terminal with either:
-
-```bash
-./run.sh
-# or
-bash run.sh        # equivalent — run.sh is a bash script (not sh)
-```
-
-> Note: `sh run.sh` is **not** supported — `run.sh` uses bash-specific features.
-
-### Self-healing web GUI (watchdog)
-
-The GUI (Python stdlib `socketserver`) can, in rare races, wedge (its accept loop
-blocks) and stop answering HTTP. `run.sh` now runs a **health watchdog** that
-4-second HTTP checks the GUI and, if it stops responding, kills and restarts it —
-so the page always comes back. Watchdog restarts are logged to `/tmp/wtsn_mon.log`
-and the server output to `/tmp/webgui.log`.
+Then double-click the **"WTSN Configurator"** icon on your Desktop.
 
 ### mDNS broker discovery
 
-Previously, each ESP32 stored the broker's **IP address** in NVS. When this PC
-changed networks or picked up a new DHCP address, the nodes joined the WiFi but kept
-trying the old, now-unreachable broker IP — so they showed "online" yet never
-appeared on MQTT.
+Instead of a hardcoded broker IP (which goes stale when this PC changes networks or gets
+a new DHCP address), the firmware defaults the broker hostname to **`wtsn-broker.local`**
+and `run.sh` advertises it with **avahi** — so nodes always resolve to the current IP.
 
-The firmware now defaults the broker hostname to **`wtsn-broker.local`**
-(lwIP mDNS queries are enabled via `CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y`),
-and `run.sh` advertises that name with **avahi** — so nodes always resolve to the
-PC's current IP.
+```bash
+sudo apt install -y avahi-daemon avahi-utils
+./run.sh --headless   # or just ./run.sh
+```
 
-- To use it, install avahi and run `run.sh` (it must stay running; it is also
-  auto-started at login via `--headless`):
-  ```bash
-  sudo apt install -y avahi-daemon avahi-utils
-  ./run.sh --headless   # or just ./run.sh, or login autostart
-  ```
-- Nodes without a stored hostname / stored IP still work — the default is
-  `wtsn-broker.local`. If you previously saved an IP, re-enter the broker name via
-  the setup portal (`MQTT broker host: wtsn-broker.local`).
+> If you prefer a fixed IP-based broker, ignore this — re-enter the broker address in the
+> setup portal.
 
-> If you prefer a fixed IP-based broker, ignore this — nothing changes unless you rely on
-> the auto-discovery default.
+---
+
+## Zero-touch onboarding
+
+**Flash it. Power it. It connects itself.**
+
+- On first boot a node with no WiFi credentials starts a **SoftAP `WTSN-Setup`** and
+  serves a config portal at **http://192.168.4.1/** — enter your WiFi SSID /
+  password and MQTT broker; it saves them to NVS, reboots, joins your network and
+  announces itself to the configurator. No soldering, no serial config.
+- Controllers (ESP32, later STM32 / NXP / RPi) use the **same agent protocol** —
+  the host `tsn-node-agent` and embedded agents all speak one JSON `/apply` snapshot.
+- WiFi can be changed later remotely via the web GUI (`wifi` command on
+  `tsn/cmd/<id>/wifi`).
+
+### Automatic re-provisioning on a lost network
+
+If a node can no longer reach its saved network, it gives up after a few failed reconnects
+and **automatically restarts the `WTSN-Setup` SoftAP + portal** so you can re-point
+it over the air. Each board advertises a **unique SSID** (`WTSN-Setup-<device-id>`)
+so you can tell multiple boards apart in setup mode.
 
 ---
 
 ## Setup guide (initialization, step by step)
 
-This walks you through getting a physical **ESP32 agent** online and controllable from
-the web GUI. Do these steps once when you set up the system.
+This walks you through getting a physical **ESP32 agent** online and controllable from the web
+GUI. Do these once when you set up the system.
 
 ### 1. Install dependencies (host)
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake libsqlite3-dev libmosquitto-dev mosquitto python3
+sudo apt install -y build-essential cmake libsqlite3-dev libmosquitto-dev mosquitto python3 python3-pip
+python3 -m pip install paho-mqtt
 ```
 
 ### 2. Set up the MQTT broker
 
-The broker must listen on all interfaces so the ESP32 (on the same LAN) can reach it:
+The broker must listen on all interfaces so the ESP32 (same LAN) can reach it:
 
 ```bash
-echo 'listener 1883 0.0.0.0'        | sudo tee /etc/mosquitto/conf.d/wtsn.conf
-echo 'allow_anonymous true'              | sudo tee -a /etc/mosquitto/conf.d/wtsn.conf
+echo 'listener 1883 0.0.0.0'  | sudo tee /etc/mosquitto/conf.d/wtsn.conf
+echo 'allow_anonymous true'          | sudo tee -a /etc/mosquitto/conf.d/wtsn.conf
 sudo systemctl restart mosquitto
+sudo ufw allow 1883/tcp            # firewall often blocks inbound MQTT
+ss -tln | grep 1883               # expect LISTEN 0.0.0.0:1883
 ```
 
-**Firewall:** the host firewall (UFW on Ubuntu) blocks inbound MQTT by default.
-Allow port 1883 (this was the final blocker when the ESP32 could not connect):
+### 3. Provision the WiFi (ESP32)
 
-```bash
-sudo ufw allow 1883/tcp
-```
-
-Check the broker is listening on all interfaces:
-
-```bash
-ss -tln | grep 1883        # expect LISTEN 0.0.0.0:1883
-```
-
-### 3. Get the LAN IP
-
-```bash
-ip -4 addr show | grep -oE "inet [0-9.]+" | grep -v 127.0.0.1
-# e.g. 192.168.0.149  <-- this is the broker address you will enter on the ESP32
-```
-
-### 4. Build & flash the ESP32 agent
-
-```bash
-cd esp32-agent
-source ~/esp/eim_workspace/v5.3/esp-idf/export.sh          # or your ESP-IDF path
-idf.py set-target esp32
-idf.py build
-idf.py -p /dev/ttyUSB0 flash
-```
-
-If `idf.py -p /dev/ttyUSB0 flash` reports the port is not readable, add yourself
-to the `dialout` group and re-login:
-
-```bash
-sudo usermod -aG dialout $USER
-# log out and back in, then retry the flash
-```
-
-On boot the firmware **blinks the onboard LED 3 times** to confirm a successful
-flash/reset, then joins your WiFi.
-
-### 5. Provision the WiFi
-
-The agent starts a SoftAP `WTSN-Setup` in two cases:
-
-1. On **first boot** with no WiFi stored, or
-2. As a **fallback**: if it cannot join the saved WiFi within ~15 s (e.g. you
-   moved to a new network) it automatically brings up the SoftAP — **no USB flash
-   needed to re-provision**.
-
-To provision:
+The agent starts a SoftAP `WTSN-Setup` on first boot (no credentials) or as a
+fallback if it cannot join the saved WiFi within ~15 s:
 
 1. Connect your phone/PC to the `WTSN-Setup` SSID (no password).
 2. Open **http://192.168.4.1/**.
-3. Enter a **Device ID** (optional, leave empty to keep the existing one), your
-   WiFi SSID, password, and the broker address from step 3 (e.g. `192.168.0.149`).
-4. Save → the agent stores it in NVS, reboots, blinks, joins your WiFi and
-   announces itself on MQTT.
+3. Enter an optional Device ID, your WiFi SSID / password, and the broker address
+   (e.g. `192.168.0.149` or `wtsn-broker.local`).
+4. Save → the agent stores it in NVS, reboots, blinks, joins WiFi and announces on MQTT.
 
-> **Note:** when provisioned from a *phone/mac hotspot*, client isolation can stop the
-> node from joining even with the correct password. Prefer a normal router WiFi.
+> **Note:** from a *phone/mac hotspot*, client isolation can block the node. Prefer a
+> normal router WiFi.
 
-### 6. Connect it in the GUI
+### 4. Connect it in the GUI
 
-1. Open the web GUI: **http://127.0.0.1:8000**
-2. In the top-right corner switch the mode from **Simulation to REAL**.
-3. Set the broker to `192.168.0.149:1883` (FXMQTT / Settings page) and save.
-4. Go to **Devices**, add a device with id **`esp32-01`** (kind *ESP32*), Add.
-   It appears in the Devices table below.
-5. Configure TSN (QoS, VLAN, TimeSync, TAS...) for that device.
-6. Click **Execute settings on controller** (blue button in the header). The GUI publishes a JSON
-   snapshot on `tsn/cmd/esp32-01/apply`; the agent replies on `tsn/ack/esp32-01`.
+1. Open **http://127.0.0.1:8000** and, in the top-right, switch **Simulation → REAL**.
+2. Set the broker to `192.168.0.149:1883` (FXMQTT / Settings) and save.
+3. Add a device with id **`esp32-01`** (kind *ESP32*) on the Devices page.
+4. Configure TSN (QoS, VLAN, TimeSync, TAS, ...) for that device.
+5. Click **Execute settings on controller** (blue button in the header). The GUI
+   publishes a JSON snapshot on `tsn/cmd/esp32-01/apply`; the agent replies on
+   `tsn/ack/esp32-01`.
 
 ---
 
 ## What it does
 
 - **Automatic device discovery** via MQTT and plugins (extensible for future protocols)
-- **Device management** — online / offline / error states, and full info (ID, IP, firmware, last seen, supported TSN features)
-- **Centralized configuration (IEEE 802.1Qcc aligned)** — pushes QoS / VLAN / time-sync / schedules to the nodes
-- **IEEE 802.1Qcc TSN Stream reservation** — Talker / Listener streams with latency, interval, VLAN and priority; deploy to all nodes over MQTT (`tsn/cmd/<dev>/stream`)
-- **IEEE 802.1Q QoS** — priority 0-7, traffic classes, bandwidth reservation, latency requirements
+- **Device management** — online / offline / error states, full info (ID, IP, firmware,
+  last seen, supported TSN features)
+- **Centralized configuration (IEEE 802.1Qcc aligned)** — pushes QoS / VLAN /
+  time-sync / schedules to the nodes
+- **IEEE 802.1Qcc TSN Stream reservation** — Talker / Listener streams with latency,
+  interval, VLAN and priority; deploy to all nodes over MQTT
+- **IEEE 802.1Q QoS** — priority 0–7, traffic classes, bandwidth reservation, latency
 - **IEEE 802.1Q VLAN** — VLAN ID, group membership
-- **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local / external grandmaster modes
-- **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists (GCL), cycle time, deploy schedules, visualize gate windows (full GCL is pushed to the node over `/apply`)
-- **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt preemptable classes to protect time-critical traffic
-- **Persistent per-device config on the ESP32 agent** — QoS / VLAN / TimeSync / TAS-GCL / Preemption are stored to NVS (`wtsn_cfg_save_tsn_state`) and restored on reboot, so a node keeps its applied settings across restarts
-- **Sensor management** — auto-detect temperature, pressure, IMU, distance, GPIO sensors with diagnostics
+- **Time synchronization (gPTP, IEEE 802.1AS)** — grandmaster selection, local /
+  external grandmaster modes
+- **Time Aware Scheduling (IEEE 802.1Qbv)** — build and edit Gate Control Lists
+  (GCL), cycle time, deploy schedules, visualize gate windows (full GCL is pushed over
+  `/apply`)
+- **Frame Preemption (IEEE 802.1Qbu)** — express frames preempt preemptable classes
+- **Persistent per-device config on the ESP32 agent** — QoS / VLAN / TimeSync /
+  TAS-GCL / Preemption stored to NVS and restored on reboot
+- **Sensor management** — temperature, pressure, IMU, distance, GPIO sensors with
+  diagnostics
 - **OPC UA FX over MQTT (FXMQTT)** — PubSub / C2C Field Exchange over MQTT
 - **MQTT client** — the single communication channel
-- **Communication trace / monitoring** in the GUI
+- **Live monitor** — a searchable, pausable network/frame trace in the GUI
+- **Config backup / restore** — export the whole configuration to JSON and import it back
 
-All state is persisted in **SQLite**, so devices and configurations survive restarts.
-The front-end is a **Python web GUI** (stdlib only) — no extra packages and no
-LWGL dependency. Persistence uses SQLite.
-
----
-
-## IEEE 802.1Qcc TSN Stream reservation
-
-The CNC defines **Talker / Listener streams** (the unit of time-sensitive traffic):
-
-- Each stream binds a **talker** (source) to one or more **listeners** (sinks)
-  on a given VLAN, with max latency, max interval, priority and data-frame priority.
-- Streams are validated (VLAN 1-4094, priority 0-7, ≥1 listener) and follow
-  an 802.1Qcc lifecycle: **configured → ready → (failed/standby)**.
-- Deploy (single or all) pushes the stream to every endpoint over MQTT on
-  `tsn/cmd/<device>/stream` with a JSON snapshot; both the host agent
-  (RPi/Linux) and the ESP32 agent understand it.
-- Managed in the web GUI under **IEEE 802.1Qcc → TSN Streams** and in the C
-  core via `src/stream/` (`wtsn_tsn_manager`).
+All state is persisted in **SQLite**. The web GUI is a **Python (mostly stdlib)**
+front-end that also uses the bundled **paho-mqtt** client.
 
 ---
 
-## Requirements / Dependencies
+## Web GUI (`webgui.py`)
 
-| What         | Version        | Purpose                        |
-|--------------|----------------|--------------------------------|
-| SQLite3      | >= 3.30        | SQLite database                |
-| libmosquitto | >= 2.0 dev     | MQTT/FX client                 |
-| CMake        | >= 3.16        | Build system                  |
-| GCC/Clang    | C11 compiler   | Compiler                      |
-| Python       | >= 3.7         | Web GUI (`webgui.py`, stdlib) |
+A self-contained single-file SPA served on http://127.0.0.1:8000:
 
-Install on Debian/Ubuntu:
+| Page        | Purpose                                                        |
+|-------------|----------------------------------------------------------------|
+| Devices     | add/remove/ping nodes, view status, IP and TSN features           |
+| Monitor     | live network/frame trace with **search filter**, **Pause/Start** and Clear |
+| Sensors     | live values per node                                             |
+| FXMQTT      | Field Server / Participant, broker address                          |
+| Sync        | gPTP grandmaster / slave setup                                  |
+| QoS / VLAN  | priority mapping, VLAN groups and membership                       |
+| TAS / GCL   | gate control lists with **visual gate windows**                   |
+| Preemption  | eMAC / pMAC priority split                                    |
+| Streams     | 802.1Qcc talker / listener reservations, deploy                |
+| Settings    | broker, db info, **Export / Restore configuration (JSON)**      |
+
+Run it directly:
 
 ```bash
-sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev python3
+python3 webgui.py [--host H] [--port P]
+# env: WTSN_HOST, WTSN_PORT, WTSN_DB, WTSN_BROKER, WTSN_USER, WTSN_PASS,
+#      WTSN_WEB_USER, WTSN_WEB_PASS
 ```
 
-> **GUI:** the front-end is a self-contained Python web GUI (`webgui.py`, stdlib
-> only — no extra Python packages). The LVGL C GUI was removed. To expose the web
-> GUI over TLS put it behind a reverse proxy (nginx/caddy) — see `webgui.py --help`.
+**Simulation mode** fabricates a stable set of nodes and sensors so everything can be
+exercised without hardware. **Real mode** connects to your MQTT broker and live devices.
 
-> **Build requirements:** cmake, a C11 compiler (gcc/clang), SQLite3, mosquitto. If you do not have root, you can install all dependencies locally (`$HOME/local`) and point CMake/pkg-config at them — see [docs/BUILD.md](docs/BUILD.md).
+> **TLS** is not bundled — put the GUI behind a reverse proxy (nginx/caddy) for HTTPS.
 
 ---
 
-## How to build & run
+## Build & run (C core)
 
 ```bash
 cd wtsn-configurator
-
-# configure and build (C core: CLI + tests + simulator + agent)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -- -j$(nproc)
+./build/wtsn-tests          # run tests
 
-# run the tests
-./build/wtsn-tests
-
-# headless / CLI mode
+# headless / CLI
 ./build/wtsn-cli --headless --db ./config.db
 
-# web GUI (Python, stdlib only)
-python3 webgui.py
-
-# package the binaries
+# package
 cpack -G TGZ
 ```
 
 ### CLI options
 
-| Flag             | Description                          |
-|------------------|--------------------------------------|
-| `--db <path>`    | SQLite database file (default `wtsn.db`) |
-| `--mqtt-host <h>`| MQTT broker host                    |
-| `--mqtt-port <p>`| MQTT broker port (default 1883)    |
-| `--plugin-dir <d>`| directory of discovery plugins (.so) |
-| `--headless`     | CLI mode, no GUI                    |
+| Flag              | Description                             |
+|-------------------|-----------------------------------------|
+| `--db <path>`     | SQLite database file (default `wtsn.db`) |
+| `--mqtt-host <h>` | MQTT broker host                        |
+| `--mqtt-port <p>` | MQTT broker port (default 1883)        |
+| `--plugin-dir <d>`| directory of discovery plugins (.so)     |
+| `--headless`      | CLI mode, no GUI                        |
 
 ---
 
-## OPC UA FX over MQTT (FXMQTT)
+## TSN streams (IEEE 802.1Qcc)
 
-The single communication channel. OPC UA FX / C2C Field Exchange is carried
-entirely over MQTT through `src/fxmqtt/`:
+The CNC defines **Talker / Listener streams**:
 
-- **Field Server / Participant** — the configurator (PC) or a selected device
-  node acts as the Field Server, configurable from the GUI (FX page).
-- **C2C Field Exchange (PubSub topics)** — `tsn/fx/field`, `tsn/fx/data`,
-  `tsn/fx/<node>` carry PubSub / C2C traffic on the MQTT broker; no OPC UA
-  server, PubSub binary encoding or dedicated multicast stack is required.
-- **Broker** — configured via CLI flags / settings (`--mqtt-host`, `--mqtt-port`).
-
----
-
-## MQTT
-
-- **Client** — `src/mqtt/mqtt_client.c` wraps libmosquitto: connect, subscribe,
-  publish, message callbacks, background loop.
-- **Broker config** via CLI flags / settings.
+- Each stream binds a **talker** to one or more **listeners** on a VLAN, with max
+  latency, max interval, priority and data-frame priority.
+- Streams are validated and follow an 802.1Qcc lifecycle:
+  **configured → ready → (failed/standby)**.
+- Deploy pushes the stream to every endpoint on `tsn/cmd/<device>/stream` (JSON
+  snapshot); both the host agent (RPi/Linux) and the ESP32 agent understand it.
+- Managed under **IEEE 802.1Qcc → TSN Streams** in the GUI and via
+  `src/stream/` (`tsn_manager`) in the core.
 
 ---
 
-## Communication Trace / Monitoring
+## TSN node firmware agent
 
-`src/trace/trace.c` (with the **Trace** page in the GUI) records every real and
-simulated event live: communication, raw frames, configuration changes and FX multicast
-messages — each shown with a timestamp, source and type.
-
----
-
-## TSN Node Firmware Agent
-
-`tsn-node-agent` runs on physical devices and executes configurator commands over
-MQTT:
+`tsn-node-agent` runs on physical devices and executes configurator commands over MQTT:
 
 ```bash
 cmake --build build --target tsn-node-agent
 ./build/tsn-node-agent --id node-01 --platform linux --mqtt-host broker.local
 ```
 
-| Option         | Description                          |
-|----------------|--------------------------------------|
-| `--id`         | Device id reported to the configurator |
+| Option         | Description                             |
+|----------------|-----------------------------------------|
+| `--id`         | Device id reported to the configurator    |
 | `--platform`   | `linux`, `raspberry_pi`, `esp32`, `stm32`, `nxp` |
-| `--mqtt-host`  | Configurator / broker host          |
+| `--mqtt-host`  | Configurator / broker host             |
 | `--mqtt-port`  | MQTT port (default 1883)          |
 
-Commands over `tsn/cmd/<device>`: `apply` (preferred — full JSON snapshot),
-`qos`, `vlan`, `timesync`, `tas`, `status`, `wifi` and `fx`. The agent replies
-with an ACK on `tsn/ack/<id>`. Linux/Raspberry Pi apply QoS/VLAN via
-`iproute2`+`tc`; ESP32/STM32/NXP use the embedded adapters. The **ESP32 agent**
-(`esp32-agent/`) is the reference implementation with zero-touch provisioning.
+Commands on `tsn/cmd/<device>`: `apply` (preferred — full JSON snapshot), `qos`,
+`vlan`, `timesync`, `tas`, `status`, `wifi`, `fx`. The agent replies with an ACK on
+`tsn/ack/<id>`. Linux/Raspberry Pi apply QoS/VLAN via `iproute2`+`tc`; ESP32/
+STM32/NXP use embedded adapters. The **ESP32 agent** (`esp32-agent/`) is the reference
+implementation with zero-touch provisioning.
 
 ---
 
-## TSN Node Simulator
+## TSN node simulator
 
-The repository ships a **generic TSN Node Simulator** (`tsn-node-simulator`). It
-does not emulate any specific silicon; it simulates arbitrary TSN-capable controllers
-(ESP32, Raspberry Pi, STM32, NXP, Linux, or any custom kind) from plain-text
-**configuration profiles** in `profiles/*.ini`.
+A **generic TSN Node Simulator** (`tsn-node-simulator`) that simulates arbitrary
+TSN-capable controllers (ESP32, Raspberry Pi, STM32, NXP, Linux, or custom kinds)
+from plain-text profiles in `profiles/*.ini`.
 
-It simulates: discovery, MQTT publishing, QoS, VLAN, time synchronization, TAS /
-Gate Control Lists, sensor simulation (temperature, pressure, IMU, distance, GPIO)
-and FX over MQTT.
+It simulates discovery, MQTT publishing, QoS, VLAN, time synchronization, TAS / GCL,
+sensors and FX over MQTT.
 
 ```bash
 cmake --build build --target tsn-node-simulator
@@ -404,36 +330,53 @@ src/
   device/     device model + manager
   discovery/  discovery framework
   qos|vlan|timesync|tas|sensors/   domain services
-  stream/      IEEE 802.1Qcc TSN stream reservation (talker/listener)
+  stream/     IEEE 802.1Qcc stream reservation (talker/listener)
   mqtt|fxmqtt/        communication integrations
   trace/      communication monitor
   agent/      firmware agent for physical nodes
   simulator/  generic node simulator
   plugin/     loadable protocol plugins (.so)
-esp32-agent/  ESP-IDF ESP32 firmware agent component
-microbit-sensor/  micro:bit V2 display: BLE panel (MakeCode `main.ts`) + wired UART
-built-in MicroPython variant (`main.py`); the ESP32 agent pushes live sensor values
-profiles/     device profile templates (.ini)
-docs/         ARCHITECTURE, BUILD, SIMULATOR
-webgui.py     Python web GUI (stdlib only)
+esp32-agent/   ESP-IDF ESP32 firmware agent component and provisioning
+microbit-sensor/  micro:bit V2 display (MakeCode + UART / MicroPython)
+profiles/      device profile templates (.ini)
+docs/          ARCHITECTURE, BUILD, SIMULATOR
+webgui.py      Python web GUI (single file, stdlib + paho-mqtt)
+launcher/      desktop launcher + autostart
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+See [docs/ARCHITECTURE.md](ARCHITECTURE.md) and [docs/BUILD.md](BUILD.md).
 
 ---
 
-## Status / Notes
+## Requirements
 
-- The core (database, device manager, QoS/VLAN/TimeSync/TAS/sensor logic, MVC,
-  plugins, CLI, tests) is implemented.
-- The **web GUI (`webgui.py`, Python stdlib only)** shows the whole configurator:
-  Dashboard, Devices, QoS (802.1Q), VLAN, TAS (802.1Qbv GCL), Preemption
-  (802.1Qbu), TimeSync (gPTP), Sensors, FXMQTT and a live Monitor — it talks
-  to the MQTT broker with a bundled stdlib MQTT 3.1.1 client and persists to
-  the same sqlite schema.
-- The project has been built with GCC on Linux and the full test suite (`wtsn-tests`)
-  passes; the CLI, node simulator and node agent all run headless.
-- GitHub Actions CI builds, tests and packages on every push.
+| What         | Version    | Purpose                         |
+|--------------|-----------|---------------------------------|
+| SQLite3      | >= 3.30   | SQLite database                 |
+| libmosquitto | >= 2.0 dev| MQTT/FX client                |
+| CMake        | >= 3.16   | Build system                   |
+| GCC/Clang    | C11        | Compiler                      |
+| Python       | >= 3.7    | Web GUI (`webgui.py`)         |
+| paho-mqtt    | any       | MQTT client for the web GUI   |
+
+Install on Debian/Ubuntu:
+
+```bash
+sudo apt install build-essential cmake libsqlite3-dev libmosquitto-dev python3 python3-pip
+python3 -m pip install paho-mqtt
+```
+
+If you have no root, install dependencies locally (`$HOME/local`) and point CMake /
+pkg-config at them — see [docs/BUILD.md](docs/BUILD.md).
+
+---
+
+## FAQ / notes
+
+- **Simulated sensors** are fixed values bound to the nodes in Devices, so the Sensors
+  page is stable instead of continuously drifting.
+- **Monitor Pause** keeps buffering new frames so pressing Start resumes where you left off.
+- CI (GitHub Actions) builds, tests and packages on every push.
 
 ---
 
