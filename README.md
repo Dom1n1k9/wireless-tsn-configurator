@@ -337,7 +337,7 @@ src/
   simulator/  generic node simulator
   plugin/     loadable protocol plugins (.so)
 esp32-agent/   ESP-IDF ESP32 firmware agent component and provisioning
-microbit-sensor/  micro:bit V2 display (MakeCode + UART / MicroPython)
+microbit-sensor/  micro:bit V2 display panel (BLE via MakeCode `main.ts`)
 profiles/      device profile templates (.ini)
 docs/          ARCHITECTURE, BUILD, SIMULATOR
 webgui.py      Python web GUI (single file, stdlib + paho-mqtt)

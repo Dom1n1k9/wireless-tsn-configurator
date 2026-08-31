@@ -1181,6 +1181,8 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 .gcllegend{color:var(--dim);font-size:11px;margin-top:8px;word-break:break-all}
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
 .badge.ok{color:#04190b;background:var(--ok)}.badge.warn{color:#241c00;background:var(--warn)}.badge.err{color:#fff;background:var(--err)}.badge.dim{color:var(--text);background:var(--border)}
+code{background:var(--surf2);padding:1px 5px;border-radius:4px;font-family:ui-monospace,monospace;font-size:12px;color:var(--sec)}
+ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 </style></head><body>
 <header><span class="logo">WTSN Configurator</span><span class="sub">Wireless TSN control plane</span>
 <button class="execbtn" onclick="execAll()">Execute settings on controller</button>
@@ -1190,7 +1192,7 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -1216,6 +1218,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
  else if(p==="sensors")m.innerHTML=sensors();
+ else if(p==="help")m.innerHTML=help();
  else if(p==="settings")m.innerHTML=settings();}
 function execAll(){api("exec_all",{}).then(load)}
 function devices(){
@@ -1371,20 +1374,50 @@ function streams(){
     "<button class='danger' onclick='api(\"delete_stream\",{stream_id:\""+esc(s.stream_id)+"\"}).then(load)'>Del</button></td></tr>"
   }).join("");
   const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
-  const lopt=D.devices.map(d=>"<label class=ck><input type=checkbox value='"+esc(d.id)+"'> "+esc(d.id)+"</label>").join("");
+  const vopts=D.vlan_groups.map(g=>"<option value='"+g.vlan_id+"'>"+esc(g.name)+" (VLAN "+g.vlan_id+")</option>").join("");
   return "<h2>IEEE 802.1Qcc — TSN Streams</h2>"+
    "<div class='card'><h3>Talker / Listener stream reservation</h3>"+
    "<div class='row'><label>name</label><input id=s_name></div>"+
    "<div class='row'><label>talker</label><select id=s_talker><option value=''>-</option>"+opts+"</select></div>"+
-   "<div class='row'><label>listeners</label><div id=s_lsn>"+lopt+"</div></div>"+
-   "<button onclick=saveStream()>Save Stream</button>"+
-   "<button class='ghost' onclick='api(\"deploy_all_streams\",{}).then(load)'>Deploy All</button></div>"+
+   "<div class='row'><label>listeners</label><select id=s_lsn multiple size=5>"+opts+"</select><span class='muted'>Ctrl+click to select multiple</span></div>"+
+   "<div class='row'><label>vlan</label><select id=s_vlan><option value='0'>- none -</option>"+vopts+"</select></div>"+
+   "<div class='row'><button onclick=saveStream()>Save Stream</button>"+
+   "<button class='ghost' onclick='api(\"deploy_all_streams\",{}).then(load)'>Deploy All</button></div></div>"+
    "<h3>Streams</h3><table><tr><th>id</th><th>name</th><th>talker</th><th>listeners</th><th>vlan</th><th>status</th><th></th></tr>"+rows+"</table>"}
-function saveStream(){const lsn=[].slice.call(document.querySelectorAll("#s_lsn input:checked")).map(c=>c.value);
+function saveStream(){const lsn=[].slice.call(document.querySelectorAll("#s_lsn option:checked")).map(o=>o.value);
  api("save_stream",{name:$("s_name").value,talker:$("s_talker").value,listeners:lsn,
   vlan_id:parseInt($("s_vlan")?$("s_vlan").value:0)||0,max_latency_ns:parseInt($("s_lat")?$("s_lat").value:1000000)||1000000,
   max_interval_ns:parseInt($("s_itv")?$("s_itv").value:100000)||100000,
   priority:parseInt($("s_prio")?$("s_prio").value:5)||5,data_frame_prio:parseInt($("s_prio")?$("s_prio").value:5)||5}).then(load)}
+function step(i,t){return "<div class='card'><h3>Step "+i+". "+t+"</h3>"}
+function help(){
+ return "<h2>Help — How to configure this W-TSN network</h2>"+
+  "<div class='card'><h3>Quick summary</h3><p>Click through in this order: <b>Devices → QoS → VLAN → TAS → (Preemption / TimeSync / Streams) → then the blue <i>Execute settings on controller</i> button in the header.</b></p>"+
+  "<p>First, set your MQTT broker on the <b>FXMQTT Config</b> page (see step 3). It builds a JSON snapshot per device and publishes it on <code>tsn/cmd/&lt;id&gt;/apply</code> so every agent applies QoS / VLAN / TAS / TimeSync / streams. Watch the ACKs on the <b>Monitor</b> page.</p></div>"+
+ step(1,"Start in Simulation mode")+"<p>The GUI starts in <b>Simulation</b> (top-right corner). This lets you try everything without hardware — nodes and sensors are simulated. Use it to learn the workflow. For real devices switch to <b>Real</b>.</p></div>"+
+ step(2,"Set the MQTT broker / FXMQTT (one-time)")+"<p><b>OPC UA FX over MQTT → FXMQTT Config</b> (or Settings):</p>"+
+ "<ul><li><b>Server</b> — is the Field Server the PC (configurator) or a node? Keep <b>PC (configurator)</b>.</li>"+
+ "<li><b>Node</b> — only if a device acts as the server.</li>"+
+ "<li><b>Broker</b> — host:port of your MQTT broker (e.g. <code>192.168.0.149:1883</code> or <code>wtsn-broker.local:1883</code>).</li></ul>"+
+ "<p>Save / Deploy. FXMQTT is OPC UA FX / C2C Field Exchange carried over MQTT — this is the channel the configurator uses to talk to devices.</p></div>"+
+ step(3,"Add your device")+"<p>Go to <b>Devices</b> and click the add form: enter an <b>id</b> (e.g. <code>esp32-01</code>) and a name. In Real mode the node itself provisions and announces over MQTT, so it usually appears automatically.</p>"+
+ "<p>The <b>status badge</b> shows online / offline / error.</p>"+
+ "<ul><li><b>Online</b> (green) — ready to configure.</li><li><b>Offline</b> (yellow) — device is not reporting; check WiFi / broker.</li><li><b>Error</b> (red) — something failed.</li></ul>"+
+ "Use <b>Ping</b> to verify reachability.</div>"+
+ step(4,"Set QoS priority")+"<p><b>IEEE 802.1Q → QoS Priority</b>: pick the device and the traffic priority (0–7). Higher priority = time-critical traffic like voice/control data. Set a latency budget in ms.</p>"+
+ "<p>Save — then the priority appears in the table.</p></div>"+
+ step(5,"Assign a VLAN")+"<p><b>IEEE 802.1Q → WVLAN ID</b>: create a group (name + VLAN ID 1–4094). Then, on that group card, select the member devices with Ctrl+click and press <b>Apply members</b>.</p>"+
+ "<p>This tells which devices carry that VLAN tag.</p></div>"+
+ step(6,"Schedule TAS / GCL")+"<p><b>IEEE 802.1Qbv → TAS / GCL</b>: enter a name, a cycle time in ns, the deploy target and a gate list such as <code>1:300000,3:200000,0:500000</code>.</p>"+
+ "<p>The gate value is a bitmask of open queues (e.g. 1 = queue 0 only, 3 = queues 0+1, 0 = all closed). The next digit is the duration in ns. The visualization shows each gate window as a colored bar.</p>"+
+ "<p>Save / Deploy.</p></div>"+
+ step(7,"Optional: Preemption")+"<p><b>IEEE 802.1Qbu → Preemption</b>: to protect time-critical frames, turn preemption <b>on</b> for a device and define the express (eMAC) vs preemptable (pMAC) priority sets (e.g. eMAC <code>7,6,5</code>, pMAC <code>3,2,1,0</code>).</p></div>"+
+ step(8,"Optional: Time sync")+"<p><b>IEEE 802.1AS → Synchronization</b>: choose the grandmaster and the slave nodes that follow it, then <b>Save 802.1AS Sync</b>.</p></div>"+
+ step(9,"(Optional) TSN Streams")+"<p><b>IEEE 802.1Qcc → TSN Streams</b>: reserve a stream from a talker to listeners on a VLAN. Pick the talker, listeners (Ctrl+click), VLAN and Save.</p>"+
+ "<p>Deploy it (or Deploy All) to push the reservation out.</p></div>"+
+ step(10,"Apply everything — Execute settings on controller")+"<p>Once your devices and policies are set, click the blue <b>Execute settings on controller</b> button in the header.</p>"+
+ "<p>This builds one JSON snapshot per device and publishes it on <code>tsn/cmd/&lt;id&gt;/apply</code> so every agent applies QoS / VLAN / TAS / TimeSync / streams. Watch the ACKs on the <b>Monitor</b> page.</p>"+
+  "<ul><li>If MQTT broker is unreachable you will get an error toast.</li><li>Simulation just records the flow.</li></ul></div>"}
 function settings(){
  const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
  return "<h2>Settings</h2><div class='card'><div class='row'><label>mode</label><span>"+D.mode+"</span></div>"+
