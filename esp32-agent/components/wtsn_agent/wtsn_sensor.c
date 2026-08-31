@@ -303,8 +303,6 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
     wtsn_sensor_actor_set_pin();
     actor_apply(0);
 
-    /* micro:bit link is handled over BLE (NUS) in wtsn_ble.c, not UART. */
-
     ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501, actor",
              g_dev_id);
 }

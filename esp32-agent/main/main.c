@@ -19,7 +19,7 @@
 #include "wtsn_json.h"
 #include "wtsn_prov.h"
 #include "wtsn_sensor.h"
-#include "wtsn_ble.h"
+#include "wtsn_uart.h"
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
@@ -356,7 +356,8 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             wtsn_ptp_setup(g_device_id, g_mqtt);
             wtsn_ptp_start();
             wtsn_sensor_init(g_device_id, g_mqtt);
-            wtsn_ble_start();
+            wtsn_uart_init(g_mqtt, g_device_id);
+            wtsn_uart_start();
             ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
         }
     }

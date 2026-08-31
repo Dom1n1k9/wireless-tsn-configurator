@@ -1,40 +1,36 @@
-// WTSN micro:bit V2 BLE display panel (MakeCode / TypeScript)
-// micro:bit = BLE peripheral. ESP32 BLE-central sends:  "T:22.1 H:55 L:120 P:0\n"
-// Button A/B switch sensor; motion P=1 -> speaker beeps.
+// WTSN micro:bit V2 display panel - wired UART (NOT BLE)
+// micro:bit = display + button input; sends sensor lines over serial pins to the ESP32
+// agent, which republishes them on MQTT. Buttons switch the displayed value; motion
+// (on P2) beeps. No bluetooth at all.
+//
+// Wiring:  micro:bit P0 (TX) --> ESP GPIO14 (UART RX), GND-->GND
+//          optional P2 (PIR/hold) --> beep on motion
 
-bluetooth.startUartService()
+// Route serial to the physical pins (P0 TX / P1 RX) instead of USB.
+serial.redirect(SerialPin.P0, SerialPin.P1, BaudRate.BaudRate115200)
 
-let temp = NaN
-let hum = NaN
-let lux = NaN
-let motion = 0
 let idx = 0
+let counter = 0
 
-// Read incoming UART lines in a background loop (avoids the event-arg quirk).
+function sendLine() {
+    // "T:xx H:xx L:xx P:x" style line that the ESP parses.
+    // Here simulated; connect your real sensor to P2 to feed P.
+    let motion = pins.digitalReadPin(DigitalPin.P2)
+    serial.writeLine("C:" + counter + " I:" + idx + " P:" + motion)
+    counter = counter + 1
+}
+
+// send periodically
 basic.forever(function () {
-    const line = bluetooth.uartReadUntil("\n")
-    if (line) {
-        const parts: string[] = ("" + line).split(" ")
-        for (const p of parts) {
-            const kv = p.split(":")
-            if (kv.length === 2) {
-                const k = kv[0]
-                if (k === "T") temp = parseFloat(kv[1])
-                else if (k === "H") hum = parseFloat(kv[1])
-                else if (k === "L") lux = parseFloat(kv[1])
-                else if (k === "P") motion = parseInt(kv[1])
-            }
-        }
-        if (motion === 1) { music.playTone(880, 150); motion = 0 }
-        render()
-    }
+    sendLine()
+    basic.pause(700)
+    render()
 })
 
 function render() {
-    if (idx === 2 && !isNaN(lux)) basic.showString("L" + Math.floor(lux))
-    else if (idx === 1 && !isNaN(hum)) basic.showString("H" + Math.floor(hum))
-    else if (idx === 0 && !isNaN(temp)) basic.showString("T" + Math.round(temp))
-    else basic.showString(".")
+    if (idx === 0) basic.showString("" + counter)
+    else if (idx === 1) basic.showString("I" + idx)
+    else basic.showIcon(IconNames.Heart)
 }
 
 input.onButtonPressed(Button.A, function () { idx = (idx + 1) % 3; render() })

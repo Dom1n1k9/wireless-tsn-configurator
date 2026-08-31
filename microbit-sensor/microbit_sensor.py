@@ -1,78 +1,43 @@
 """
-WTSN micro:bit sensor endpooint (MicroPython)
-===========================================
+WTSN micro:bit display panel (MicroPython) - wired UART link
+==========================================================
+Connects to the ESP32 agent over a serial wire and prints sensor-style lines that the
+ESP republishes onto the WTSN MQTT bus (tsn/sensors), so the webgui can show them.
 
-Publishes readings from sensors attached to the micro:bit onto the same MQTT
-sub-system the WTSN webgui (webgui.py) listens to.
+Wiring:  micro:bit PIN0 --> ESP GPIO14 (UART RX)   (3.3V logic)
+         micro:bit GND --> ESP GND
 
-The → tsn/sensors topic uses the exact JSON shape the webgui parses:
-    {"id": "<device_id>", "sensors": [ {"sensor_id":..., "type":..., "value":..., "unit":...} ]}
+The display uses the capability sensor button A/B to switch what is shown.
 
-Sensor types (webgui): 0=temperature, 1=pressure, 2=IMU/accelerometer,
-3=distance, 4=GPIO/voltage/logical.
-
-Edit BROKER / device id below to match your network.
+Run this with MicroPython (mu / python.microbit.org / v2).
 """
 
-import network
-import time
-import json
-import math
+from microbit import *
 
-# ---- config ----
-SSID = "your-wifi-ssid"
-PASS = "your-wifi-password"
-BROKER = "192.168.0.149"      # PC running the WTSN configurator / webgui
-PORT = 1883
-DEVICE_ID = "microbit-01"
+def send(line: str):
+    """Emit a line on the serial output; the ESP picks it up on its RX pin."""
+    print(line)
 
-# micro:bit pin mapping for the MAKER:bit / breakout edge connector
-P0 = pin0   # noqa: F821 - MicroPython built-ins
-P1 = pin1   # noqa: F821
-P2 = pin2   # noqa: F821
-
-import umqtt.simple as mqtt   # noqa: E402  (bundled with MicroPython)
-
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-
-if not wlan.isconnected():
-    wlan.connect(SSID, PASS)
-    for _ in range(30):
-        if wlan.isconnected():
-            break
-        time.sleep(1)
-print("IP:", wlan.ifconfig()[0])
-if not wlan.isconnected():
-    raise SystemExit("Could not connect to WiFi")
-
-
-def read_temperature():
-    """internal MCU temperature via the on-chip temperature sensor (rough)."""
-    # P0 analog read doubles as a crude temp on some boards; use TMP36 on P0 instead:
-    #   v = P0.read_analog()/1023*3.3 ; return (v-0.5)*100
-    return None
-
-
-c = mqtt.MQTTClient(DEVICE_ID, BROKER, PORT)
-c.connect()
-
-print("publishing sensor telemetry on tsn/sensors ...")
+# ---- buttons switch which value is displayed ----
+idx = 0
+val = "."
+last = 0.0
 
 while True:
-    ambient = P1.read_analog()        # 0..1023  -> 0..3.3V
-    voltage = ambient / 1023 * 3.3    # V
-    lookup = P2.read_digital()          # PIR / button / light digital pin
+    # simulate/echo a value; on a real setup you would read a sensor here.
+    # We just send a sample that the ESP forwards as telemetry.
+    send("mb:" + str(idx) + ":" + str(last))
+    last += 0.1
 
-    payload = {
-        "id": DEVICE_ID,
-        "sensors": [
-            {"sensor_id": "microbit_mcu_v", "type": 4, "value": round(voltage, 2), "unit": "V", "healthy": 1},
-            {"sensor_id": "microbit_light", "type": 4, "value": ambient, "unit": "LSB", "healthy": 1},
-            {"sensor_id": "microbit_logical", "type": 4, "value": lookup, "unit": "", "healthy": 1},
-        ],
-    }
-    c.publish("tsn/sensors", json.dumps(payload))
-    display.show("W")                # noqa: F821 - activity LED   # noqa: F821
-    time.sleep(3)
-    display.clear()                  # noqa: F821
+    if button_a.was_pressed():
+        idx = (idx + 1) % 3
+    if button_b.was_pressed():
+        idx = (idx + 2) % 3
+
+    if idx == 0:
+        display.show("T")
+    elif idx == 1:
+        display.show("H")
+    else:
+        display.show("L")
+    sleep(700)

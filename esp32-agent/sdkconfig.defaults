@@ -14,15 +14,9 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # FreeRTOS
 CONFIG_FREERTOS_HZ=1000
 
-# Flash size (BLE firmware is larger)
+# Flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
-# Custom partition table with a 2M factory app (BLE binary ~1.2M > 1M default)
+# Custom partition table (micro:bit display via wired UART)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="./partitions.csv"
-
-# Bluetooth LE (NimBLE host) for the micro:bit BLE display panel
-CONFIG_BT_ENABLED=y
-CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
-CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
