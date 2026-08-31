@@ -113,6 +113,112 @@ void wtsn_cfg_set_wifi(const char *ssid, const char *pass) {
     if (pass) wtsn_nvs_set_str(KEY_WIFI_PASS, pass);
 }
 
+/* ---- Multihome WiFi: multiple saved networks, one per location ----
+ * Networks are stored as a blob of {char ssid[33]; char pass[65];} entries in NVS.
+ * The legacy single-network keys remain the canonical "active" network. */
+
+#define KEY_NET_LIST "net_list"
+
+typedef struct {
+    char ssid[33];
+    char pass[65];
+} net_entry_t;
+
+_Static_assert(sizeof(net_entry_t) == 98, "net_entry_t layout");
+
+static int net_count_from_blob(const uint8_t *blob, size_t len) {
+    int n = (int)(len / sizeof(net_entry_t));
+    if (n > WTSN_NET_MAX) n = WTSN_NET_MAX;
+    return n;
+}
+
+int wtsn_cfg_net_count(void) {
+    nvs_handle_t h;
+    if (nvs_open(WTSN_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return 0;
+    size_t len = 0;
+    esp_err_t err = nvs_get_blob(h, KEY_NET_LIST, NULL, &len);
+    nvs_close(h);
+    if (err != ESP_OK || len == 0) return 0;
+    return net_count_from_blob(NULL, len);
+}
+
+static void net_load_blob(uint8_t *out, size_t cap) {
+    nvs_handle_t h;
+    if (nvs_open(WTSN_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = cap;
+    if (nvs_get_blob(h, KEY_NET_LIST, out, &len) != ESP_OK) len = 0;
+    nvs_close(h);
+    for (size_t i = len; i < cap; i++) out[i] = 0;
+}
+
+static void net_save_blob(const uint8_t *blob, int n) {
+    nvs_handle_t h;
+    if (nvs_open(WTSN_NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
+    if (n <= 0) nvs_erase_key(h, KEY_NET_LIST);
+    else nvs_set_blob(h, KEY_NET_LIST, blob, (size_t)n * sizeof(net_entry_t));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+bool wtsn_cfg_net_get(int idx, char *ssid, size_t ssid_sz, char *pass, size_t pass_sz) {
+    int cnt = wtsn_cfg_net_count();
+    if (idx < 0 || idx >= cnt) return false;
+    uint8_t blob[WTSN_NET_MAX * sizeof(net_entry_t)] = {0};
+    net_load_blob(blob, sizeof(blob));
+    net_entry_t *e = &((net_entry_t *)blob)[idx];
+    if (ssid && ssid_sz) wtsn_strlcpy(ssid, e->ssid, ssid_sz);
+    if (pass && pass_sz) wtsn_strlcpy(pass, e->pass, pass_sz);
+    return e->ssid[0] != '\0';
+}
+
+bool wtsn_cfg_net_add(const char *ssid, const char *pass) {
+    if (!ssid || !ssid[0]) return false;
+    if (pass) wtsn_nvs_set_str(KEY_WIFI_PASS, pass);
+    wtsn_nvs_set_str(KEY_WIFI_SSID, ssid);   /* keep legacy "active" key in sync */
+    uint8_t blob[WTSN_NET_MAX * sizeof(net_entry_t)] = {0};
+    int cnt = wtsn_cfg_net_count();
+    net_load_blob(blob, sizeof(blob));
+    net_entry_t *list = (net_entry_t *)blob;
+    bool added = false;
+    for (int i = 0; i < cnt && i < WTSN_NET_MAX; i++) {
+        if (strcmp(list[i].ssid, ssid) == 0) {
+            wtsn_strlcpy(list[i].pass, pass ? pass : "", sizeof(list[i].pass));
+            net_save_blob(blob, cnt);
+            return false;   /* already present -> replaced password only */
+        }
+    }
+    if (cnt >= WTSN_NET_MAX) {
+        /* full: drop the oldest so new locations still fit */
+        memmove(blob, blob + sizeof(net_entry_t),
+                (size_t)(WTSN_NET_MAX - 1) * sizeof(net_entry_t));
+        cnt = WTSN_NET_MAX - 1;
+    }
+    wtsn_strlcpy(list[cnt].ssid, ssid, sizeof(list[cnt].ssid));
+    wtsn_strlcpy(list[cnt].pass, pass ? pass : "", sizeof(list[cnt].pass));
+    net_save_blob(blob, cnt + 1);
+    return true;
+}
+
+void wtsn_cfg_net_remove(const char *ssid) {
+    if (!ssid || !ssid[0]) return;
+    int cnt = wtsn_cfg_net_count();
+    if (cnt <= 0) return;
+    uint8_t blob[WTSN_NET_MAX * sizeof(net_entry_t)] = {0};
+    net_load_blob(blob, sizeof(blob));
+    net_entry_t *list = (net_entry_t *)blob;
+    int out = 0;
+    for (int i = 0; i < cnt; i++) {
+        if (strcmp(list[i].ssid, ssid) == 0) continue;
+        if (out != i) list[out] = list[i];
+        out++;
+    }
+    net_save_blob(blob, out);
+}
+
+void wtsn_cfg_net_clear(void) {
+    net_save_blob(NULL, 0);
+}
+
 #define KEY_TSN_PRIO      "tsn_prio"
 #define KEY_TSN_TC        "tsn_tc"
 #define KEY_TSN_VLAN      "tsn_vlan"

@@ -112,6 +112,7 @@ static esp_err_t handle_config(httpd_req_t *req) {
     }
     if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "wtsn-broker.local");
     wtsn_cfg_save(devid[0] ? devid : NULL, ssid, pass, mqtt, 1883);
+    wtsn_cfg_net_add(ssid, pass);
 
     char ok[160];
     snprintf(ok, sizeof(ok),

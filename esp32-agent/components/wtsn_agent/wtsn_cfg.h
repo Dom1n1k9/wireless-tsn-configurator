@@ -17,6 +17,17 @@ void wtsn_cfg_set_wifi(const char *ssid, const char *pass);
 void wtsn_cfg_set_device_id(const char *device_id);
 bool wtsn_cfg_load_device_id(char *out, size_t *sz);
 
+/* Multihome WiFi: remember several networks (one per location) and automatically
+ * connect to whichever one is reachable, so the device roams between sites without
+ * re-provisioning. */
+#define WTSN_NET_MAX 10
+int  wtsn_cfg_net_count(void);
+bool wtsn_cfg_net_get(int idx, char *ssid, size_t ssid_sz, char *pass, size_t pass_sz);
+/* Add (or replace, by SSID) a network. Returns true if it was not already present. */
+bool wtsn_cfg_net_add(const char *ssid, const char *pass);
+void wtsn_cfg_net_remove(const char *ssid);
+void wtsn_cfg_net_clear(void);
+
 /* Persist the applied TSN configuration so it survives a restart. */
 bool wtsn_cfg_save_tsn_state(const int priority, const int traffic_class,
                              const int vlan_id, const int preemption,

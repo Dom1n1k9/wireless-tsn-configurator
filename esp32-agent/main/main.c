@@ -223,10 +223,28 @@ typedef struct {
 } wifi_ctx_t;
 
 static void set_led(int on);
+static bool try_net(int idx);
 
 static wifi_ctx_t g_ctx;
 
-/* After this long without joining the saved WiFi, bring up the provisioning AP. */
+/* Current network being tried (index into the multihome list from NVS). */
+static int g_cur_net = 0;
+static int g_net_count = 0;
+/* Network list preloaded into RAM before wifi starts (the wifi event handler runs on a
+ * small stack and must not touch NVS/flash). Index 0 is the highest priority. */
+static char g_nets[WTSN_NET_MAX][64];
+static char g_pass[WTSN_NET_MAX][64];
+
+/* WTSN_NET_MAX comes from wtsn_cfg.h included above. */
+static void load_nets(void) {
+    g_net_count = wtsn_cfg_net_count();
+    if (g_net_count > WTSN_NET_MAX) g_net_count = WTSN_NET_MAX;
+    for (int i = 0; i < WTSN_NET_MAX; i++) { g_nets[i][0] = 0; g_pass[i][0] = 0; }
+    for (int i = 0; i < g_net_count; i++)
+        wtsn_cfg_net_get(i, g_nets[i], sizeof(g_nets[i]), g_pass[i], sizeof(g_pass[i]));
+}
+
+/* After this long without joining a saved WiFi, bring up the provisioning AP. */
 #ifndef FALLBACK_PROV_MS
 #define FALLBACK_PROV_MS 15000
 #endif
@@ -289,20 +307,36 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
     (void)arg;
     wifi_ctx_t *ctx = (wifi_ctx_t *)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        ESP_ERROR_CHECK(esp_wifi_connect());
-        ESP_LOGI(TAG, "wifi connecting to %s", ctx->ssid);
+        /* STA is ready -> begin trying the saved networks (config already set by try_net) */
+        if (g_net_count > 0) try_net(g_cur_net);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        /* will retry automatically via reconnect if enabled; reconnect manually */
         wifi_event_sta_disconnected_t *e2 = (wifi_event_sta_disconnected_t *)data;
         ESP_LOGW(TAG, "STA disconnected reason=%d", e2 ? e2->reason : -1);
         g_led_steady = 0;
-        esp_wifi_connect();
-        /* If we keep dropping without ever getting an IP, stop hammering the dead
-         * network and bring back WTSN-Setup so the user can re-point us. */
+        /* Drop this network and try the next saved one; if none remain, fall back
+         * to retrying the first (in case the user just walked into range of it) or
+         * to the provisioning AP after too many failures. */
+        if (g_net_count > 1) {
+            g_cur_net = (g_cur_net + 1) % g_net_count;
+            if (g_cur_net == 0) {
+                /* cycled back to start -> give up and go to provisioning */
+                if (!g_wifi_ready && !g_prov_fallback_started) {
+                    if (++g_disconnect_streak >= PROV_FALLBACK_DISCONNECTS) {
+                        xTaskCreatePinnedToCore(&prov_fallback_now, "wtsn_reprov", 4096,
+                                               NULL, 5, NULL, 1);
+                        return;
+                    }
+                }
+            }
+            if (try_net(g_cur_net)) return;
+        }
+        /* single network, or all-networks retry path */
         if (++g_disconnect_streak >= PROV_FALLBACK_DISCONNECTS &&
             !g_wifi_ready && !g_prov_fallback_started) {
             xTaskCreatePinnedToCore(&prov_fallback_now, "wtsn_reprov", 4096,
                                    NULL, 5, NULL, 1);
+        } else {
+            esp_wifi_connect();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         g_wifi_ready = 1;
@@ -380,21 +414,13 @@ static void identify_start(void) {
     xTaskCreatePinnedToCore(&identify_task, "wtsn_ident", 2048, NULL, 5, NULL, 1);
 }
 
-static void wifi_init(const char *ssid, const char *pass) {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
+/* Try the next saved network. Returns false when every saved network has been tried. */
+static bool try_net(int idx) {
+    if (idx < 0 || idx >= g_net_count || !g_nets[idx][0]) return false;
+    char *ssid = g_nets[idx];
+    char *pass = g_pass[idx];
     snprintf(g_ctx.ssid, sizeof(g_ctx.ssid), "%s", ssid);
     snprintf(g_ctx.password, sizeof(g_ctx.password), "%s", pass);
-
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, &g_ctx, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, &g_ctx, NULL));
-
     wifi_config_t wc = {
         .sta = {
             .ssid = "",
@@ -402,11 +428,31 @@ static void wifi_init(const char *ssid, const char *pass) {
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
-    snprintf((char *)wc.sta.ssid, sizeof(wc.sta.ssid), "%s", ssid);
-    snprintf((char *)wc.sta.password, sizeof(wc.sta.password), "%s", pass);
+    strncpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid) - 1);
+    strncpy((char *)wc.sta.password, pass, sizeof(wc.sta.password) - 1);
     wc.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
+    ESP_ERROR_CHECK(esp_wifi_connect());
+    ESP_LOGI(TAG, "trying network %d/%d: '%s'", idx + 1, g_net_count, ssid);
+    return true;
+}
+
+static void wifi_init(const char *ssid, const char *pass) {
+    (void)ssid; (void)pass;   /* networks come from NVS multihome list */
+    load_nets();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, &g_ctx, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, &g_ctx, NULL));
+
+    g_cur_net = 0;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
@@ -428,6 +474,10 @@ void app_main(void) {
         wtsn_prov_start();
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
+
+    /* Migrate the legacy single-network entry into the multihome list so previously
+     * provisioned devices keep working and can add more networks later. */
+    if (wtsn_cfg_net_count() == 0) wtsn_cfg_net_add(wifi_ssid, wifi_pass);
 
     snprintf(g_ctx.host, sizeof(g_ctx.host), "%s", mqtt_host);
     g_ctx.port = mqtt_port;
