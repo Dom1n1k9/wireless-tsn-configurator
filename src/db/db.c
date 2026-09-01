@@ -7,7 +7,11 @@
 static const char *SCHEMA =
     "CREATE TABLE IF NOT EXISTS devices ("
     "  id TEXT PRIMARY KEY, name TEXT, ip TEXT, mac TEXT, kind TEXT,"
-    "  firmware TEXT, status INTEGER, last_seen INTEGER"
+    "  firmware TEXT, status INTEGER, last_seen INTEGER,"
+    "  domain TEXT DEFAULT 'default', heartbeat_at INTEGER DEFAULT 0"
+    ");"
+    "CREATE TABLE IF NOT EXISTS domains ("
+    "  id TEXT PRIMARY KEY, name TEXT, description TEXT"
     ");"
     "CREATE TABLE IF NOT EXISTS device_tsn_features ("
     "  device_id TEXT, feature TEXT,"
@@ -53,6 +57,19 @@ static const char *SCHEMA =
     "CREATE TABLE IF NOT EXISTS tsn_stream_members ("
     "  stream_id TEXT, role TEXT, device_id TEXT,"
     "  FOREIGN KEY(stream_id) REFERENCES tsn_streams(stream_id)"
+    ");"
+    "CREATE TABLE IF NOT EXISTS trace_log ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  ts INTEGER, type INTEGER, source TEXT, line TEXT"
+    ");"
+    "CREATE TABLE IF NOT EXISTS timesync_reports ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  device_id TEXT, ts INTEGER, offset_ns INTEGER, jitter_ns INTEGER,"
+    "  packet_count INTEGER, packet_loss INTEGER, status TEXT"
+    ");"
+    "CREATE TABLE IF NOT EXISTS config_versions ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  name TEXT, device_id TEXT, created_at INTEGER, payload TEXT"
     ");";
 
 static wtsn_error run_migration(wtsn_db *db, const char *sql) {
@@ -89,6 +106,8 @@ wtsn_error wtsn_db_migrate(wtsn_db *db) {
     }
     /* existing databases created before the preemption column */
     run_migration(db, "ALTER TABLE qos_configs ADD COLUMN preemption INTEGER DEFAULT 0;");
+    run_migration(db, "ALTER TABLE devices ADD COLUMN domain TEXT DEFAULT 'default';");
+    run_migration(db, "ALTER TABLE devices ADD COLUMN heartbeat_at INTEGER DEFAULT 0;");
     return WTSN_OK;
 }
 

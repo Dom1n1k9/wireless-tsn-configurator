@@ -41,10 +41,17 @@ set(WTSN_SOURCES
   src/db/db_vlan.c
   src/db/db_tas.c
   src/db/db_timesync.c
+  src/db/db_timesync_report.c
+  src/db/db_trace_log.c
+  src/db/db_domains.c
+  src/db/db_config_versions.c
   src/db/db_sensors.c
   src/db/db_tsn.c
   src/device/device.c
   src/device/device_manager.c
+  src/domain/domain_manager.c
+  src/config_version/config_version_manager.c
+  src/radio/wtsn_radio.c
   src/discovery/discovery.c
   src/qos/qos.c
   src/qos/qos_manager.c

@@ -316,11 +316,13 @@ PORT = int(os.environ.get("WTSN_PORT", "8000"))
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
           "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
           "sensors", "preemption_configs", "tsn_streams", "tsn_stream_members",
-          "settings"]
+          "settings", "domains", "config_versions"]
 
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
-    "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER);"
+    "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER,domain TEXT DEFAULT 'default',"
+    "heartbeat_at INTEGER DEFAULT 0);"
+    "CREATE TABLE IF NOT EXISTS domains(id TEXT PRIMARY KEY,name TEXT,description TEXT);"
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
     "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
     "INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,preemption INTEGER);"
@@ -333,7 +335,7 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS gcl_entries(schedule_id TEXT,\"index\" INTEGER,gate_state "
     "INTEGER,duration_ns INTEGER);"
     "CREATE TABLE IF NOT EXISTS timesync_status(id TEXT,mode INTEGER,grandmaster TEXT,"
-    "offset_ns INTEGER,quality INTEGER);"
+    "offset_ns INTEGER,quality INTEGER,jitter_ns INTEGER DEFAULT 0);"
     "CREATE TABLE IF NOT EXISTS sensors(device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,"
     "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER,"
     "PRIMARY KEY(device_id,sensor_id));"
@@ -341,11 +343,27 @@ SCHEMA = (
     "vlan_id INTEGER,max_latency_ns INTEGER,max_interval_ns INTEGER,priority INTEGER,"
     "data_frame_prio INTEGER,status INTEGER CHECK(status IN (0,1,2,3)),comment TEXT);"
     "CREATE TABLE IF NOT EXISTS tsn_stream_members(stream_id TEXT,role TEXT,device_id TEXT);"
+    "CREATE TABLE IF NOT EXISTS timesync_reports(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "device_id TEXT,ts INTEGER,offset_ns INTEGER,jitter_ns INTEGER,packet_count INTEGER,"
+    "packet_loss INTEGER,status TEXT);"
+    "CREATE TABLE IF NOT EXISTS trace_log(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "ts INTEGER,type INTEGER,source TEXT,line TEXT);"
+    "CREATE TABLE IF NOT EXISTS config_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "name TEXT,device_id TEXT,created_at INTEGER,payload TEXT);"
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);"
 )
 
 def ensure_schema(con):
     con.executescript(SCHEMA)
+    con.commit()
+    for tbl, col in (("devices", "domain"), ("devices", "heartbeat_at"),
+                     ("timesync_status", "jitter_ns")):
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(%s)" % tbl)]
+            if col not in cols:
+                con.execute("ALTER TABLE %s ADD COLUMN %s" % (tbl, col))
+        except Exception:
+            pass
     con.commit()
     try:
         # Older DBs created 'sensors' without a primary key, so INSERT OR REPLACE
@@ -490,10 +508,10 @@ def sim_tick():
             con.execute("DELETE FROM %s" % t)
         for k, kv in kept.items():
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                        "last_seen) VALUES(?,?,?,?,?,?,?,?)",
+                        "last_seen,domain) VALUES(?,?,?,?,?,?,?,?,?)",
                         (k, kv.get("name", ""), kv.get("ip", ""), kv.get("mac", ""),
                          kv.get("kind", 0), kv.get("firmware", ""), kv.get("status", 0),
-                         kv.get("last_seen", int(time.time()))))
+                         kv.get("last_seen", int(time.time())), kv.get("domain", "default")))
         with SIM_STABLE_LOCK:
             if SIM_STABLE_DEVICES is None:
                 SIM_STABLE_DEVICES = _gen_stable_devices()
@@ -501,8 +519,8 @@ def sim_tick():
         devs = [d["id"] for d in stable]
         for sd in stable:
             did = sd["id"]
-            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,last_seen)"
-                       " VALUES(?,?,?,?,?,?,0,strftime('%s','now'))",
+            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,last_seen,domain)"
+                       " VALUES(?,?,?,?,?,?,0,strftime('%s','now'),'default')",
                        (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
                         sd["firmware"]))
             for f in sd["tsn"]:
@@ -595,11 +613,32 @@ def run_action(act, body):
     con = connect()
     try:
         if act == "set_mode":
-            MODE["mode"] = "sim" if body.get("mode") == "sim" else "real"
             EVENTS.clear()
             add_event("config", "cnc",
                      "mode = SIMULATION" if MODE["mode"] == "sim" else "mode = REAL (waiting for real devices)")
             return {"ok": True, "msg": "mode = " + MODE["mode"]}
+        if act == "save_domain":
+            if not body.get("id"):
+                return {"ok": False, "msg": "domain id required"}
+            con.execute("INSERT OR REPLACE INTO domains(id,name,description) VALUES(?,?,?)",
+                        (body["id"], body.get("name", body["id"]), body.get("description", "")))
+            con.commit()
+            return {"ok": True, "msg": "domain saved"}
+        if act == "delete_domain":
+            did = body.get("id")
+            if did == "default":
+                return {"ok": False, "msg": "cannot delete default domain"}
+            con.execute("DELETE FROM domains WHERE id=?", (did,))
+            con.execute("UPDATE devices SET domain='default' WHERE domain=?", (did,))
+            con.commit()
+            return {"ok": True, "msg": "domain deleted"}
+        if act == "assign_domain":
+            did = body.get("device_id"); dom = body.get("domain")
+            if not did or not dom:
+                return {"ok": False, "msg": "device and domain required"}
+            con.execute("UPDATE devices SET domain=? WHERE id=?", (dom, did))
+            con.commit()
+            return {"ok": True, "msg": "device assigned"}
         if act == "set_server":
             server_type = body.get("type", "node")
             did = body.get("id", "")
@@ -631,10 +670,11 @@ def run_action(act, body):
             dev = body.get("device") or {}
             if dev.get("id"):
                 con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                            "last_seen) VALUES(?,?,?,?,?,?,?,strftime('%s','now'))",
+                            "last_seen,domain) VALUES(?,?,?,?,?,?,?,strftime('%s','now'),?)",
                             (dev["id"], dev.get("name", ""), dev.get("ip", ""),
                              dev.get("mac", ""), clamp(dev.get("kind", 0), 0, 3),
-                             dev.get("firmware", ""), clamp(dev.get("status", 0), 0, 2)))
+                             dev.get("firmware", ""), clamp(dev.get("status", 0), 0, 2),
+                             dev.get("domain", "default")))
                 con.execute("DELETE FROM device_tsn_features WHERE device_id=?", (dev["id"],))
                 for f in dev.get("tsn", []) or []:
                     con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",
@@ -1008,6 +1048,120 @@ def run_action(act, body):
         if act == "clear_events":
             EVENTS.clear()
             return {"ok": True, "msg": "monitor cleared"}
+        if act == "rollback_version":
+            vid = body.get("id")
+            if vid is None:
+                return {"ok": False, "msg": "select a version"}
+            row = con.execute("SELECT payload,device_id FROM config_versions WHERE id=?",
+                             (int(vid),)).fetchone()
+            if not row:
+                return {"ok": False, "msg": "version not found"}
+            payload, dev = row[0], row[1]
+            try:
+                data = json.loads(payload)
+            except Exception:
+                data = None
+            if isinstance(data, dict) and data.get("devices") is not None:
+                # stored as full JSON (webgui snapshots)
+                for t in ("devices", "device_tsn_features", "qos_configs", "preemption_configs",
+                          "vlan_groups", "vlan_members", "tas_schedules", "gcl_entries",
+                          "timesync_status", "tsn_streams", "tsn_stream_members", "settings"):
+                    rows = data.get(t)
+                    con.execute("DELETE FROM %s" % t)
+                    for r in rows or []:
+                        if not isinstance(r, dict):
+                            continue
+                        cols = [k for k in r if isinstance(r[k], (str, int, float))]
+                        if not cols:
+                            continue
+                        con.execute("INSERT INTO %s(%s) VALUES(%s)" % (t, ",".join(cols),
+                                   ",".join(["?"] * len(cols))), [r[k] for k in cols])
+                con.commit()
+                return {"ok": True, "msg": "rolled back to version " + str(vid)}
+            if dev:
+                con.execute("DELETE FROM qos_configs WHERE device_id=?", (dev,))
+                con.execute("DELETE FROM vlan_members WHERE device_id=?", (dev,))
+            # fall back to token replay for C-generated payloads
+            import re as _re2
+            for tok in re.findall(r"\S+", payload or ""):
+                if tok.startswith("qos:p="):
+                    mm = _re2.match(r"qos:p=(\d+):bw=(\d+):lat=(\d+):pre=(\d+)", tok)
+                    if mm:
+                        p, bw, lat, pre = map(int, mm.groups())
+                        con.execute("INSERT OR REPLACE INTO qos_configs(device_id,priority,traffic_class,"
+                                    "bandwidth_kbps,latency_ms,preemption) VALUES(?,?,?,?,?,?)",
+                                  (dev or "default", p, p, bw, lat, pre))
+                elif tok.startswith("qos:"):
+                    mm = _re2.match(r"qos:([^:]+):p=(\d+):bw=(\d+):lat=(\d+):pre=(\d+)", tok)
+                    if mm and len(mm.groups()) == 5:
+                        td, p, bw, lat, pre = mm.group(1), *map(int, mm.groups()[1:])
+                        con.execute("INSERT OR REPLACE INTO qos_configs(device_id,priority,traffic_class,"
+                                    "bandwidth_kbps,latency_ms,preemption) VALUES(?,?,?,?,?,?)",
+                                  (td, p, p, bw, lat, pre))
+                elif tok.startswith("vlan:"):
+                    mm = _re2.match(r"vlan:([^:]+):(\d+)", tok)
+                    if mm:
+                        con.execute("INSERT OR REPLACE INTO vlan_groups(id,name,vlan_id) "
+                                    "VALUES(?,?,?)", (mm.group(1), mm.group(1), int(mm.group(2))))
+            con.commit()
+            return {"ok": True, "msg": "rolled back to version " + str(vid)}
+        if act == "create_version":
+            name = body.get("name") or ("snapshot-%s" % time.strftime("%H%M%S"))
+            device_id = body.get("device_id", "")
+            payload = json.dumps({t: [dict(r) for r in con.execute("SELECT * FROM %s" % t)]
+                                for t in ("devices", "qos_configs", "preemption_configs",
+                                          "vlan_groups", "vlan_members", "tas_schedules",
+                                          "gcl_entries", "timesync_status", "tsn_streams",
+                                          "tsn_stream_members", "settings")}, sort_keys=True)
+            con.execute("INSERT INTO config_versions(name,device_id,created_at,payload) VALUES(?,?,?,?)",
+                      (name, device_id, int(time.time()), payload))
+            con.commit()
+            return {"ok": True, "msg": "config snapshot saved: " + name}
+        if act == "list_versions":
+            versions = [dict(r) for r in con.execute(
+                "SELECT id,name,device_id,created_at FROM config_versions ORDER BY id DESC LIMIT 20")]
+            return {"ok": True, "versions": versions}
+        if act == "diff_versions":
+            a = body.get("a"); b = body.get("b")
+            if a is None and b is None:
+                return {"ok": False, "msg": "select two versions"}
+            latest = con.execute("SELECT MAX(id) FROM config_versions").fetchone()[0]
+            if b is None:
+                b = latest
+            if a is None:
+                a = latest
+            pa = con.execute("SELECT payload FROM config_versions WHERE id=?", (int(a),)).fetchone()
+            pb = con.execute("SELECT payload FROM config_versions WHERE id=?", (int(b),)).fetchone()
+            if not pa or not pb:
+                return {"ok": False, "msg": "version not found"}
+            if pa[0] == pb[0]:
+                return {"ok": True, "diff": "no differences"}
+            # attempt a coarse field-level diff for JSON payloads
+            try:
+                da = json.loads(pa[0]); db_ = json.loads(pb[0])
+            except Exception:
+                da = db_ = None
+            if isinstance(da, dict) and isinstance(db_, dict):
+                lines = []
+                for t in ("devices", "qos_configs", "vlan_groups", "tsn_streams"):
+                    sa = json.dumps(da.get(t), sort_keys=True)
+                    sb = json.dumps(db_.get(t), sort_keys=True)
+                    if sa != sb:
+                        lines.append(t)
+                msg = "differs (v%d vs v%d): %s" % (int(a), int(b), ", ".join(lines))
+                return {"ok": True, "diff": msg}
+            return {"ok": True, "diff": "versions differ (v%d vs v%d)" % (int(a), int(b))}
+        if act == "sync_report":
+            r = body
+            if r.get("device_id"):
+                con.execute("INSERT INTO timesync_reports(device_id,ts,offset_ns,jitter_ns,"
+                            "packet_count,packet_loss,status) VALUES(?,?,?,?,?,?,?)",
+                            (r["device_id"], int(time.time()), int(r.get("offset_ns", 0)),
+                             int(r.get("jitter_ns", 0)), int(r.get("packet_count", 0)),
+                             int(r.get("packet_loss", 0)), r.get("status", "in_sync")))
+                con.commit()
+                return {"ok": True, "msg": "sync report recorded"}
+            return {"ok": False, "msg": "missing device_id"}
         if act == "restore_backup":
             data = body.get("data", body)
             if not data or not isinstance(data, dict):
@@ -1192,7 +1346,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -1210,6 +1364,8 @@ function tsnOpts(gm){return D.devices.map(d=>"<label><input type=checkbox value=
 function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.className=b.id==="nv_"+p?"on":"");
  const m=$("main");
  if(p==="devices")m.innerHTML=devices();
+ else if(p==="domains")m.innerHTML=domains();
+ else if(p==="versions")m.innerHTML=versions();
  else if(p==="qos")m.innerHTML=qos();
  else if(p==="vlan")m.innerHTML=vlan();
  else if(p==="tas")m.innerHTML=tas();
@@ -1238,6 +1394,20 @@ function tsnFor(id){
  if((D.tas_schedules||[]).some(t=>t.deploy_target===id))f.push("802.1Qbv TAS");
  return Array.from(new Set(f)).join(", ")}
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,firmware:"",kind:0,status:0,tsn:[]}}).then(load)}
+function domains(){const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
+ const dm=(D.domains||[]).map(g=>{const members=(D.devices||[]).filter(d=>d.domain===g.id).map(x=>x.id);
+  return "<div class='card'><h3>"+esc(g.name)+" <span class='muted'>("+esc(g.id)+")</span><span class='muted' style='float:right'>"+members.length+" devices</span></h3>"+
+   "<div class='row'><label>description</label><span>"+esc(g.description)+"</span></div>"+
+   "<div class='row'><label>members</label><table><tr><th>device</th><th>domain</th></tr>"+members.map(m=>"<tr><td>"+esc(m)+"</td><td>"+esc(g.id)+"</td></tr>").join("")+"</table></div>"+
+   (g.id!=="default"?"<button class='danger' onclick='api(\"delete_domain\",{id:\""+esc(g.id)+"\"}).then(load)'>Delete domain</button>":"")+"</div>"}).join("");
+ return "<h2>TSN Domains</h2><div class='muted' style='margin-bottom:10px'>Physical 802.11 cells each form their own collision/time domain. Group devices by domain so QoS/VLAN/TAS configuration is scoped correctly.</div><div class='card'><h3>Add domain</h3><div class='row'><label>id</label><input id=nv_id placeholder='e.g. shopfloor'></div><div class='row'><label>name</label><input id=nv_name placeholder='Shop Floor'></div><div class='row'><label>description</label><input id=nv_desc></div><button onclick='api(\"save_domain\",{id:$(\"nv_id\").value,name:$(\"nv_name\").value,description:$(\"nv_desc\").value}).then(load)'>Add domain</button></div><div class='card'><h3>Assign device to domain</h3><div class='row'><label>device</label><select id=vd_dev>"+opts+"</select></div><div class='row'><label>domain</label><select id=vd_dom>"+(D.domains||[]).map(x=>"<option value='"+esc(x.id)+"'>"+esc(x.name)+"</option>").join("")+"</select></div><button onclick='assignDom()'>Assign</button></div>"+dm}
+function assignDom(){api("assign_domain",{device_id:$("vd_dev").value,domain:$("vd_dom").value}).then(load)}
+function versions(){
+ return "<h2>Config Versions / Rollback</h2><div class='card'><div class='row'><span class='muted'>Snapshot the current configuration so you can diff and roll back after a deploy.</span></div><div class='row'><label>name</label><input id=cv_name placeholder='pre-deploy'></div><button onclick='api(\"create_version\",{name:$(\"cv_name\").value}).then(load)'>Save snapshot</button> <button class='ghost' onclick='rvLoad()'>List versions</button></div><div id=cv_list></div>"}
+function rvLoad(){const m=$("cv_list");m.innerHTML="<div class='muted'>loading...</div>";fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"list_versions"})}).then(r=>r.json()).then(j=>{if(!j.ok){m.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}const vl=(j.versions||[]).map(v=>"<div class='card'><div class='row'><span>"+esc(v.name)+"</span><span class='muted'>v"+v.id+" · "+new Date(v.created_at*1000).toLocaleString()+" · "+(v.device_id||"global")+"</span></div><div class='row'><button class='danger' onclick='rollback("+v.id+")'>Rollback</button> <button class='ghost' onclick='diffV("+v.id+")'>Diff vs latest</button></div></div>").join("");m.innerHTML=vl||"<div class='muted'>no versions yet</div>"}}
+function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
+function diffV(id){fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"diff_versions",a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
+
 function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th><th></th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;

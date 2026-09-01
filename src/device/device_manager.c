@@ -151,3 +151,58 @@ wtsn_error wtsn_device_manager_discover_once(wtsn_device_manager *m) {
     }
     return WTSN_OK;
 }
+
+wtsn_error wtsn_device_manager_record_heartbeat(wtsn_device_manager *m, const char *id) {
+    if (!m || !id) return WTSN_ERR_INVALID_ARG;
+    for (size_t i = 0; i < m->count; i++) {
+        if (strcmp(m->devices[i].id, id) == 0) {
+            wtsn_device *d = &m->devices[i];
+            time_t now = time(NULL);
+            d->heartbeat_at = now;
+            d->last_seen = now;
+            bool was_online = (d->status == WTSN_DEVICE_ONLINE);
+            d->status = WTSN_DEVICE_ONLINE;
+            sqlite3_stmt *st = NULL;
+            if (sqlite3_prepare_v2(m->db->handle,
+                "UPDATE devices SET heartbeat_at=?, last_seen=?, status=? WHERE id=?;",
+                -1, &st, NULL) == SQLITE_OK) {
+                sqlite3_bind_int64(st, 1, (sqlite3_int64)now);
+                sqlite3_bind_int64(st, 2, (sqlite3_int64)now);
+                sqlite3_bind_int(st, 3, (int)WTSN_DEVICE_ONLINE);
+                sqlite3_bind_text(st, 4, id, -1, SQLITE_TRANSIENT);
+                sqlite3_step(st);
+                sqlite3_finalize(st);
+            }
+            if (!was_online) publish_device_event(m, "status", &m->devices[i]);
+            return WTSN_OK;
+        }
+    }
+    return WTSN_ERR_NOT_FOUND;
+}
+
+wtsn_error wtsn_device_manager_set_domain(wtsn_device_manager *m, const char *id,
+                                         const char *domain) {
+    if (!m || !id || !domain) return WTSN_ERR_INVALID_ARG;
+    for (size_t i = 0; i < m->count; i++) {
+        if (strcmp(m->devices[i].id, id) == 0) {
+            wtsn_strlcpy(m->devices[i].domain, domain, sizeof(m->devices[i].domain));
+            wtsn_db_device_upsert(m->db, &m->devices[i]);
+            return WTSN_OK;
+        }
+    }
+    return WTSN_ERR_NOT_FOUND;
+}
+
+wtsn_error wtsn_device_manager_set_health(wtsn_device_manager *m, const char *id,
+                                         wtsn_device_status status) {
+    if (!m || !id) return WTSN_ERR_INVALID_ARG;
+    for (size_t i = 0; i < m->count; i++) {
+        if (strcmp(m->devices[i].id, id) == 0) {
+            m->devices[i].status = status;
+            wtsn_db_device_set_status(m->db, id, status);
+            publish_device_event(m, "status", &m->devices[i]);
+            return WTSN_OK;
+        }
+    }
+    return WTSN_ERR_NOT_FOUND;
+}

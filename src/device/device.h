@@ -31,6 +31,8 @@ typedef struct {
     char tsn_features[WTSN_TSN_FEATURES_MAX][64];
     size_t tsn_features_count;
     char name[WTSN_MAX_STR];
+    char domain[WTSN_MAX_STR];
+    time_t heartbeat_at;
 } wtsn_device;
 
 const char *wtsn_device_status_str(wtsn_device_status s);

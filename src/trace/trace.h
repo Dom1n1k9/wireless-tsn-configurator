@@ -2,6 +2,7 @@
 #define WTSN_TRACE_H
 
 #include "common/common.h"
+#include "db/db.h"
 #include "mvc/event_bus.h"
 
 #define WTSN_TRACE_MAX 1024
@@ -24,6 +25,7 @@ typedef struct {
 typedef struct wtsn_trace wtsn_trace;
 
 wtsn_trace *wtsn_trace_create(wtsn_event_bus *bus);
+wtsn_trace *wtsn_trace_create_persistent(wtsn_event_bus *bus, wtsn_db *db, size_t keep);
 void wtsn_trace_destroy(wtsn_trace *t);
 
 wtsn_error wtsn_trace_add_comm(wtsn_trace *t, const char *source, const char *msg);

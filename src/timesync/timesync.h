@@ -16,9 +16,16 @@ typedef struct {
     wtsn_timesync_mode mode;
     char grandmaster[WTSN_MAX_STR];
     int64_t offset_ns;
+    int64_t jitter_ns;
     int quality;
     bool gptp_active;
     char protocol[32];
+    /* over-the-air sync report (per device) */
+    int64_t report_offset_ns;
+    int64_t report_jitter_ns;
+    int report_packet_count;
+    int report_packet_loss;
+    char report_device[WTSN_MAX_STR];
 } wtsn_timesync_status;
 
 const char *wtsn_timesync_mode_str(wtsn_timesync_mode m);

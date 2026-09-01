@@ -23,5 +23,10 @@ void wtsn_device_manager_for_each(wtsn_device_manager *m,
 void wtsn_device_manager_mark_offline_after(wtsn_device_manager *m, time_t threshold);
 void wtsn_device_manager_restore(wtsn_device_manager *m);
 wtsn_error wtsn_device_manager_discover_once(wtsn_device_manager *m);
+wtsn_error wtsn_device_manager_record_heartbeat(wtsn_device_manager *m, const char *id);
+wtsn_error wtsn_device_manager_set_domain(wtsn_device_manager *m, const char *id,
+                                        const char *domain);
+wtsn_error wtsn_device_manager_set_health(wtsn_device_manager *m, const char *id,
+                                        wtsn_device_status status);
 
 #endif

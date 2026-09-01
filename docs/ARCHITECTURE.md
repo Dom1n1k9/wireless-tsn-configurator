@@ -4,6 +4,13 @@
 
 Pure C, modular, MVC-based desktop application. All persistent state is stored in SQLite.
 
+> **Scope note (wireless realism):** True deterministic TSN delivery is not
+> achievable over ordinary 802.11. This project therefore focuses on the
+> *management plane*: configuring QoS, VLAN, TAS, gPTP and streams on wireless
+> nodes and monitoring them over MQTT. The `wtsn_radio` layer maps those wired
+> TSN concepts onto the WMM/802.11e radio queues and flags features (e.g.
+> 802.1Qbu preemption) that have no radio meaning.
+
 ```
                      ┌────────────────────────────────────────────┐
                      │        Web GUI (Python webgui.py)         │
@@ -17,29 +24,38 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
                      │   pushes model notifications -> views      │
                      └──────────────────┬─────────────────────────┘
                                         │
-        ┌───────────────────────────────┼───────────────────────────────────┐
-        ▼                               ▼               ▼                  ▼
+         ┌───────────────────────────────┼───────────────────────────────────┐
+         ▼                               ▼               ▼                  ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
 │ Device Manager│  │ QoSMgr VLAN   │  │ TimeSyncMgr   │  │ SensorManager │
 │               │  │ TAS/GCL       │  │               │  │               │
-└───────┬───────┘  └───────────────┘  └───────────────┘  └───────┬───────┘
-        │                                    │                          │
-        ▼                                    ▼                          ▼
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │                  │
+        ▼                  ▼                  ▼                  ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
 │ Discoverers   │  │    FXMQTT     │  │  MQTT Client  │  │    Trace     │
 │ MQTT/plugins  │  │ FX over MQTT │  │ (mosquitto)   │  │  monitor     │
 └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────────────┘
-        │                    │ C2C topics      │       ▲
-        │                    │ tsn/fx/field    │       │ events
-        ▼                    ▼  ─────────▶     ▼       │
+        │                  │ C2C topics      │       ▲
+        │                  │ tsn/fx/field    │       │ events
+        ▼                  ▼  ─────────▶     ▼       │
 ┌───────────────┐  ┌───────────────┐  ┌───────────────────┐
 │ PluginManager │  │   Agent       │  │     MQTT broker   │
 │               │  │ firmware dev  │  │  (mosquitto)      │
 └───────┬───────┘  └───────────────┘  └───────────────────┘
         ▼
-┌───────────────┐  ┌───────────────┐
-│   Simulator   │  │   SQLite DB   │  devices, qos, vlan, tas, timesync, sensors
-└───────────────┘  └───────────────┘  virtual nodes
+┌───────────────┐
+│   Simulator   │
+│               │
+└───────────────┘
+                 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+                 │  Radio layer  │  │  Domain Mgmt  │  │ Config Vers.  │
+                 │  (WMM/802.11e)│  │ (TSN domains) │  │ diff/rollback │
+                 └───────────────┘  └───────────────┘  └───────────────┘
+                 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+                 │ Trace (SQLite)│  │ gPTP reports  │  │ Heartbeat FSM │
+                 │  persisted    │  │ over-the-air  │  │ online/offline │
+                 └───────────────┘  └───────────────┘  └───────────────┘
 ```
 
 ## Layers
@@ -48,24 +64,46 @@ Pure C, modular, MVC-based desktop application. All persistent state is stored i
 2. **Model/MVC** (`src/mvc`) - Model base, event bus, controller, view base.
 3. **Database** (`src/db`) - SQLite schema init and CRUD repositories.
 4. **Services** (`src/device`, `src/qos`, `src/vlan`, `src/timesync`,
-   `src/tas`, `src/sensors`) - domain logic.
+   `src/tas`, `src/sensors`, `src/radio`, `src/domain`,
+   `src/config_version`) - domain logic.
 5. **Discovery** (`src/discovery`) - discover MQTT/plugin devices.
 6. **Protocols** (`src/mqtt`, `src/fxmqtt`) - the single MQTT-based
    FX / C2C communication channel.
 7. **Agent** (`src/agent`) - firmware agent that executes commands on physical
    nodes (Linux/RPi adapter + ESP32/STM32/NXP embedded adapters).
 8. **Simulator** (`src/simulator`) - generic TSN node simulator from profiles.
-9. **Trace** (`src/trace`) - communication monitor (comm/frame/config/multicast).
+9. **Trace** (`src/trace`) - communication monitor (comm/frame/config/multicast),
+   now persisted to SQLite (`trace_log` table).
 10. **Plugins** (`src/plugin`) - loadable protocol plugins.
 11. **Web GUI** (`webgui.py`) - Python stdlib-only web front-end that
     publishes/consumes the same MQTT topics and persists to the same sqlite
-    schema. (The old LVGL C GUI at `src/ui` was removed.)
+    schema.
+
+## Radio Layer (`src/radio`)
+
+Maps 802.1P priorities onto WMM access categories (AC_VO/AC_VI/AC_BE/AC_BK)
+per 802.11-2016 Table 9-2. Used by the stream/CNN path to derive which radio
+queue a stream lands on, and flags wired-only TSN features (e.g. 802.1Qbu
+preemption) that have no meaning inside a single radio link.
+
+## TSN Domains (`src/domain`)
+
+Physical 802.11 cells each form their own collision/time domain. Devices are
+assigned to a domain; QoS/VLAN/TAS configurations can then be scoped per
+domain rather than treating the whole fleet as a single domain.
+
+## Config Versioning (`src/config_version`)
+
+Snapshots the configuration scope (devices + QoS + VLAN) as canonical strings
+so operators can diff two versions and roll back after a failed deploy.
 
 ## Data Flow
 
 - UI page -> `AppController` -> service -> repository -> SQLite
 - Service -> event bus -> UI view updates (device status changes)
 - Discoverer -> DeviceManager -> DB (persisted, restored on startup)
+- Heartbeat -> DeviceManager -> online/offline state machine -> DB + event bus
+- OTA sync report -> TimesyncManager -> `timesync_reports` DB + event bus
 
 ## Plugin Architecture
 

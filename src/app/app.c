@@ -29,15 +29,17 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     app->bus = wtsn_event_bus_create();
     if (!app->bus) { wtsn_db_close(&app->db); return WTSN_ERR_NO_MEMORY; }
 
-    app->trace = wtsn_trace_create(app->bus);
+    app->trace = wtsn_trace_create_persistent(app->bus, &app->db, 20000);
 
     app->plugins = wtsn_plugin_manager_create();
     app->devices = wtsn_device_manager_create(&app->db, app->bus, app->plugins);
+    app->domains = wtsn_domain_manager_create(&app->db, app->bus);
     app->qos = wtsn_qos_manager_create(&app->db, app->bus);
     app->vlan = wtsn_vlan_manager_create(&app->db, app->bus);
     app->timesync = wtsn_timesync_manager_create(&app->db, app->bus);
     app->tas = wtsn_tas_manager_create(&app->db, app->bus);
     app->sensors = wtsn_sensor_manager_create(&app->db, app->bus);
+    app->cfgver = wtsn_cfg_ver_manager_create(&app->db, app->bus);
 
     wtsn_tsn_manager_config tcfg;
     memset(&tcfg, 0, sizeof(tcfg));
@@ -47,7 +49,8 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     app->tsn = wtsn_tsn_manager_create(&tcfg);
 
     if (!app->devices || !app->qos || !app->vlan || !app->timesync ||
-        !app->tas || !app->sensors || !app->tsn) return WTSN_ERR_NO_MEMORY;
+        !app->tas || !app->sensors || !app->tsn || !app->domains || !app->cfgver)
+        return WTSN_ERR_NO_MEMORY;
 
     load_plugins(app);
     wtsn_device_manager_discover_once(app->devices);
@@ -80,12 +83,14 @@ void wtsn_app_shutdown(wtsn_app *app) {
     if (app->fxmqtt) wtsn_fxmqtt_destroy(app->fxmqtt);
     if (app->mqtt) wtsn_mqtt_client_destroy(app->mqtt);
     if (app->trace) wtsn_trace_destroy(app->trace);
+    if (app->cfgver) wtsn_cfg_ver_manager_destroy(app->cfgver);
     if (app->sensors) wtsn_sensor_manager_destroy(app->sensors);
     if (app->tsn) wtsn_tsn_manager_destroy(app->tsn);
     if (app->tas) wtsn_tas_manager_destroy(app->tas);
     if (app->timesync) wtsn_timesync_manager_destroy(app->timesync);
     if (app->vlan) wtsn_vlan_manager_destroy(app->vlan);
     if (app->qos) wtsn_qos_manager_destroy(app->qos);
+    if (app->domains) wtsn_domain_manager_destroy(app->domains);
     if (app->devices) wtsn_device_manager_destroy(app->devices);
     wtsn_plugin_manager_destroy(app->plugins);
     wtsn_event_bus_destroy(app->bus);

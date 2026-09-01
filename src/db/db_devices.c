@@ -11,17 +11,20 @@ static void bind_device(sqlite3_stmt *st, const wtsn_device *dev) {
     sqlite3_bind_text(st, 6, dev->firmware, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(st, 7, (int)dev->status);
     sqlite3_bind_int64(st, 8, (long long)dev->last_seen);
+    sqlite3_bind_text(st, 9, dev->domain[0] ? dev->domain : "default", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st, 10, (long long)dev->heartbeat_at);
 }
 
 wtsn_error wtsn_db_device_upsert(wtsn_db *db, const wtsn_device *dev) {
     if (!db || !dev || !db->handle) return WTSN_ERR_INVALID_ARG;
     const char *sql =
-        "INSERT INTO devices (id,name,ip,mac,kind,firmware,status,last_seen)"
-        " VALUES (?,?,?,?,?,?,?,?)"
+        "INSERT INTO devices (id,name,ip,mac,kind,firmware,status,last_seen,domain,heartbeat_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(id) DO UPDATE SET"
         " name=excluded.name, ip=excluded.ip, mac=excluded.mac,"
         " kind=excluded.kind, firmware=excluded.firmware, status=excluded.status,"
-        " last_seen=excluded.last_seen;";
+        " last_seen=excluded.last_seen, domain=excluded.domain,"
+        " heartbeat_at=excluded.heartbeat_at;";
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(db->handle, sql, -1, &st, NULL) != SQLITE_OK)
         return WTSN_ERR_DB;
@@ -61,6 +64,9 @@ static wtsn_device row_to_device(const wtsn_db *db, sqlite3_stmt *st) {
     wtsn_strlcpy(d.firmware, (const char *)sqlite3_column_text(st, 5), sizeof(d.firmware));
     d.status = (wtsn_device_status)sqlite3_column_int(st, 6);
     d.last_seen = (time_t)sqlite3_column_int64(st, 7);
+    const char *dom = (const char *)sqlite3_column_text(st, 8);
+    if (dom && dom[0]) wtsn_strlcpy(d.domain, dom, sizeof(d.domain));
+    d.heartbeat_at = (time_t)sqlite3_column_int64(st, 9);
 
     sqlite3_stmt *f = NULL;
     if (sqlite3_prepare_v2(db->handle,
@@ -78,7 +84,7 @@ void wtsn_db_device_for_each(wtsn_db *db, wtsn_db_device_cb cb, void *userdata) 
     if (!db || !db->handle || !cb) return;
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(db->handle,
-        "SELECT id,name,ip,mac,kind,firmware,status,last_seen FROM devices;",
+        "SELECT id,name,ip,mac,kind,firmware,status,last_seen,domain,heartbeat_at FROM devices;",
         -1, &st, NULL) != SQLITE_OK) return;
     while (sqlite3_step(st) == SQLITE_ROW) {
         wtsn_device d = row_to_device(db, st);
@@ -91,7 +97,7 @@ wtsn_error wtsn_db_device_get(wtsn_db *db, const char *id, wtsn_device *out) {
     if (!db || !db->handle || !id || !out) return WTSN_ERR_INVALID_ARG;
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(db->handle,
-        "SELECT id,name,ip,mac,kind,firmware,status,last_seen FROM devices WHERE id=?;",
+        "SELECT id,name,ip,mac,kind,firmware,status,last_seen,domain,heartbeat_at FROM devices WHERE id=?;",
         -1, &st, NULL) != SQLITE_OK) return WTSN_ERR_DB;
     sqlite3_bind_text(st, 1, id, -1, SQLITE_TRANSIENT);
     int rc = sqlite3_step(st);

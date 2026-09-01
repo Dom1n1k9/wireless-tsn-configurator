@@ -1,5 +1,6 @@
 #include "trace/trace.h"
 
+#include "db/db_trace_log.h"
 #include "mvc/model.h"
 #include "common/log.h"
 
@@ -16,6 +17,8 @@ struct wtsn_trace {
     wtsn_trace_entry entries[WTSN_TRACE_MAX];
     int count;
     int head;
+    wtsn_db *db;
+    size_t keep;
 };
 
 static void stamp(wtsn_trace_entry *e) {
@@ -26,9 +29,16 @@ static void stamp(wtsn_trace_entry *e) {
 }
 
 wtsn_trace *wtsn_trace_create(wtsn_event_bus *bus) {
+    wtsn_trace *t = wtsn_trace_create_persistent(bus, NULL, 0);
+    return t;
+}
+
+wtsn_trace *wtsn_trace_create_persistent(wtsn_event_bus *bus, wtsn_db *db, size_t keep) {
     wtsn_trace *t = calloc(1, sizeof(wtsn_trace));
     if (!t) return NULL;
     t->bus = bus;
+    t->db = db;
+    t->keep = keep;
     wtsn_model_init(&t->model, TRACE_MODEL, bus);
     return t;
 }
@@ -45,6 +55,10 @@ static void push(wtsn_trace *t, wtsn_trace_type type, const char *source, const 
     e->type = type;
     wtsn_strlcpy(e->source, source ? source : "-", sizeof(e->source));
     wtsn_strlcpy(e->line, line ? line : "", sizeof(e->line));
+    if (t->db) {
+        wtsn_db_trace_log_insert(t->db, e);
+        if (t->keep > 0) wtsn_db_trace_prune(t->db, (int)t->keep);
+    }
     t->head = (t->head + 1) % WTSN_TRACE_MAX;
     if (t->count < WTSN_TRACE_MAX) t->count++;
     wtsn_model_notify_data(&t->model, "entry", e);

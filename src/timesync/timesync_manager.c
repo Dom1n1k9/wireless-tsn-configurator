@@ -1,10 +1,12 @@
 #include "timesync/timesync_manager.h"
 
 #include "common/log.h"
+#include "db/db_timesync_report.h"
 #include "mvc/model.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 struct wtsn_timesync_manager {
     wtsn_db *db;
@@ -57,4 +59,28 @@ wtsn_error wtsn_timesync_manager_set_grandmaster(wtsn_timesync_manager *m, const
 
 const wtsn_timesync_status *wtsn_timesync_manager_status(wtsn_timesync_manager *m) {
     return m ? &m->status : NULL;
+}
+
+wtsn_error wtsn_timesync_manager_record_report(wtsn_timesync_manager *m, const char *device_id,
+                                           int64_t offset_ns, int64_t jitter_ns,
+                                           int packet_count, int packet_loss) {
+    if (!m || !device_id) return WTSN_ERR_INVALID_ARG;
+    wtsn_timesync_report r;
+    memset(&r, 0, sizeof(r));
+    wtsn_strlcpy(r.device_id, device_id, sizeof(r.device_id));
+    r.offset_ns = offset_ns;
+    r.jitter_ns = jitter_ns;
+    r.packet_count = packet_count;
+    r.packet_loss = packet_loss;
+    wtsn_strlcpy(r.status, packet_loss > 0 ? "degraded" : "in_sync", sizeof(r.status));
+    wtsn_db_timesync_report_insert(m->db, &r);
+    wtsn_db_timesync_report_prune(m->db, 1000);
+    /* update the active per-device summary shown to the user */
+    wtsn_strlcpy(m->status.report_device, device_id, sizeof(m->status.report_device));
+    m->status.report_offset_ns = offset_ns;
+    m->status.report_jitter_ns = jitter_ns;
+    m->status.report_packet_count = packet_count;
+    m->status.report_packet_loss = packet_loss;
+    wtsn_model_notify_data(&m->model, "report", &m->status);
+    return WTSN_OK;
 }

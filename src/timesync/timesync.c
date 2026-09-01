@@ -8,7 +8,7 @@ const char *wtsn_timesync_mode_str(wtsn_timesync_mode m) {
     case WTSN_TIMESYNC_LOCAL_GRANDMASTER: return "local_grandmaster";
     case WTSN_TIMESYNC_EXTERNAL_GRANDMASTER: return "external_grandmaster";
     case WTSN_TIMESYNC_AUTO: return "auto";
-    default: return "disabled";
+    default: return "unknown";
     }
 }
 
