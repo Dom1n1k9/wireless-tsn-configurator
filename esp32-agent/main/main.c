@@ -498,7 +498,7 @@ void app_main(void) {
         /* periodic heartbeat so the webgui can mark offline if we disappear */
         if (g_mqtt && esp_timer_get_time() - last_beat >= 10000000) {
             last_beat = esp_timer_get_time();
-            char buf[128];
+            char buf[192];
             snprintf(buf, sizeof(buf),
                     "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\","
                     "\"ssid\":\"%s\"}",
