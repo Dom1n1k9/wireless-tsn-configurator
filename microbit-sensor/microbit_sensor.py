@@ -1,43 +1,99 @@
 """
 WTSN micro:bit display panel (MicroPython) - wired UART link
 ==========================================================
-Connects to the ESP32 agent over a serial wire and prints sensor-style lines that the
-ESP republishes onto the WTSN MQTT bus (tsn/sensors), so the webgui can show them.
+The ESP32 agent pushes its sensor values to the micro:bit once a second on
+P1 (RX):  "T:21.5 P:1013.2 H:48 L:1234 M:0 A:0"
+The panel shows ONE value at a time with its unit (T:27C, P:1006hPa, H:48%,
+L:918lx, M:1) and HOLDS it until B (next value) or A (previous) is pressed.
+When the ESP PIR reports motion (M:1 rising edge) it flashes a heart and
+beeps (piezo buzzer on P16 + GND; MicroPython has no built-in speaker API).
 
-Wiring:  micro:bit PIN0 --> ESP GPIO14 (UART RX)   (3.3V logic)
-         micro:bit GND --> ESP GND
+Wiring:  ESP GPIO15 (TX) --> micro:bit P1 (RX)
+         micro:bit P0 (TX) --> ESP GPIO14 (RX)   (own sensors, optional)
+         GND --> GND
+         piezo + --> P16, piezo - --> GND
 
-The display uses the capability sensor button A/B to switch what is shown.
-
-Run this with MicroPython (mu / python.microbit.org / v2).
+Run with the MicroPython port for micro:bit V2 (python.microbit.org).
 """
 
-from microbit import *
+from microbit import display, button_a, button_b, sleep, Pin, Image
 
-def send(line: str):
-    """Emit a line on the serial output; the ESP picks it up on its RX pin."""
-    print(line)
+try:
+    from machine import UART
+except ImportError:
+    from microbit import UART
 
-# ---- buttons switch which value is displayed ----
-idx = 0
-val = "."
-last = 0.0
+BAUD = 115200
+uart = UART(1, BAUD, tx=Pin(0), rx=Pin(1))
+BUZZ = Pin(16, Pin.OUT)
+
+
+def beep():
+    """Short 880 Hz beep on the piezo (P16)."""
+    try:
+        BUZZ.tone(880)
+        sleep(0.3)
+        BUZZ.off()
+    except AttributeError:
+        # port without tone(): crude ~440 Hz square wave
+        for _ in range(260):
+            BUZZ.toggle()
+            sleep(0.0011)
+        BUZZ.off()
+
+
+# ---- latest values received from the ESP agent ----
+vals = {"T": 0, "P": 0, "H": 0, "L": 0, "M": 0, "A": 0}
+
+
+def parse_line(line):
+    for tok in line.split(" "):
+        key, sep, num = tok.partition(":")
+        if sep and key in vals:
+            try:
+                vals[key] = float(num)
+            except ValueError:
+                pass
+
+
+def read_line():
+    if uart.any() > 0:
+        data = uart.readline()
+        if data:
+            parse_line(data.decode().strip())
+
+
+# ---- display views, in B/A cycle order: T -> P -> H -> L -> M ----
+VIEWS = 5
+view = 0
+prev_pir = 0
+
+
+def render():
+    """Show the current value with its unit; display.show blocks ~2 s."""
+    if view == 0:
+        display.show("T:%dC" % int(vals["T"]))
+    elif view == 1:
+        display.show("P:%dhPa" % int(vals["P"]))
+    elif view == 2:
+        display.show("H:%d%%" % int(vals["H"]))
+    elif view == 3:
+        display.show("L:%dlx" % int(vals["L"]))
+    else:
+        display.show("M:%d" % int(vals["M"]))
+
 
 while True:
-    # simulate/echo a value; on a real setup you would read a sensor here.
-    # We just send a sample that the ESP forwards as telemetry.
-    send("mb:" + str(idx) + ":" + str(last))
-    last += 0.1
-
-    if button_a.was_pressed():
-        idx = (idx + 1) % 3
     if button_b.was_pressed():
-        idx = (idx + 2) % 3
-
-    if idx == 0:
-        display.show("T")
-    elif idx == 1:
-        display.show("H")
-    else:
-        display.show("L")
-    sleep(700)
+        view = (view + 1) % VIEWS
+        render()
+    if button_a.was_pressed():
+        view = (view + VIEWS - 1) % VIEWS
+        render()
+    read_line()
+    if vals["M"] == 1 and prev_pir == 0:
+        display.show(Image.HEART, delay=1500)
+        beep()
+    prev_pir = vals["M"]
+    # hold the current view; re-render after the ~2 s display + short gap
+    sleep(3)

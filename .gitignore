@@ -11,3 +11,9 @@ __pycache__/
 esp32-agent/sdkconfig
 esp32-agent/sdkconfig.old
 webgui_*.log
+microbit-sensor/built/
+microbit-sensor/node_modules/
+microbit-sensor/pxt_modules/
+microbit-sensor/package.json
+microbit-sensor/package-lock.json
+microbit-sensor/tsconfig.json

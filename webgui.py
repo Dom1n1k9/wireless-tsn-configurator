@@ -230,20 +230,24 @@ def mqtt_listener_loop():
                 cons = sqlite3.connect(wanted_db, timeout=3)
                 cons.row_factory = sqlite3.Row
                 ensure_schema(cons)
+            prev_db = wanted_db
             while not LISTENER_STOP.is_set():
                 r = brk.recv_publish(timeout=1.0)
                 if r is None:
                     # reconnect to re-evaluate mode / broker address if it changed
                     break
                 parse_listener_msg(cons, r[0], r[1])
-            if cons:
-                cons.commit()
+                # re-evaluate mode / broker after each message; switch DB if changed
+                cur_db = DB_REAL if MODE["mode"] == "real" else DB_SIM
+                if cur_db != prev_db:
+                    prev_db = cur_db
+                    break
         except Exception:
             time.sleep(3)
 
 def parse_listener_msg(con, topic, payload):
     try:
-        j = json.loads(payload)
+        j = json.loads(payload.replace("\r", "").replace("\n", "").strip())
     except Exception:
         j = {}
     did = j.get("id", "")
@@ -613,6 +617,7 @@ def run_action(act, body):
     con = connect()
     try:
         if act == "set_mode":
+            MODE["mode"] = body.get("mode", "sim") if body.get("mode") in ("sim", "real") else MODE["mode"]
             EVENTS.clear()
             add_event("config", "cnc",
                      "mode = SIMULATION" if MODE["mode"] == "sim" else "mode = REAL (waiting for real devices)")
@@ -1441,7 +1446,7 @@ function domains(){const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+
 function assignDom(){api("assign_domain",{device_id:$("vd_dev").value,domain:$("vd_dom").value}).then(load)}
 function versions(){
  return "<h2>Config Versions / Rollback</h2><div class='card'><div class='row'><span class='muted'>Snapshot the current configuration so you can diff and roll back after a deploy.</span></div><div class='row'><label>name</label><input id=cv_name placeholder='pre-deploy'></div><button onclick='api(\"create_version\",{name:$(\"cv_name\").value}).then(load)'>Save snapshot</button> <button class='ghost' onclick='rvLoad()'>List versions</button></div><div id=cv_list></div>"}
-function rvLoad(){const m=$("cv_list");m.innerHTML="<div class='muted'>loading...</div>";fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"list_versions"})}).then(r=>r.json()).then(j=>{if(!j.ok){m.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}const vl=(j.versions||[]).map(v=>"<div class='card'><div class='row'><span>"+esc(v.name)+"</span><span class='muted'>v"+v.id+" · "+new Date(v.created_at*1000).toLocaleString()+" · "+(v.device_id||"global")+"</span></div><div class='row'><button class='danger' onclick='rollback("+v.id+")'>Rollback</button> <button class='ghost' onclick='diffV("+v.id+")'>Diff vs latest</button></div></div>").join("");m.innerHTML=vl||"<div class='muted'>no versions yet</div>"}}
+function rvLoad(){const m=$("cv_list");m.innerHTML="<div class='muted'>loading...</div>";fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"list_versions"})}).then(r=>r.json()).then(j=>{if(!j.ok){m.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}const vl=(j.versions||[]).map(v=>"<div class='card'><div class='row'><span>"+esc(v.name)+"</span><span class='muted'>v"+v.id+" · "+new Date(v.created_at*1000).toLocaleString()+" · "+(v.device_id||"global")+"</span></div><div class='row'><button class='danger' onclick='rollback("+v.id+")'>Rollback</button> <button class='ghost' onclick='diffV("+v.id+")'>Diff vs latest</button></div></div>").join("");m.innerHTML=vl||"<div class='muted'>no versions yet</div>"})}
 function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
 function diffV(id){fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"diff_versions",a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
 

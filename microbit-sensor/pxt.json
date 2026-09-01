@@ -1,9 +1,10 @@
 {
     "name": "WTSN micro:bit panel (wired UART)",
-    "version": "0.1.0",
-    "description": "micro:bit V2 display over wired UART to ESP agent; buttons switch view; beep on motion (P2)",
+    "version": "0.2.0",
+    "description": "micro:bit V2 display over wired UART to ESP agent; shows ESP sensor values (T/P/H/L/M); beeps on motion (piezo P16)",
     "dependencies": {
-        "core": "*"
+        "core": "*",
+        "microphone": "*"
     },
     "files": [
         "main.ts"

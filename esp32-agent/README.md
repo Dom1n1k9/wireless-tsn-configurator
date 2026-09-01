@@ -90,7 +90,26 @@ status / ack / FX on:
 | `tsn/fx/#`                | FX / C2C field exchange                 |
 | `tsn/fx/field`            | in/out: C2C field exchange             |
 | `tsn/fx/<id>`             | in/out: device field exchange           |
-| `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: per-sensor readable topics |
+ | `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: per-sensor readable topics |
+
+## micro:bit display panel (wired UART)
+
+The agent drives a micro:bit V2 as a local display panel over UART1 (no BLE),
+both directions:
+
+| Wire                                      | Purpose                                                            |
+|-------------------------------------------|--------------------------------------------------------------------|
+| micro:bit P0 (TX) --> ESP GPIO14          | micro:bit reports its own onboard sensors -> MQTT `tsn/sensors` (mb_* sensors of this node) |
+| ESP GPIO15 (TX) --> micro:bit P1 (RX)     | agent pushes the node sensors once a second: `T:<C> P:<hPa> H:<%RH> L:<lx> M:<0\|1> A:<mode>` |
+| GND --> GND                               | common ground (3.3V logic, no level shift needed)                  |
+
+The micro:bit firmware (see `../microbit-sensor/`, MakeCode `main.ts` or
+MicroPython `microbit_sensor.py`) shows one value with its unit at a time
+(`T:27C`, `P:1006hPa`, `H:48%`, `L:918lx`, `M:1`) and holds it — **B** = next
+value, **A** = previous. It **beeps through the V2 built-in speaker**
+(`music.setBuiltInSpeakerEnabled(true)`) and flashes a heart when the PIR
+reports motion (`M:1`, rising edge). A test tone plays at startup. No external
+piezo needed (MakeCode variant).
 
 ## Limitations on ESP32
 

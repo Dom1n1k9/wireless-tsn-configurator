@@ -69,8 +69,8 @@ static int16_t  calib_hum_H4, calib_hum_H5;
 
 static int64_t g_read_period_ns = 2000000000LL; /* 2s */
 
-/* cached last readings for the BLE panel */
-static float g_last_temp = 0, g_last_hum = 0;
+/* cached last readings for the micro:bit display panel */
+static float g_last_temp = 0, g_last_press = 0, g_last_hum = 0;
 static int g_last_light = 0, g_last_pir = 0;
 
 static esp_adc_cal_characteristics_t g_adc_char;
@@ -372,8 +372,9 @@ void wtsn_sensor_tick(void) {
 
     wtsn_mqtt_publish(g_mq, "tsn/sensors", buf);
 
-    /* cache for BLE panel */
+    /* cache for the micro:bit panel */
     if (temp > -500) g_last_temp = temp;
+    if (press > -500) g_last_press = press;
     if (hum > 0) g_last_hum = hum;
     g_last_light = light_mv;
     g_last_pir = pir_report;
@@ -422,8 +423,10 @@ int wtsn_sensor_actor_get(void) {
 
 int wtsn_sensor_light(void) { return g_last_light; }
 int wtsn_sensor_motion(void) { return g_last_pir; }
-void wtsn_sensor_last(float *temp_c, float *hum_pct, int *light, int *pir, int *actor) {
+void wtsn_sensor_last(float *temp_c, float *press_hpa, float *hum_pct,
+                      int *light, int *pir, int *actor) {
     if (temp_c) *temp_c = g_last_temp;
+    if (press_hpa) *press_hpa = g_last_press;
     if (hum_pct) *hum_pct = g_last_hum;
     if (light) *light = g_last_light;
     if (pir) *pir = g_last_pir;

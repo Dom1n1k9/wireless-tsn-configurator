@@ -31,9 +31,10 @@ int wtsn_sensor_actor_set(int mode);
 int wtsn_sensor_actor_get(void);
 void wtsn_sensor_actor_set_pin(void);
 
-/* Value accessors for the BLE micro:bit panel. Returns 0 on missing data. */
+/* Value accessors for the micro:bit display panel. NULL-safe; 0 on missing data. */
 int  wtsn_sensor_light(void);
 int  wtsn_sensor_motion(void);
-void wtsn_sensor_last(float *temp_c, float *hum_pct, int *light, int *pir, int *actor);
+void wtsn_sensor_last(float *temp_c, float *press_hpa, float *hum_pct,
+                      int *light, int *pir, int *actor);
 
 #endif
