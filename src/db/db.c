@@ -1,6 +1,7 @@
 #include "db/db.h"
 
 #include "common/log.h"
+#include "common/str_util.h"
 
 #include <string.h>
 

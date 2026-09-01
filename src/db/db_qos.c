@@ -1,5 +1,7 @@
 #include "db/db_qos.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 
 wtsn_error wtsn_db_qos_save(wtsn_db *db, const wtsn_qos_config *cfg) {

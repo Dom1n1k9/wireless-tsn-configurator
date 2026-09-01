@@ -4,6 +4,8 @@
 #include "db/db.h"
 #include "timesync/timesync.h"
 
+#include <time.h>
+
 typedef struct {
     char device_id[WTSN_MAX_STR];
     time_t ts;

@@ -1,5 +1,7 @@
 #include "db/db_tas.h"
 
+#include "common/str_util.h"
+
 #include <stdlib.h>
 #include <string.h>
 

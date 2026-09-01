@@ -1,5 +1,7 @@
 #include "db/db_timesync.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 
 wtsn_error wtsn_db_timesync_save(wtsn_db *db, const wtsn_timesync_status *s) {

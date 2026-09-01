@@ -1,5 +1,7 @@
 #include "db/db_sensors.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 
 wtsn_error wtsn_db_sensor_upsert(wtsn_db *db, const wtsn_sensor *s) {

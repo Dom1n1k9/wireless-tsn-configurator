@@ -1,5 +1,7 @@
 #include "db/db_devices.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 
 static void bind_device(sqlite3_stmt *st, const wtsn_device *dev) {

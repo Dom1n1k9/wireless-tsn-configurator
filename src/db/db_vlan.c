@@ -1,5 +1,7 @@
 #include "db/db_vlan.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 
 static wtsn_vlan_group row_to_group(sqlite3_stmt *st) {
