@@ -66,6 +66,8 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
                                  "wtsn-configurator", NULL, NULL);
         wtsn_mqtt_client_loop_start(app->mqtt);
         wtsn_tsn_manager_set_mqtt(app->tsn, app->mqtt);
+        app->telemetry = wtsn_telemetry_create(app->devices, app->timesync, app->trace);
+        wtsn_telemetry_attach(app->telemetry, app->mqtt);
         wtsn_fxmqtt          *fcfg = app->fxmqtt;
         fcfg->broker_port = cfg->mqtt_port;
         wtsn_strlcpy(fcfg->broker_host, cfg->mqtt_host, sizeof(fcfg->broker_host));
@@ -73,6 +75,8 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
         wtsn_fxmqtt_start(app->fxmqtt, app->mqtt);
         if (app->trace) wtsn_trace_add_config(app->trace, "fxmqtt",
                 "OPC UA FX over MQTT started");
+        if (app->trace) wtsn_trace_add_config(app->trace, "telemetry",
+                "Monitoring tsn/status/# and tsn/telemetry/# subscribed");
     }
 
     return WTSN_OK;
@@ -81,6 +85,7 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
 void wtsn_app_shutdown(wtsn_app *app) {
     if (!app) return;
     if (app->fxmqtt) wtsn_fxmqtt_destroy(app->fxmqtt);
+    if (app->telemetry) wtsn_telemetry_destroy(app->telemetry);
     if (app->mqtt) wtsn_mqtt_client_destroy(app->mqtt);
     if (app->trace) wtsn_trace_destroy(app->trace);
     if (app->cfgver) wtsn_cfg_ver_manager_destroy(app->cfgver);

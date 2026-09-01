@@ -1081,6 +1081,12 @@ def run_action(act, body):
             if dev:
                 con.execute("DELETE FROM qos_configs WHERE device_id=?", (dev,))
                 con.execute("DELETE FROM vlan_members WHERE device_id=?", (dev,))
+                con.execute("DELETE FROM tsn_stream_members WHERE device_id=?", (dev,))
+            else:
+                for t in ("qos_configs", "vlan_groups", "vlan_members", "tsn_streams",
+                          "tsn_stream_members", "tas_schedules", "gcl_entries",
+                          "preemption_configs", "device_tsn_features"):
+                    con.execute("DELETE FROM %s" % t)
             # fall back to token replay for C-generated payloads
             import re as _re2
             for tok in re.findall(r"\S+", payload or ""):
@@ -1103,6 +1109,37 @@ def run_action(act, body):
                     if mm:
                         con.execute("INSERT OR REPLACE INTO vlan_groups(id,name,vlan_id) "
                                     "VALUES(?,?,?)", (mm.group(1), mm.group(1), int(mm.group(2))))
+                elif tok.startswith("vmem:"):
+                    mm = _re2.match(r"vmem:([^:]+):([^:]+)", tok)
+                    if mm:
+                        con.execute("INSERT OR IGNORE INTO vlan_members(group_id,device_id) "
+                                    "VALUES(?,?)", (mm.group(1), mm.group(2)))
+                elif tok.startswith("stream:"):
+                    mm = _re2.match(r"stream:([^:]+):([^:]+):vlan=(\d+):prio=(\d+):lat=(\d+):iv=(\d+):st=(\d+)", tok)
+                    if mm:
+                        sid, talker = mm.group(1), mm.group(2)
+                        vlan, prio, lat, iv, st = map(int, mm.groups()[2:])
+                        con.execute("INSERT OR REPLACE INTO tsn_streams(stream_id,name,talker,vlan_id,"
+                                   "max_latency_ns,max_interval_ns,priority,data_frame_prio,status,comment)"
+                                   " VALUES(?,?,?,?,?,?,?,?,?,'')",
+                                  (sid, sid, talker, vlan, lat, iv, prio, prio, st))
+                elif tok.startswith("streammem:"):
+                    mm = _re2.match(r"streammem:([^:]+):([^:]+)", tok)
+                    if mm:
+                        con.execute("INSERT OR IGNORE INTO tsn_stream_members(stream_id,role,device_id) "
+                                    "VALUES(?,'listener',?)", (mm.group(1), mm.group(2)))
+                elif tok.startswith("tas:"):
+                    mm = _re2.match(r"tas:([^:]+):cycle=(\d+):tgt=(\S+)", tok)
+                    if mm:
+                        con.execute("INSERT OR REPLACE INTO tas_schedules(id,name,cycle_time_ns,"
+                                   "deploy_target) VALUES(?,?,?,?)",
+                                  (mm.group(1), mm.group(1), int(mm.group(2)), mm.group(3)))
+                elif tok.startswith("gcl:"):
+                    mm = _re2.match(r"gcl:([^:]+):(\d+):(\d+):(\d+)", tok)
+                    if mm:
+                        con.execute("INSERT OR REPLACE INTO gcl_entries(schedule_id,index,gate_state,"
+                                   "duration_ns) VALUES(?,?,?,?)",
+                                  (mm.group(1), int(mm.group(2)), int(mm.group(3)), int(mm.group(4))))
             con.commit()
             return {"ok": True, "msg": "rolled back to version " + str(vid)}
         if act == "create_version":

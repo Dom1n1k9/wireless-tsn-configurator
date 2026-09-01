@@ -15,6 +15,7 @@
 #include "sensors/sensor_manager.h"
 #include "stream/tsn_manager.h"
 #include "tas/tas_manager.h"
+#include "telemetry/wtsn_telemetry.h"
 #include "timesync/timesync_manager.h"
 #include "trace/trace.h"
 #include "vlan/vlan_manager.h"
@@ -43,6 +44,7 @@ typedef struct wtsn_app {
     wtsn_trace *trace;
     wtsn_domain_manager *domains;
     wtsn_config_version_manager *cfgver;
+    wtsn_telemetry *telemetry;
     wtsn_app_config config;
 } wtsn_app;
 

@@ -1,10 +1,10 @@
 #include "app/app.h"
 #include "common/log.h"
-#include "ui/ui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 int main(int argc, char **argv) {
     wtsn_app_config cfg;
@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
     snprintf(cfg.db_path, sizeof(cfg.db_path), "wtsn.db");
     snprintf(cfg.mqtt_host, sizeof(cfg.mqtt_host), "localhost");
     cfg.mqtt_port = 1883;
-    cfg.headless = false;
+    cfg.headless = true;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--db") == 0 && i + 1 < argc)
@@ -31,7 +31,10 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    int rc = wtsn_ui_run(&app);
+    /* The LVGL C GUI was replaced by the Python web GUI (webgui.py). This
+     * standalone binary keeps the interactive/headless background service: the
+     * optional web front-end is launched separately with run.sh. */
+    int rc = (wtsn_app_run(&app) == WTSN_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
     wtsn_app_shutdown(&app);
     return rc;
 }

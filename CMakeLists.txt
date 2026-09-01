@@ -68,6 +68,7 @@ set(WTSN_SOURCES
   src/stream/tsn_manager.c
   src/mqtt/mqtt_client.c
   src/fxmqtt/fxmqtt.c
+  src/telemetry/wtsn_telemetry.c
   src/trace/trace.c
   src/plugin/plugin_manager.c
 )

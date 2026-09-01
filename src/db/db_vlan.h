@@ -24,5 +24,6 @@ wtsn_error wtsn_db_vlan_member_add(wtsn_db *db, const wtsn_vlan_member *m);
 wtsn_error wtsn_db_vlan_member_remove(wtsn_db *db, const char *group_id, const char *device_id);
 typedef int (*wtsn_db_vlan_member_cb)(const wtsn_vlan_member *m, void *userdata);
 void wtsn_db_vlan_member_for_each_group(wtsn_db *db, const char *group_id, wtsn_db_vlan_member_cb cb, void *userdata);
+void wtsn_db_vlan_member_for_each_all(wtsn_db *db, wtsn_db_vlan_member_cb cb, void *userdata);
 
 #endif

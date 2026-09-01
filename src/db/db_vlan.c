@@ -90,3 +90,19 @@ void wtsn_db_vlan_member_for_each_group(wtsn_db *db, const char *group_id,
     }
     sqlite3_finalize(st);
 }
+
+void wtsn_db_vlan_member_for_each_all(wtsn_db *db, wtsn_db_vlan_member_cb cb, void *userdata) {
+    if (!db || !db->handle || !cb) return;
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db->handle,
+        "SELECT group_id,device_id FROM vlan_members;", -1, &st, NULL) != SQLITE_OK)
+        return;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        wtsn_vlan_member m;
+        memset(&m, 0, sizeof(m));
+        wtsn_strlcpy(m.group_id, (const char *)sqlite3_column_text(st, 0), sizeof(m.group_id));
+        wtsn_strlcpy(m.device_id, (const char *)sqlite3_column_text(st, 1), sizeof(m.device_id));
+        if (cb(&m, userdata) != 0) break;
+    }
+    sqlite3_finalize(st);
+}

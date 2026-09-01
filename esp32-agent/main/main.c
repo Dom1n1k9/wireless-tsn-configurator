@@ -498,10 +498,11 @@ void app_main(void) {
         /* periodic heartbeat so the webgui can mark offline if we disappear */
         if (g_mqtt && esp_timer_get_time() - last_beat >= 10000000) {
             last_beat = esp_timer_get_time();
-            char buf[96];
+            char buf[128];
             snprintf(buf, sizeof(buf),
-                    "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\"}",
-                    g_device_id);
+                    "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\","
+                    "\"ssid\":\"%s\"}",
+                    g_device_id, g_ctx.ssid);
             wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
         }
         vTaskDelay(pdMS_TO_TICKS(500));
