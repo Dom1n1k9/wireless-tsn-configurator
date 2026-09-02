@@ -1,5 +1,9 @@
 #include "mqtt/mqtt_client.h"
 
+#include "mvc/event_bus.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 
 #include <stdlib.h>

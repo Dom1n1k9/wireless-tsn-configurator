@@ -28,23 +28,71 @@ jobs:
         working-directory: build
         run: ./wtsn-tests
 
-      - name: Check webgui.py compiles / parses
-        run: python3 -m py_compile webgui.py
-
-      - name: Run web GUI smoke test
-        run: |
-          python3 -c "import ast; ast.parse(open('webgui.py').read()); print('webgui.py syntax OK')"
-
       - name: CPack package
         working-directory: build
         run: cpack -G TGZ
 
-  webgui-audit:
-    name: Web GUI static check
+  python:
+    name: Web GUI lint & tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install python
-        run: sudo apt-get update && sudo apt-get install -y python3
-      - name: Py compile
-        run: python3 -m py_compile webgui.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip paho-mqtt ruff
+
+      - name: Ruff
+        run: ruff check webgui.py wtsn_webgui tests
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+  sanitizer:
+    name: Sanitized build & test (ASan/UBSan)
+    runs-on: ubuntu-latest
+    # Experimental job: make blocking once the baseline is clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsqlite3-dev libmosquitto-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build-asan -- -j$(nproc)
+
+      - name: Run tests
+        working-directory: build-asan
+        run: ASAN_OPTIONS=detect_leaks=1 ./wtsn-tests
+
+  cppcheck:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-latest
+    # Informational only for now; promote to blocking when noise is down.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,performance,portability \
+            --std=c11 --language=c -Isrc \
+            --suppress=missingIncludeSystem \
+            src/common src/mvc src/db src/device src/domain src/config_version \
+            src/qos src/vlan src/tas src/sensors src/stream src/mqtt src/fxmqtt \
+            src/telemetry src/trace src/plugin src/app 2>&1 | tee cppcheck.log

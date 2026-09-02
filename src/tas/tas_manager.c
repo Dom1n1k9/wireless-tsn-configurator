@@ -1,5 +1,11 @@
 #include "tas/tas_manager.h"
 
+#include "db/db_tas.h"
+
+#include "tas/tas.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "mvc/model.h"
 

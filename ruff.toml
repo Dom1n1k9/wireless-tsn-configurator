@@ -1,0 +1,6 @@
+# Lint focuses on real defects (pyflakes F, runtime errors E9).
+# A full style migration of the legacy code is tracked separately.
+line-length = 100
+
+[lint]
+select = ["F", "E9"]

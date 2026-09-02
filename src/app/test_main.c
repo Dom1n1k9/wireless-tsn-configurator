@@ -1,8 +1,17 @@
 #include "common/common.h"
+
+#include "db/db_devices.h"
+
+#include "device/device.h"
+
+#include "tas/gcl.h"
 #include "common/str_util.h"
+#include "config_version/config_version_manager.h"
 #include "db/db.h"
 #include "db/db_tsn.h"
 #include "device/device_manager.h"
+#include "db/db_qos.h"
+#include "mvc/event_bus.h"
 #include "qos/qos.h"
 #include "sensors/sensor.h"
 #include "stream/stream.h"
@@ -12,6 +21,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int tests_run = 0;
@@ -186,6 +196,130 @@ static void test_stream_db_roundtrip(void) {
     remove("test_stream.db");
 }
 
+static void test_str_util(void) {
+    char buf[8];
+    memset(buf, 'x', sizeof(buf));
+
+    CHECK(wtsn_strlcpy(buf, "hello", sizeof(buf)) == 5);
+    CHECK(strcmp(buf, "hello") == 0);
+
+    CHECK(wtsn_strlcpy(buf, "hello world", sizeof(buf)) == 11);
+    CHECK(strcmp(buf, "hello w") == 0);
+
+    memset(buf, 'x', sizeof(buf));
+    CHECK(wtsn_strlcpy(buf, "abc", 0) == 0);
+    CHECK(buf[0] == 'x');
+
+    char s[32];
+    wtsn_strlcpy(s, "  pad \t", sizeof(s));
+    wtsn_str_trim(s);
+    CHECK(strcmp(s, "pad") == 0);
+
+    CHECK(wtsn_str_starts_with("wireless-tsn", "wireless") == true);
+    CHECK(wtsn_str_starts_with("wireless", "tsn") == false);
+
+    char *d = wtsn_str_dup("dup me");
+    CHECK(d != NULL);
+    if (d) {
+        CHECK(strcmp(d, "dup me") == 0);
+        free(d);
+    }
+
+    CHECK(wtsn_str_valid_utf8("plain ascii") == 1);
+    char bad[4];
+    bad[0] = (char)0xFF;
+    bad[1] = 'a';
+    bad[2] = '\0';
+    CHECK(wtsn_str_valid_utf8(bad) == 0);
+    CHECK(wtsn_str_valid_utf8(NULL) == 0);
+}
+
+static int ev_count_a = 0;
+static int ev_count_star = 0;
+static char ev_topic[WTSN_MAX_STR];
+
+static void ev_handler(const char *topic, void *data, void *userdata) {
+    (void)data;
+    *(int *)userdata += 1;
+    wtsn_strlcpy(ev_topic, topic, sizeof(ev_topic));
+}
+
+static void test_event_bus(void) {
+    ev_count_a = 0;
+    ev_count_star = 0;
+    ev_topic[0] = '\0';
+    wtsn_event_bus *bus = wtsn_event_bus_create();
+    CHECK(bus != NULL);
+    if (!bus) return;
+
+    CHECK(wtsn_event_bus_subscribe(bus, "tsn", ev_handler, &ev_count_a) == WTSN_OK);
+    CHECK(wtsn_event_bus_subscribe(bus, "*", ev_handler, &ev_count_star) == WTSN_OK);
+    CHECK(wtsn_event_bus_subscribe(bus, NULL, ev_handler, &ev_count_a) == WTSN_ERR_INVALID_ARG);
+    CHECK(wtsn_event_bus_subscribe(NULL, "tsn", ev_handler, &ev_count_a) == WTSN_ERR_INVALID_ARG);
+
+    wtsn_event_bus_publish(bus, "tsn/cmd/apply", NULL);
+    CHECK(ev_count_a == 1);
+    CHECK(ev_count_star == 1);
+    CHECK(strcmp(ev_topic, "tsn/cmd/apply") == 0);
+
+    wtsn_event_bus_publish(bus, "other/topic", NULL);
+    CHECK(ev_count_a == 1);
+    CHECK(ev_count_star == 2);
+
+    wtsn_event_bus_destroy(bus);
+}
+
+static void test_config_version(void) {
+    wtsn_db db;
+    CHECK(wtsn_db_open(&db, "test_cfgver.db") == WTSN_OK);
+    wtsn_event_bus *bus = wtsn_event_bus_create();
+    wtsn_config_version_manager *m = wtsn_cfg_ver_manager_create(&db, bus);
+    CHECK(m != NULL);
+    if (!m) {
+        wtsn_event_bus_destroy(bus);
+        wtsn_db_close(&db);
+        remove("test_cfgver.db");
+        return;
+    }
+
+    CHECK(wtsn_cfg_ver_snapshot(m, "v1", NULL) == WTSN_OK);
+    CHECK(wtsn_cfg_ver_count(m) == 1);
+
+    wtsn_qos_config q;
+    memset(&q, 0, sizeof(q));
+    wtsn_strlcpy(q.device_id, "d1", sizeof(q.device_id));
+    q.priority = 5;
+    q.traffic_class = 5;
+    q.bandwidth_kbps = 1000;
+    q.latency_ms = 5;
+    CHECK(wtsn_db_qos_save(&db, &q) == WTSN_OK);
+    CHECK(wtsn_cfg_ver_snapshot(m, "v2", NULL) == WTSN_OK);
+    CHECK(wtsn_cfg_ver_count(m) == 2);
+
+    char out[4096];
+    CHECK(wtsn_cfg_ver_diff(m, 1, 2, out, sizeof(out)) == WTSN_OK);
+    CHECK(strstr(out, "qos:d1:p=5") != NULL);
+
+    CHECK(wtsn_cfg_ver_diff(m, 1, 1, out, sizeof(out)) == WTSN_OK);
+    CHECK(strcmp(out, "no differences") == 0);
+
+    q.priority = 7;
+    q.traffic_class = 7;
+    CHECK(wtsn_db_qos_save(&db, &q) == WTSN_OK);
+    CHECK(wtsn_cfg_ver_rollback(m, 2) == WTSN_OK);
+    wtsn_qos_config loaded;
+    memset(&loaded, 0, sizeof(loaded));
+    CHECK(wtsn_db_qos_load(&db, "d1", &loaded) == WTSN_OK);
+    CHECK(loaded.priority == 5);
+
+    CHECK(wtsn_cfg_ver_rollback(m, 999) == WTSN_ERR_NOT_FOUND);
+
+    wtsn_cfg_ver_manager_destroy(m);
+    wtsn_event_bus_destroy(bus);
+    wtsn_db_close(&db);
+    remove("test_cfgver.db");
+}
+
 int main(void) {
     test_device();
     test_qos_validation();
@@ -196,6 +330,9 @@ int main(void) {
     test_db_roundtrip();
     test_stream_validate();
     test_stream_db_roundtrip();
+    test_str_util();
+    test_event_bus();
+    test_config_version();
 
     printf("%d tests, %d failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;

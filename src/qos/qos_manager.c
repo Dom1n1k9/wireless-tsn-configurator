@@ -1,5 +1,11 @@
 #include "qos/qos_manager.h"
 
+#include "db/db_qos.h"
+
+#include "qos/qos.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "mvc/model.h"
 

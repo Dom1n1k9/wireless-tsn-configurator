@@ -1,5 +1,37 @@
 #include "app/app.h"
 
+#include "config_version/config_version_manager.h"
+
+#include "db/db.h"
+
+#include "device/device_manager.h"
+
+#include "domain/domain_manager.h"
+
+#include "mvc/event_bus.h"
+
+#include "fxmqtt/fxmqtt.h"
+
+#include "mqtt/mqtt_client.h"
+
+#include "plugin/plugin_manager.h"
+
+#include "qos/qos_manager.h"
+
+#include "sensors/sensor_manager.h"
+
+#include "tas/tas_manager.h"
+
+#include "telemetry/wtsn_telemetry.h"
+
+#include "timesync/timesync_manager.h"
+
+#include "trace/trace.h"
+
+#include "stream/tsn_manager.h"
+
+#include "vlan/vlan_manager.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 

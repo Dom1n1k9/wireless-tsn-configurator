@@ -1,5 +1,7 @@
 #include "fxmqtt/fxmqtt.h"
 
+#include "mqtt/mqtt_client.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 

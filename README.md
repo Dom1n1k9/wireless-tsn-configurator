@@ -72,6 +72,15 @@ python3 webgui.py
 > you prefer manual control. The GUI is also self-healing: a watchdog re-checks it
 > every 4 s and restarts it if it wedges (log: `/tmp/wtsn_mon.log`).
 
+**Windows:** `run.ps1` is the Windows equivalent — it detects your LAN IP, starts
+mosquitto (if `mosquitto.exe` is on PATH) listening on `0.0.0.0:1883`, launches the
+web GUI in the background with a health-check restart loop, and opens the browser.
+
+```powershell
+.\run.ps1            # broker + GUI + browser
+.\run.ps1 -Headless  # services only, no browser
+```
+
 ### Desktop launcher (double-click)
 
 Nemo / Nautilus execute text files the wrong way, so double-clicking `run.sh` does
@@ -118,6 +127,21 @@ If a node can no longer reach its saved network, it gives up after a few failed 
 and **automatically restarts the `WTSN-Setup` SoftAP + portal** so you can re-point
 it over the air. Each board advertises a **unique SSID** (`WTSN-Setup-<device-id>`)
 so you can tell multiple boards apart in setup mode.
+
+### Security note: plaintext provisioning
+
+The provisioning portal is intentional **plain HTTP on an open SoftAP** (no TLS, no
+SoftAP password): the WiFi password is transmitted in cleartext from your phone/PC to
+the board. This is the standard trade-off for zero-touch onboarding (ESP's own
+provisioning examples do the same in their basic form), but it means:
+
+- anyone on the `WTSN-Setup-<id>` SoftAP can read the credentials being entered;
+- the portal is only reachable from that SoftAP, so the exposure window is the few
+  minutes you spend provisioning, not your production network.
+
+For sensitive deployments, keep provisioning physically supervised, or change the
+`PROV_AP_PASS` in `shared/wtsn_prov/wtsn_prov.c` to put the SoftAP behind WPA2.
+After provisioning the SoftAP is gone and normal operation only uses MQTT.
 
 ---
 
@@ -336,11 +360,15 @@ src/
   agent/      firmware agent for physical nodes
   simulator/  generic node simulator
   plugin/     loadable protocol plugins (.so)
-esp32-agent/   ESP-IDF ESP32 firmware agent component and provisioning
+esp32-agent/   ESP-IDF ESP32 firmware agent
+esp32-cam/     ESP-IDF ESP32-CAM firmware (MJPEG stream node)
+shared/        shared ESP-IDF components (wtsn_prov provisioning portal, wtsn_version)
 microbit-sensor/  micro:bit V2 display panel (wired UART to the ESP agent)
 profiles/      device profile templates (.ini)
 docs/          ARCHITECTURE, BUILD, SIMULATOR
-webgui.py      Python web GUI (single file, stdlib + paho-mqtt)
+webgui.py      entry-point shim for the web GUI
+wtsn_webgui/   Python web GUI package (MQTT broker, DB, actions, HTTP server)
+tests/         Python unit + HTTP smoke tests
 launcher/      desktop launcher + autostart
 ```
 

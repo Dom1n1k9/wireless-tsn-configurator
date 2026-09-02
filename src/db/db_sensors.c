@@ -1,5 +1,7 @@
 #include "db/db_sensors.h"
 
+#include "sensors/sensor.h"
+
 #include "common/str_util.h"
 
 #include <string.h>

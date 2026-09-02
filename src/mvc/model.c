@@ -1,5 +1,9 @@
 #include "mvc/model.h"
 
+#include "mvc/event_bus.h"
+
+#include "common/str_util.h"
+
 #include <string.h>
 
 void wtsn_model_init(wtsn_model *m, const char *name, wtsn_event_bus *bus) {

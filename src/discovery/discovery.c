@@ -1,5 +1,7 @@
 #include "discovery/discovery.h"
 
+#include "common/str_util.h"
+
 #include <stdlib.h>
 #include <string.h>
 

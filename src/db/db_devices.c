@@ -1,5 +1,7 @@
 #include "db/db_devices.h"
 
+#include "device/device.h"
+
 #include "common/str_util.h"
 
 #include <string.h>

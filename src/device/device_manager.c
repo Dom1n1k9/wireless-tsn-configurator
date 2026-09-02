@@ -1,5 +1,11 @@
 #include "device/device_manager.h"
 
+#include "db/db_devices.h"
+
+#include "plugin/plugin_manager.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "mvc/model.h"
 

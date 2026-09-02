@@ -1,5 +1,7 @@
 #include "trace/trace.h"
 
+#include "common/str_util.h"
+
 #include "db/db_trace_log.h"
 #include "mvc/model.h"
 #include "common/log.h"

@@ -1,5 +1,7 @@
 #include "mvc/event_bus.h"
 
+#include "common/str_util.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>

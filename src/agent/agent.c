@@ -1,4 +1,6 @@
 #include "agent/agent.h"
+
+#include "mqtt/mqtt_client.h"
 #include "agent/agent_providers.h"
 
 #include "common/log.h"

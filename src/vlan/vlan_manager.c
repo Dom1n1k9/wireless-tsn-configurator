@@ -1,5 +1,11 @@
 #include "vlan/vlan_manager.h"
 
+#include "db/db_vlan.h"
+
+#include "vlan/vlan.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "mvc/model.h"
 

@@ -1,4 +1,6 @@
 build/
+build_verify/
+build_win/
 __pycache__/
 *.pyc
 *.o
@@ -10,6 +12,9 @@ __pycache__/
 .vscode/
 esp32-agent/sdkconfig
 esp32-agent/sdkconfig.old
+esp32-cam/sdkconfig
+esp32-cam/sdkconfig.old
+esp32-cam/managed_components/
 webgui_*.log
 microbit-sensor/built/
 microbit-sensor/node_modules/

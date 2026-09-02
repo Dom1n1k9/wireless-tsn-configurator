@@ -1,5 +1,9 @@
 #include "stream/tsn_manager.h"
 
+#include "mqtt/mqtt_client.h"
+
+#include "stream/stream.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 #include "db/db_tsn.h"

@@ -102,7 +102,8 @@ endif()
 
 # ---- TSN Node Simulator (independent feature; does not touch core) ----
 set(SIM_SOURCES
-  src/simulator/common/sim_log.c
+  src/common/log.c
+  src/common/str_util.c
   src/simulator/common/sim_str.c
   src/simulator/core/sim_device.c
   src/simulator/core/sim_simulator.c
@@ -149,6 +150,8 @@ endif()
 
 if(BUILD_GUI AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/webgui.py")
   install(PROGRAMS webgui.py
+          DESTINATION ${WTSN_INSTALL_BINDIR})
+  install(DIRECTORY wtsn_webgui
           DESTINATION ${WTSN_INSTALL_BINDIR})
 endif()
 

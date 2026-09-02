@@ -1,5 +1,7 @@
 #include "domain/domain_manager.h"
 
+#include "db/db_domains.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 #include "db/db_devices.h"

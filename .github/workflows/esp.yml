@@ -1,0 +1,56 @@
+name: ESP firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "esp32-agent/**"
+      - "esp32-cam/**"
+      - ".github/workflows/esp.yml"
+  pull_request:
+    paths:
+      - "esp32-agent/**"
+      - "esp32-cam/**"
+      - ".github/workflows/esp.yml"
+  workflow_dispatch:
+
+jobs:
+  build-agent:
+    name: Build esp32-agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: espressif/idf-setup-action@v3
+        with:
+          version: v5.3
+
+      - name: Build
+        working-directory: esp32-agent
+        run: idf.py build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-agent-firmware
+          path: esp32-agent/build/*.bin
+          if-no-files-found: warn
+
+  build-cam:
+    name: Build esp32-cam
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: espressif/idf-setup-action@v3
+        with:
+          version: v5.3
+
+      - name: Build
+        working-directory: esp32-cam
+        run: idf.py build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-cam-firmware
+          path: esp32-cam/build/*.bin
+          if-no-files-found: warn

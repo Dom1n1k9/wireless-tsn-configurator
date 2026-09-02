@@ -20,6 +20,7 @@
 #include "wtsn_prov.h"
 #include "wtsn_sensor.h"
 #include "wtsn_uart.h"
+#include "wtsn_version.h"
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
@@ -57,10 +58,10 @@ static void crate_set_wifi(const char *payload) {
 
 static void on_connected(const char *client_id, void *ud) {
     (void)client_id; (void)ud;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"id\":\"%s\"}", g_device_id);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"fw\":\"%s\"}", g_device_id, WTSN_FW_VERSION);
     wtsn_mqtt_publish(g_mqtt, "tsn/discover", buf);
-    ESP_LOGI(TAG, "published discover for %s", g_device_id);
+    ESP_LOGI(TAG, "published discover for %s (fw %s)", g_device_id, WTSN_FW_VERSION);
 }
 
 static void apply_snapshot(const char *payload) {
@@ -181,12 +182,12 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         wtsn_tsn_state *st = wtsn_tsn_get_state();
         char buf[256];
         snprintf(buf, sizeof(buf),
-                 "{\"id\":\"%s\",\"status\":\"online\",\"prio\":%d,\"vlan\":%d,"
-                 "\"preempt\":%d,\"tc\":%d,\"tas_cycle_ns\":%lld,\"gcl_entries\":%d,"
-                 "\"timesync_mode\":%d}",
-                 g_device_id, st->priority, st->vlan_id, st->preemption,
-                 st->traffic_class, (long long)st->tas_cycle_ns, st->gcl_entries,
-                 st->timesync_mode);
+                  "{\"id\":\"%s\",\"status\":\"online\",\"prio\":%d,\"vlan\":%d,"
+                  "\"preempt\":%d,\"tc\":%d,\"tas_cycle_ns\":%lld,\"gcl_entries\":%d,"
+                  "\"timesync_mode\":%d,\"fw\":\"%s\"}",
+                  g_device_id, st->priority, st->vlan_id, st->preemption,
+                  st->traffic_class, (long long)st->tas_cycle_ns, st->gcl_entries,
+                  st->timesync_mode, WTSN_FW_VERSION);
         wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
     } else if (strcmp(cmd, "fx") == 0) {
         char buf[64];
@@ -457,6 +458,16 @@ static void wifi_init(const char *ssid, const char *pass) {
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
+static void prov_save(const char *ssid, const char *pass,
+                      const char *devid, const char *mqtt) {
+    wtsn_cfg_save(devid && devid[0] ? devid : NULL, ssid, pass, mqtt, 1883);
+    wtsn_cfg_net_add(ssid, pass);
+}
+
+static bool prov_load_id(char *out, size_t sz) {
+    return wtsn_cfg_load_device_id(out, &sz);
+}
+
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     blink_led();
@@ -466,6 +477,7 @@ void app_main(void) {
     char mqtt_host[64] = {0};
     int mqtt_port = 1883;
     ensure_device_id();
+    wtsn_prov_init("WTSN Node Setup", "192.168.1.10", prov_save, prov_load_id);
     wtsn_cfg_load(g_device_id, sizeof(g_device_id),
                   wifi_ssid, sizeof(wifi_ssid), wifi_pass, sizeof(wifi_pass),
                   mqtt_host, sizeof(mqtt_host), &mqtt_port);
@@ -501,8 +513,8 @@ void app_main(void) {
             char buf[192];
             snprintf(buf, sizeof(buf),
                     "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\","
-                    "\"ssid\":\"%s\"}",
-                    g_device_id, g_ctx.ssid);
+                    "\"ssid\":\"%s\",\"fw\":\"%s\"}",
+                    g_device_id, g_ctx.ssid, WTSN_FW_VERSION);
             wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
         }
         vTaskDelay(pdMS_TO_TICKS(500));

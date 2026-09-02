@@ -1,5 +1,11 @@
 #include "timesync/timesync_manager.h"
 
+#include "db/db_timesync.h"
+
+#include "timesync/timesync.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "db/db_timesync_report.h"
 #include "mvc/model.h"

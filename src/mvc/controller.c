@@ -1,5 +1,7 @@
 #include "mvc/controller.h"
 
+#include "common/str_util.h"
+
 #include <stdlib.h>
 #include <string.h>
 

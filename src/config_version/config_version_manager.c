@@ -1,5 +1,7 @@
 #include "config_version/config_version_manager.h"
 
+#include "device/device.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 #include "db/db_config_versions.h"

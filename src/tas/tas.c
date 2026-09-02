@@ -1,5 +1,7 @@
 #include "tas/tas.h"
 
+#include "tas/gcl.h"
+
 #include <string.h>
 
 wtsn_error wtsn_tas_validate(const wtsn_tas_schedule_model *s) {

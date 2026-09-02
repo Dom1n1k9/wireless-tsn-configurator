@@ -1,5 +1,7 @@
 #include "db/db_timesync.h"
 
+#include "timesync/timesync.h"
+
 #include "common/str_util.h"
 
 #include <string.h>

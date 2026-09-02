@@ -1,5 +1,9 @@
 #include "sensors/sensor_manager.h"
 
+#include "db/db_sensors.h"
+
+#include "common/str_util.h"
+
 #include "common/log.h"
 #include "mvc/model.h"
 

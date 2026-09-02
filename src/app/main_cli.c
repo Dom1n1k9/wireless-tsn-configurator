@@ -1,4 +1,6 @@
 #include "app/app.h"
+
+#include "device/device_manager.h"
 #include "common/log.h"
 
 #include <stdio.h>

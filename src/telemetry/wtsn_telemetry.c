@@ -1,5 +1,9 @@
 #include "telemetry/wtsn_telemetry.h"
 
+#include "device/device_manager.h"
+
+#include "mqtt/mqtt_client.h"
+
 #include "common/log.h"
 #include "common/str_util.h"
 

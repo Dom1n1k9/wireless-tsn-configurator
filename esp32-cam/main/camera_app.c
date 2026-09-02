@@ -25,6 +25,8 @@
 #include "mqtt_client.h"
 #include "driver/gpio.h"
 #include "esp_camera.h"
+#include "wtsn_prov.h"
+#include "wtsn_version.h"
 
 static const char *TAG = "cam_agent";
 
@@ -61,139 +63,23 @@ static void nvs_str_set(const char *key, const char *val) {
     nvs_commit(h);
     nvs_close(h);
 }
-static bool nvs_has_wifi(void) {
-    nvs_handle_t h; char v[64] = {0}; size_t len = sizeof(v);
-    if (nvs_open("wtsn", NVS_READONLY, &h) != ESP_OK) return false;
-    esp_err_t e = nvs_get_str(h, "wifi_ssid", v, &len);
-    nvs_close(h);
-    return e == ESP_OK && v[0];
-}
-
 static char g_device_id[32] = "esp32-cam-01";
 static esp_mqtt_client_handle_t g_mqtt = NULL;
 static httpd_handle_t g_stream_server = NULL;
 
-/* ---------------- provisioning portal (SoftAP + config form) ---------------- */
-static int hex_val(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-static void url_decode(char *s) {
-    char *r = s;
-    while (*s) {
-        if (*s == '%' && s[1] && s[2]) {
-            int hi = hex_val(s[1]), lo = hex_val(s[2]);
-            if (hi >= 0 && lo >= 0) { *r++ = (char)((hi << 4) | lo); s += 3; continue; }
-        }
-        if (*s == '+') { *r++ = ' '; s++; continue; }
-        *r++ = *s++;
-    }
-    *r = '\0';
-}
-
-static esp_err_t prov_config_handler(httpd_req_t *req) {
-    char body[512] = {0};
-    int len = req->content_len;
-    if (len > (int)sizeof(body) - 1) len = (int)sizeof(body) - 1;
-    int got = httpd_req_recv(req, body, len);
-    if (got <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no body"); return ESP_FAIL; }
-    body[got] = '\0';
-    char ssid[64] = {0}, pass[64] = {0}, mqtt[64] = {0}, id[32] = {0};
-    char *save = NULL;
-    char *k = strtok_r(body, "&", &save);
-    while (k) {
-        char copy[128]; snprintf(copy, sizeof(copy), "%s", k);
-        char *eq = strchr(copy, '=');
-        if (!eq) { k = strtok_r(NULL, "&", &save); continue; }
-        *eq = '\0'; char *val = eq + 1; url_decode(val);
-        if (!strcmp(copy, "ssid")) snprintf(ssid, sizeof(ssid), "%s", val);
-        else if (!strcmp(copy, "pass")) snprintf(pass, sizeof(pass), "%s", val);
-        else if (!strcmp(copy, "mqtt")) snprintf(mqtt, sizeof(mqtt), "%s", val);
-        else if (!strcmp(copy, "id")) snprintf(id, sizeof(id), "%s", val);
-        k = strtok_r(NULL, "&", &save);
-    }
-    if (!ssid[0]) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required"); return ESP_FAIL; }
-    if (!mqtt[0]) snprintf(mqtt, sizeof(mqtt), "wtsn-broker.local");
-    if (id[0]) nvs_str_set("device_id", id);
+/* ---------------- provisioning (shared component: shared/wtsn_prov) ---------------- */
+static void cam_prov_save(const char *ssid, const char *pass,
+                          const char *devid, const char *mqtt) {
+    if (devid && devid[0]) nvs_str_set("device_id", devid);
     nvs_str_set("wifi_ssid", ssid);
     nvs_str_set("wifi_pass", pass);
     nvs_str_set("mqtt_host", mqtt);
-    const char *ok = "<html><body><h1>OK</h1><p>Connecting... restart.</p></body></html>";
-    httpd_resp_sendstr(req, ok);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-    return ESP_OK;
 }
 
-static esp_err_t prov_root_handler(httpd_req_t *req) {
-    const char *html =
-        "<!doctype html><html><head><meta charset=utf-8><title>WTSN CAM Setup</title></head>"
-        "<body style='font-family:sans-serif;max-width:440px;margin:40px auto'>"
-        "<h1>WTSN ESP32-CAM Setup</h1>"
-        "<form method='POST' action='/config'>"
-        "<p><label>WiFi SSID <input name='ssid' required></label></p>"
-        "<p><label>WiFi password <input name='pass' type='password'></label></p>"
-        "<p><label>MQTT broker host <input name='mqtt' value='wtsn-broker.local'></label></p>"
-        "<p><label>Node id <input name='id' value='esp32-cam-01'></label></p>"
-        "<button>Save &amp; connect</button>"
-        "</form></body></html>";
-    httpd_resp_sendstr(req, html);
-    return ESP_OK;
-}
-
-static void start_prov_ap(void) {
-    esp_netif_init();
-    esp_event_loop_create_default();
-    esp_netif_create_default_wifi_ap();
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    wifi_config_t ap = {
-        .ap = {
-            .ssid = "WTSN-Setup", .ssid_len = strlen("WTSN-Setup"),
-            .password = "", .max_connection = 4, .authmode = WIFI_AUTH_OPEN,
-        },
-    };
-    esp_wifi_set_mode(WIFI_MODE_APSTA);
-    esp_wifi_set_config(WIFI_IF_AP, &ap);
-    esp_wifi_start();
-    httpd_handle_t server = NULL;
-    httpd_config_t conf = HTTPD_DEFAULT_CONFIG();
-    conf.lru_purge_enable = true;
-    if (httpd_start(&server, &conf) == ESP_OK) {
-        httpd_uri_t r1 = { .uri = "/", .method = HTTP_GET, .handler = prov_root_handler, .user_ctx = NULL };
-        httpd_uri_t r2 = { .uri = "/config", .method = HTTP_POST, .handler = prov_config_handler, .user_ctx = NULL };
-        httpd_register_uri_handler(server, &r1);
-        httpd_register_uri_handler(server, &r2);
-        ESP_LOGI(TAG, "provisioning portal ready on http://192.168.4.1/");
-    }
-}
-
-/* Re-provision variant: the STA stack (netif + esp_wifi_init) is already up from the
- * normal boot path, so only add the AP netif and switch to APSTA. Serves the same
- * config portal. */
-static void start_reprov_ap(void) {
-    esp_netif_create_default_wifi_ap();
-    wifi_config_t ap = {
-        .ap = {
-            .ssid = "WTSN-Setup", .ssid_len = strlen("WTSN-Setup"),
-            .password = "", .max_connection = 4, .authmode = WIFI_AUTH_OPEN,
-        },
-    };
-    esp_wifi_set_mode(WIFI_MODE_APSTA);
-    esp_wifi_set_config(WIFI_IF_AP, &ap);
-    esp_wifi_start();
-    httpd_handle_t server = NULL;
-    httpd_config_t conf = HTTPD_DEFAULT_CONFIG();
-    conf.lru_purge_enable = true;
-    ESP_ERROR_CHECK(httpd_start(&server, &conf));
-    httpd_uri_t r1 = { .uri = "/", .method = HTTP_GET, .handler = prov_root_handler, .user_ctx = NULL };
-    httpd_uri_t r2 = { .uri = "/config", .method = HTTP_POST, .handler = prov_config_handler, .user_ctx = NULL };
-    httpd_register_uri_handler(server, &r1);
-    httpd_register_uri_handler(server, &r2);
-    ESP_LOGI(TAG, "re-provisioning portal ready on http://192.168.4.1/");
+static bool cam_prov_load_id(char *out, size_t sz) {
+    nvs_str_get("device_id", out, sz);
+    if (!out[0]) snprintf(out, sz, "esp32-cam-01");
+    return out[0] != '\0';
 }
 
 /* ---------------- camera init ---------------- */
@@ -285,8 +171,8 @@ static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_
     (void)base; (void)event_data;
     if (event_id == MQTT_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "MQTT connected; publishing discover");
-        char buf[64];
-        snprintf(buf, sizeof(buf), "{\"id\":\"%s\"}", g_device_id);
+        char buf[96];
+        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"fw\":\"%s\"}", g_device_id, WTSN_FW_VERSION);
         esp_mqtt_client_publish(g_mqtt, "tsn/discover", buf, 0, 1, 0);
     }
 }
@@ -328,7 +214,7 @@ static void reprov_task(void *arg) {
     if (g_reprov_started) { vTaskDelete(NULL); return; }
     g_reprov_started = 1;
     ESP_LOGW(TAG, "unable to connect on '%s' -> starting provisioning AP", g_ctx.ssid);
-    start_reprov_ap();   /* blocks serving the portal; user config -> restart */
+    wtsn_prov_start_ap();   /* blocks serving the portal; user config -> restart */
     vTaskDelete(NULL);
 }
 
@@ -390,8 +276,10 @@ void app_main(void) {
     nvs_str_get("device_id", g_device_id, sizeof(g_device_id));
     if (g_device_id[0] == '\0') snprintf(g_device_id, sizeof(g_device_id), "esp32-cam-01");
 
+    wtsn_prov_init("WTSN CAM Setup", "wtsn-broker.local", cam_prov_save, cam_prov_load_id);
+
     if (!wifi_ssid[0]) {
-        start_prov_ap();
+        wtsn_prov_start();
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
 

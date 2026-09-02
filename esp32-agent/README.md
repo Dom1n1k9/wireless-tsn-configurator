@@ -32,6 +32,12 @@ Subsequent boots skip provisioning because the credentials are already in NVS.
 To re-provision later, use the `wifi` MQTT command from the web GUI
 (`tsn/cmd/<id>/wifi` with JSON `{"ssid":...,"pass":...,"mqtt":...}`).
 
+> **Security note:** the portal is plain HTTP on an open SoftAP, so the WiFi
+> password is sent in cleartext while provisioning. The SoftAP is only up for
+> the few minutes of provisioning, after which it is gone. Set `PROV_AP_PASS`
+> in `shared/wtsn_prov/wtsn_prov.c` to WPA2-protect the setup AP if you need
+> more. See the main README, *Security note: plaintext provisioning*.
+
 ## Out-of-band configuration via NVS
 
 You can also pre-seed settings in NVS (`idf.py menuconfig` not wired to these;

@@ -1,5 +1,7 @@
 #include "device/device.h"
 
+#include "common/str_util.h"
+
 #include <string.h>
 #include <strings.h>
 
