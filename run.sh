@@ -6,9 +6,14 @@ set -e
 #  MQTT broker + web GUI + browser (+ optional flash)
 # ============================================================
 
-PROJ_DIR="$HOME/Documents/wtsn-configurator"
+PROJ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ESP_DIR="$PROJ_DIR/esp32-agent"
-IDF_PATH="$HOME/esp/eim_workspace/v5.3/esp-idf"
+# ESP-IDF: use $IDF_PATH if set, else common install locations
+if [ -z "$IDF_PATH" ]; then
+    for d in "$HOME/esp/esp-idf" "$HOME/esp/eim_workspace/v5.3/esp-idf" "/opt/esp-idf"; do
+        if [ -f "$d/export.sh" ]; then IDF_PATH="$d"; break; fi
+    done
+fi
 MQTT_HOST_FALLBACK="192.168.0.149"   # this PC IP (broker) - auto-detected below
 MQTT_PORT=1883
 GUI_PORT=8000
@@ -202,6 +207,10 @@ open_prov_terminal() {
 
 # ---------------- 5) optional flash ----------------
 do_flash() {
+    if [ -z "$IDF_PATH" ] || [ ! -f "$IDF_PATH/export.sh" ]; then
+        log "ESP-IDF not found - install it or set IDF_PATH=/path/to/esp-idf"
+        return 1
+    fi
     if [ ! -f "$ESP_DIR/build/wtsn_esp32_agent.bin" ]; then
         log "firmware not built - building ..."
         bash -c "source $IDF_PATH/export.sh >/dev/null 2>&1 && cd $ESP_DIR && idf.py build"

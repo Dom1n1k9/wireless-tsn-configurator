@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(wtsn-configurator VERSION 1.0.0 LANGUAGES C)
+project(wtsn-configurator VERSION 1.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ endif()
 
 option(BUILD_GUI "Install webgui.py (Python web front-end)" ON)
 option(BUILD_PLUGINS "Build sample protocol plugins" ON)
-set(WTSN_VERSION "1.0.0")
+set(WTSN_VERSION "1.1.0")
 
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
