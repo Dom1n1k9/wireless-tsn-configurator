@@ -164,6 +164,27 @@ static int bme280_init(void) {
     return 0;
 }
 
+bool wtsn_sensor_probe(void) {
+    /* Role probe: the board is the "sensor node" (esp32-01) iff the BME280 is
+     * on the I2C bus. TEMT6000/PIR are NOT used: a floating ADC/pin can read as
+     * "wired", so only the BME280 chip-ID check is unambiguous. */
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = WTSN_I2C_SDA,
+        .scl_io_num = WTSN_I2C_SCL,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master = { .clk_speed = WTSN_I2C_FREQ_HZ },
+    };
+    i2c_param_config(WTSN_I2C_PORT, &conf);
+    i2c_driver_install(WTSN_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+
+    uint8_t chip = 0;
+    bool ok = (bme_reg_read8(BME280_ID_REG, &chip) == ESP_OK && chip == 0x60);
+    ESP_LOGI(TAG, "sensor probe: %s (BME280 chip=0x%02x)", ok ? "BME280 present" : "no BME280", chip);
+    return ok;
+}
+
 static int bme280_read(float *temp_c, float *press_hpa, float *hum_pct) {
     if (!g_bme_ok) return -1;
     uint8_t buf[8];
@@ -285,8 +306,6 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
     i2c_driver_install(WTSN_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
 
     bme280_init();
-
-    /* PIR */
     gpio_config_t io = {0};
     io.pin_bit_mask = (1ULL << WTSN_PIR_GPIO);
     io.mode = GPIO_MODE_INPUT;
@@ -306,6 +325,10 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
 
     ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501, actor",
              g_dev_id);
+}
+
+bool wtsn_sensor_present(void) {
+    return g_bme_ok;
 }
 
 static int64_t g_last_tick = 0;

@@ -23,6 +23,14 @@ enum {
 /* Init sensors + actor on this node. device_id is used on the MQTT payloads. */
 void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq);
 
+/* True once the sensor add-on board (BME280 on I2C) was detected on this node.
+ * Used to auto-assign roles: the board with sensors = esp32-01, the other = relay. */
+bool wtsn_sensor_present(void);
+
+/* Quick I2C probe (no full init) that checks whether a BME280 sits on the bus.
+ * Called early (before MQTT) to auto-pick the device role. */
+bool wtsn_sensor_probe(void);
+
 /* Periodic scan: read analog light, PIR motion and BME280, publish telemetry. */
 void wtsn_sensor_tick(void);
 

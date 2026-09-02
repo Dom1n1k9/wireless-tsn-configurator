@@ -74,6 +74,10 @@ static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     snprintf(t, sizeof(t), "tsn/cmd/%s/ota", m->device_id[0] ? m->device_id : "+");
     esp_mqtt_client_subscribe(m->c, t, 0);
     esp_mqtt_client_subscribe(m->c, "tsn/fx/cmd/#", 0);
+    /* FX field exchange (motion/actor events from other nodes) -> actor logic */
+    esp_mqtt_client_subscribe(m->c, "tsn/fx/#", 0);
+    /* motion events raised by the sensor board's PIR */
+    esp_mqtt_client_subscribe(m->c, "tsn/sensors/event", 0);
     ESP_LOGI(TAG, "subscribed to commands for device '%s'", m->device_id);
     if (m->conn_cb) m->conn_cb("", m->ud);
 }
