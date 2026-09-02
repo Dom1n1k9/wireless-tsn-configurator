@@ -2,10 +2,14 @@
 //
 // RX (P1): the ESP32 agent pushes its sensor values once a second,
 //      "T:21.5 P:1013.2 H:48 L:1234 M:0 A:0"
-// The panel shows ONE value with its unit and STAYS on it - no auto-cycling,
-// no auto-refresh:
+// The panel shows ONE value with its unit and STAYS on it - no auto-cycling:
 //      T:27C -> P:1006hPa -> H:48% -> L:918lx -> M:1 -> (back to T)
-// B = next value, A = previous value. Nothing moves until you press a button.
+// B = next value, A = previous value.
+//
+// INSTANT switching: pressing a button flips the view immediately (a flag),
+// and a fast 300 ms refresh loop renders the CURRENT view, aborting any
+// in-progress scroll. You never wait for a long string to finish.
+//
 // On PIR motion (M:1 rising edge): heart flash + beep (V2 built-in speaker).
 //
 // TX (P0): reports the micro:bit's own onboard sensors to the ESP, which
@@ -41,6 +45,10 @@ const V_MOTION = 4
 const N_VIEWS = 5
 let view = V_TEMP
 
+// When true, the render loop shows a one-char label/flash briefly before the
+// number so the unit change is visible without waiting for a scroll.
+let pendingHint = true
+
 // Parse "T:21.5 P:1013.2 H:48 L:1234 M:0 A:0" into the s* variables.
 function parseLine(line: string) {
     let toks = line.split(" ")
@@ -70,25 +78,56 @@ serial.onDataReceived("\n", () => {
     parseLine(serial.readString())
 })
 
-// Show the current value with its unit, e.g. "T:27C". The display keeps this
-// until the next button press (or a motion flash).
-function render() {
-    if (view == V_TEMP) basic.showString("T:" + Math.round(sTemp) + "C")
-    else if (view == V_PRESS) basic.showString("P:" + Math.round(sPress) + "hPa")
-    else if (view == V_HUM) basic.showString("H:" + Math.round(sHum) + "%")
-    else if (view == V_LIGHT) basic.showString("L:" + Math.round(sLight) + "lx")
-    else basic.showString("M:" + Math.round(sPir))
+// Short string for the current view INCLUDING the unit, e.g. "27C", "1003h",
+// "48%", "918l", "M0"/"M1". Scrolls quickly (90 ms/char) so switching is fast.
+function currentString(): string {
+    if (view == V_TEMP) return "" + Math.round(sTemp) + "C"
+    if (view == V_PRESS) return "" + Math.round(sPress) + "h"
+    if (view == V_HUM) return "" + Math.round(sHum) + "%"
+    if (view == V_LIGHT) return "" + Math.round(sLight) + "l"
+    return "M" + Math.round(sPir)
 }
 
-// B = next value (wraps around), A = previous. Only way the view changes.
-input.onButtonPressed(Button.B, function () { view = (view + 1) % N_VIEWS; render() })
-input.onButtonPressed(Button.A, function () { view = (view + N_VIEWS - 1) % N_VIEWS; render() })
+function viewLabel(): string {
+    if (view == V_TEMP) return "T"
+    if (view == V_PRESS) return "P"
+    if (view == V_HUM) return "H"
+    if (view == V_LIGHT) return "L"
+    return "M"
+}
 
-// Re-show the CURRENT view every 5 s: keeps the display alive and updates the
-// value live, but never switches to another value.
+// Fast refresh of the current view. renderRequested is set by the buttons so a
+// press aborts the previous (possibly mid-scroll) draw immediately.
+let renderRequested = true
+
+function requestRender() {
+    pendingHint = true
+    renderRequested = true
+}
+
+function render() {
+    if (!renderRequested) return
+    renderRequested = false
+
+    if (pendingHint) {
+        // Brief 1-char flash so switching is obvious, then the value+unit.
+        basic.showString(viewLabel(), 100)
+        pendingHint = false
+    }
+
+    // Value + unit, e.g. "27C". 90 ms/char scroll: short and quick.
+    basic.showString(currentString(), 90)
+}
+
+// B = next value (wraps around), A = previous. Instant flip + re-render.
+input.onButtonPressed(Button.B, function () { view = (view + 1) % N_VIEWS; requestRender() })
+input.onButtonPressed(Button.A, function () { view = (view + N_VIEWS - 1) % N_VIEWS; requestRender() })
+
+// Fast, non-blocking refresh of the current view so values update live and a
+// button press is served almost instantly.
 basic.forever(function () {
     render()
-    basic.pause(5000)
+    basic.pause(300)
 })
 
 // DIAGNOSTIC (temporary): report what the panel RECEIVED from the ESP

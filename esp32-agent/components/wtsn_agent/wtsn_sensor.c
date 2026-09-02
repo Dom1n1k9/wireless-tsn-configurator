@@ -428,9 +428,11 @@ void wtsn_sensor_tick(void) {
 
     if (pir != g_prev_pir) {
         char ev[96];
-        snprintf(ev, sizeof(ev), "{\"id\":\"%s\",\"motion\":%d}", g_dev_id, pir);
+        snprintf(ev, sizeof(ev), "{\"id\":\"%s\",\"motion\":%d,\"raw\":%d}",
+                 g_dev_id, pir, pir);
         wtsn_mqtt_publish(g_mq, "tsn/sensors/event", ev);
         wtsn_mqtt_publish(g_mq, "tsn/fx/data", ev);
+        ESP_LOGI(TAG, "PIR raw=%d -> event", pir);
         g_prev_pir = pir;
     }
 }
