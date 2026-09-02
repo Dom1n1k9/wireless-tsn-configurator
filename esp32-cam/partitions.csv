@@ -1,4 +1,6 @@
-# ESP32-CAM partition table (4MB flash, value using the full flash)
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 3M,
+# ESP32-CAM partition table (4MB flash, OTA A/B with rollback)
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+otadata,  data, ota,     0x10000,  0x2000,
+ota_0,    app,  ota_0,   0x20000,  0x180000,
+ota_1,    app,  ota_1,   0x1A0000, 0x180000,

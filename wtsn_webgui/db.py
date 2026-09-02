@@ -38,6 +38,8 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS config_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "name TEXT,device_id TEXT,created_at INTEGER,payload TEXT);"
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);"
+    "CREATE TABLE IF NOT EXISTS sensor_history(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "device_id TEXT,sensor_id TEXT,ts INTEGER,value REAL);"
 )
 
 
@@ -114,9 +116,10 @@ def add_event(kind, source, msg, src_ip="", dst_ip="", dest="", proto=""):
             proto = _PROTO_MAP.get(kind, kind.upper())
     with state.EVENT_LOCK:
         state.EVENTS.appendleft({"ts": time.strftime("%H:%M:%S"), "kind": kind,
-                                 "source": source, "msg": msg,
-                                 "src_ip": src_ip, "dst_ip": dst_ip, "dest": dest,
-                                 "proto": proto})
+                                  "source": source, "msg": msg,
+                                  "src_ip": src_ip, "dst_ip": dst_ip, "dest": dest,
+                                  "proto": proto})
+    state.WS_NOTIFY.set()
 
 
 def load_all():
@@ -143,6 +146,23 @@ def load_all():
 def get_events():
     with state.EVENT_LOCK:
         return {"mode": state.MODE["mode"], "events": list(state.EVENTS)[:300]}
+
+
+def sensor_history(did, limit=288):
+    """Return recent history per sensor: {sensor_id: [[ts, value], ...]} (oldest first)."""
+    con = connect()
+    try:
+        out = {}
+        rows = con.execute(
+            "SELECT sensor_id,ts,value FROM sensor_history WHERE device_id=? "
+            "ORDER BY ts DESC LIMIT ?", (did, limit)).fetchall()
+        for r in rows:
+            out.setdefault(r["sensor_id"], []).append([r["ts"], r["value"]])
+        for k in out:
+            out[k].reverse()
+        return out
+    finally:
+        con.close()
 
 
 def clamp(v, lo, hi):

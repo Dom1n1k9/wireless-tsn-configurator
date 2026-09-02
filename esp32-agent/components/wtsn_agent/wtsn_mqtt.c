@@ -71,6 +71,8 @@ static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     esp_mqtt_client_subscribe(m->c, t, 0);
     snprintf(t, sizeof(t), "tsn/cmd/%s/ping", m->device_id[0] ? m->device_id : "+");
     esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/ota", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
     esp_mqtt_client_subscribe(m->c, "tsn/fx/cmd/#", 0);
     ESP_LOGI(TAG, "subscribed to commands for device '%s'", m->device_id);
     if (m->conn_cb) m->conn_cb("", m->ud);
@@ -101,11 +103,24 @@ wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
     m->conn_cb = conn_cb;
     m->ud = ud;
 
+    /* LWT: the broker publishes this (retained) on tsn/lwt/<id> if we vanish
+     * unexpectedly, so the web GUI marks the device offline immediately. */
+    char will_topic[48];
+    snprintf(will_topic, sizeof(will_topic), "tsn/lwt/%s", client_id ? client_id : "unknown");
+    static const char will_msg[] = "offline";
+
     esp_mqtt_client_config_t cfg = {
         .broker = { .address = { .uri = NULL, .hostname = host, .port = port,
                                  .transport = MQTT_TRANSPORT_OVER_TCP } },
         .credentials = { .client_id = client_id },
-        .session = { .keepalive = 30 },
+        .session = { .keepalive = 30,
+                     .last_will = {
+                         .topic = will_topic,
+                         .msg = will_msg,
+                         .msg_len = (size_t)strlen(will_msg),
+                         .qos = 1,
+                         .retain = 1,
+                     } },
     };
     m->c = esp_mqtt_client_init(&cfg);
     if (!m->c) { free(m); return NULL; }

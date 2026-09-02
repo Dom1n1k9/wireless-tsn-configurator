@@ -1,5 +1,6 @@
 """Action handlers behind the /api/action and /api/actions/<name> endpoints."""
 import json
+import os
 import re as _re
 import time
 
@@ -454,6 +455,40 @@ def run_action(act, body):
         if act == "clear_events":
             state.EVENTS.clear()
             return {"ok": True, "msg": "monitor cleared"}
+        if act == "get_history":
+            from .db import sensor_history
+            did = body.get("device_id", "")
+            return {"ok": True, "history": sensor_history(did, int(body.get("limit", 288)))}
+        if act == "start_ota":
+            did = body.get("id", "")
+            fname = body.get("file", "")
+            if not did:
+                return {"ok": False, "msg": "missing device id"}
+            if not fname:
+                try:
+                    files = sorted((f for f in os.listdir(state.FW_DIR)
+                                    if f.endswith((".bin", ".img"))),
+                                   key=lambda f: os.path.getmtime(os.path.join(state.FW_DIR, f)),
+                                   reverse=True)
+                except OSError:
+                    files = []
+                fname = files[0] if files else ""
+            if not fname or not os.path.isfile(os.path.join(state.FW_DIR, fname)):
+                return {"ok": False, "msg": "no firmware uploaded (pick a .bin on the Devices page)"}
+            host = os.environ.get("WTSN_HOST", "127.0.0.1")
+            host = get_self_ip() if host in ("0.0.0.0", "127.0.0.1") else host
+            url = "http://%s:%d/fw/%s" % (host, state.PORT, fname)
+            if state.MODE["mode"] == "real":
+                b = get_real_mqtt(con)
+                if not b:
+                    return {"ok": False, "msg": "MQTT broker not reachable"}
+                size = os.path.getsize(os.path.join(state.FW_DIR, fname))
+                b.publish("tsn/cmd/%s/ota" % did,
+                          json.dumps({"url": url, "size": size}))
+                add_event("config", "cnc", "OTA %s -> %s (%d B)" % (fname, did, size))
+                return {"ok": True, "msg": "OTA sent to %s: %s" % (did, url)}
+            add_event("config", "cnc", "OTA (simulation) %s -> %s" % (fname, did))
+            return {"ok": True, "msg": "OTA simulated: %s" % url}
         if act == "rollback_version":
             vid = body.get("id")
             if vid is None:

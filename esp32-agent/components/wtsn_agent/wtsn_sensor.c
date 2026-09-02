@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 static const char *TAG = "sensor";
 
@@ -333,7 +334,7 @@ void wtsn_sensor_tick(void) {
 
     char buf[512];
     int n = snprintf(buf, sizeof(buf) - 1,
-            "{\"id\":\"%s\",\"sensors\":[", g_dev_id);
+            "{\"id\":\"%s\",\"ts\":%lld,\"sensors\":[", g_dev_id, (long long)time(NULL));
     size_t m = (size_t)n;
 
     int written = 0;

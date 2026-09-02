@@ -21,6 +21,11 @@
 #include "wtsn_sensor.h"
 #include "wtsn_uart.h"
 #include "wtsn_version.h"
+#include "wtsn_ota.h"
+
+#include "nvs.h"
+#include "sntp.h"
+#include <time.h>
 
 static const char *TAG = "wtsn_main";
 static char g_device_id[32] = "esp32-01";
@@ -58,8 +63,10 @@ static void crate_set_wifi(const char *payload) {
 
 static void on_connected(const char *client_id, void *ud) {
     (void)client_id; (void)ud;
-    char buf[96];
-    snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"fw\":\"%s\"}", g_device_id, WTSN_FW_VERSION);
+    char buf[192];
+    snprintf(buf, sizeof(buf),
+             "{\"id\":\"%s\",\"fw\":\"%s\",\"ip\":\"%s\",\"kind\":\"esp32\"}",
+             g_device_id, WTSN_FW_VERSION, g_ip);
     wtsn_mqtt_publish(g_mqtt, "tsn/discover", buf);
     ESP_LOGI(TAG, "published discover for %s (fw %s)", g_device_id, WTSN_FW_VERSION);
 }
@@ -213,6 +220,19 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         identify_start();
         send_ack(true, "");
         return;
+    } else if (strcmp(cmd, "ota") == 0) {
+        /* OTA: expects JSON {"url":"http://<host>:<port>/fw/<name>.bin"[,"size":N]}.
+         * Downloads to the other OTA partition and reboots; a bad new app is
+         * rolled back automatically by the bootloader. */
+        char url[256] = {0};
+        wtsn_json_get_str(payload, "url", url, sizeof(url));
+        if (url[0] && wtsn_ota_start(url) == ESP_OK) {
+            send_ack(true, "");
+            ESP_LOGI(TAG, "OTA started: %s", url);
+        } else {
+            send_ack(false, "ota_bad_url");
+        }
+        return;
     }
 }
 
@@ -250,6 +270,14 @@ static void load_nets(void) {
 #define FALLBACK_PROV_MS 15000
 #endif
 
+/* LED state machine driven by led_task (100 ms tick):
+ * 0 = provisioning (fast blink), 1 = connecting (medium blink),
+ * 2 = online (slow heartbeat). identify_task overrides temporarily. */
+#define LED_STATE_PROV 0
+#define LED_STATE_CONN 1
+#define LED_STATE_OK   2
+static volatile int g_led_state = LED_STATE_PROV;
+
 /* Tracks the last desired steady-state LED (1=wifi connected,0=not) so an
  * identify blink can restore it afterwards. */
 static volatile int g_led_steady = 0;
@@ -259,6 +287,7 @@ static volatile int g_identifying = 0;
  * to the provisioning SoftAP when the saved network cannot be reached. */
 static volatile int g_wifi_ready = 0;
 static volatile int g_prov_fallback_started = 0;
+static bool g_sntp_started = false;
 /* Count of consecutive STA disconnects with no GOT_IP in between. When it climbs
  * past PROV_FALLBACK_DISCONNECTS the device gives up retrying and brings back the
  * WTSN-Setup provisioning SoftAP so it can be re-pointed at a new network. */
@@ -273,6 +302,7 @@ static volatile int g_disconnect_streak = 0;
 static void prov_fallback_now(void *arg) { (void)arg;
     if (g_prov_fallback_started) { vTaskDelete(NULL); return; }
     g_prov_fallback_started = 1;
+    g_led_state = LED_STATE_PROV;
     ESP_LOGW(TAG, "could not stabilise on '%s' -> starting provisioning AP",
              g_ctx.ssid);
     wtsn_prov_start_ap();   /* starts AP + portal; user config -> restart */
@@ -297,6 +327,7 @@ static void prov_fallback_task(void *arg) {
     if (g_wifi_ready) { vTaskDelete(NULL); return; }
     if (!g_prov_fallback_started) {
         g_prov_fallback_started = 1;
+        g_led_state = LED_STATE_PROV;
         ESP_LOGW(TAG, "could not join '%s' within %d ms -> starting provisioning AP",
                  g_ctx.ssid, FALLBACK_PROV_MS);
         wtsn_prov_start_ap();  /* blocks serving the portal; user config -> restart */
@@ -314,6 +345,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         wifi_event_sta_disconnected_t *e2 = (wifi_event_sta_disconnected_t *)data;
         ESP_LOGW(TAG, "STA disconnected reason=%d", e2 ? e2->reason : -1);
         g_led_steady = 0;
+        g_led_state = LED_STATE_CONN;
         /* Drop this network and try the next saved one; if none remain, fall back
          * to retrying the first (in case the user just walked into range of it) or
          * to the provisioning AP after too many failures. */
@@ -346,7 +378,15 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
         snprintf(g_ip, sizeof(g_ip), IPSTR, IP2STR(&e->ip_info.ip));
         g_led_steady = 1;
-        if (!g_identifying) set_led(1);   /* solid on = connected to WiFi */
+        g_led_state = LED_STATE_OK;
+        /* Wall-clock time for payload timestamps (best-effort; if the NTP
+         * server is unreachable time() simply stays unset). */
+        if (!g_sntp_started) {
+            g_sntp_started = true;
+            sntp_setoperatingmode(SNTP_OPMODE_POLL);
+            sntp_setservername(0, "pool.ntp.org");
+            sntp_init();
+        }
         if (!g_mqtt) {
             g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
                                         on_command, on_connected, NULL);
@@ -416,6 +456,70 @@ static void identify_start(void) {
     xTaskCreatePinnedToCore(&identify_task, "wtsn_ident", 2048, NULL, 5, NULL, 1);
 }
 
+/* LED blink-code task: provisioning = fast blink, connecting = medium blink,
+ * online = slow heartbeat. identify_task takes over the LED temporarily. */
+static void led_task(void *arg) {
+    (void)arg;
+    int tick = 0;
+    for (;;) {
+        int on = 0;
+        if (!g_identifying) {
+            if (g_led_state == LED_STATE_PROV)      on = (tick % 3) == 0;
+            else if (g_led_state == LED_STATE_CONN) on = (tick % 8) < 4;
+            else                                    on = (tick % 25) < 3;
+        }
+        set_led(on);
+        tick++;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+/* Long-press factory reset: hold the BOOT button (GPIO0) for FACTORY_HOLD_MS.
+ * Erases the whole "wtsn" NVS namespace (WiFi + device id + TSN state) and
+ * reboots into provisioning mode. */
+#define FACTORY_BTN_GPIO GPIO_NUM_0
+#define FACTORY_HOLD_MS 3000
+
+static void factory_reset(void) {
+    nvs_handle_t h;
+    if (nvs_open("wtsn", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_all(h);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGW(TAG, "factory reset (BOOT held %d ms) - config erased, rebooting",
+             FACTORY_HOLD_MS);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    esp_restart();
+}
+
+static void btn_task(void *arg) {
+    (void)arg;
+    int64_t down_us = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (gpio_get_level(FACTORY_BTN_GPIO) == 0) {
+            if (!down_us) {
+                down_us = esp_timer_get_time();
+            } else if (esp_timer_get_time() - down_us >= (int64_t)FACTORY_HOLD_MS * 1000) {
+                factory_reset();
+            }
+        } else {
+            down_us = 0;
+        }
+    }
+}
+
+static void btn_led_init(void) {
+    gpio_config_t io = {0};
+    io.pin_bit_mask = (1ULL << FACTORY_BTN_GPIO);
+    io.mode = GPIO_MODE_INPUT;
+    io.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io);
+    xTaskCreatePinnedToCore(btn_task, "wtsn_btn", 3072, NULL, 4, NULL, 1);
+    xTaskCreatePinnedToCore(led_task, "wtsn_led", 3072, NULL, 3, NULL, 1);
+}
+
 /* Try the next saved network. Returns false when every saved network has been tried. */
 static bool try_net(int idx) {
     if (idx < 0 || idx >= g_net_count || !g_nets[idx][0]) return false;
@@ -471,6 +575,7 @@ static bool prov_load_id(char *out, size_t sz) {
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     blink_led();
+    btn_led_init();
 
     char wifi_ssid[64] = {0};
     char wifi_pass[64] = {0};
@@ -484,9 +589,11 @@ void app_main(void) {
 
     if (!wifi_ssid[0]) {
         ESP_LOGW(TAG, "no WiFi in NVS -> entering provisioning mode");
+        g_led_state = LED_STATE_PROV;
         wtsn_prov_start();
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    g_led_state = LED_STATE_CONN;
 
     /* Migrate the legacy single-network entry into the multihome list so previously
      * provisioned devices keep working and can add more networks later. */
@@ -510,11 +617,12 @@ void app_main(void) {
         /* periodic heartbeat so the webgui can mark offline if we disappear */
         if (g_mqtt && esp_timer_get_time() - last_beat >= 10000000) {
             last_beat = esp_timer_get_time();
-            char buf[192];
+            char buf[224];
             snprintf(buf, sizeof(buf),
                     "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\","
-                    "\"ssid\":\"%s\",\"fw\":\"%s\"}",
-                    g_device_id, g_ctx.ssid, WTSN_FW_VERSION);
+                    "\"ssid\":\"%s\",\"fw\":\"%s\",\"ts\":%lld}",
+                    g_device_id, g_ctx.ssid, WTSN_FW_VERSION,
+                    (long long)time(NULL));
             wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
         }
         vTaskDelay(pdMS_TO_TICKS(500));

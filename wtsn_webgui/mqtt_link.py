@@ -41,11 +41,28 @@ def parse_listener_msg(con, topic, payload):
     except Exception:
         j = {}
     did = j.get("id", "")
+    fw = j.get("firmware") or j.get("fw")
+    ip = j.get("ip")
+    kind = j.get("kind")
     try:
         if "/status" in topic and did:
-            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now') WHERE id=?", (did,))
+            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
+                        "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip) WHERE id=?",
+                        (fw, ip, did))
+        elif "/lwt" in topic and did:
+            con.execute("UPDATE devices SET status=1,last_seen=strftime('%s','now') WHERE id=?",
+                        (did,))
+            add_event("mqtt", did, "device reported OFFLINE (MQTT last will)")
         elif "/discover" in topic and did:
-            con.execute("INSERT OR REPLACE INTO devices(id,name,status,last_seen) VALUES(?,?,0,strftime('%s','now'))", (did, did))
+            # upsert without clobbering user-set columns (domain, heartbeat, ...)
+            kind_v = 5 if kind == "cam" else (0 if kind == "esp32" else None)
+            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
+                        "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip),"
+                        "kind=COALESCE(?,kind) WHERE id=?", (fw, ip, kind_v, did))
+            if con.rowcount == 0:
+                con.execute("INSERT INTO devices(id,name,status,last_seen,firmware,ip,kind) "
+                            "VALUES(?,?,0,strftime('%s','now'),?,?,?)",
+                            (did, did, fw, ip, kind_v))
         elif "/ack" in topic:
             ok = j.get("ok", False)
             with state.ACK_LOCK:
@@ -93,6 +110,12 @@ def parse_listener_msg(con, topic, payload):
                     "value,unit,healthy,last_update) "
                     "VALUES(?,?,?,?,?,?,?,strftime('%s','now'))",
                     (did, sid, typ, sid, val, unit, healthy))
+                ts = int(s.get("ts") or j.get("ts") or time.time())
+                con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
+                            "VALUES(?,?,?,?)", (did, sid, ts, val))
+            # keep ~1h of history per device
+            con.execute("DELETE FROM sensor_history WHERE device_id=? AND ts<?",
+                        (did, int(time.time()) - 3600))
             con.commit()
             return
         con.commit()
@@ -145,6 +168,7 @@ def mqtt_listener_loop():
             brk.subscribe("tsn/ack/#")
             brk.subscribe("tsn/status")
             brk.subscribe("tsn/discover")
+            brk.subscribe("tsn/lwt/#")
             brk.subscribe("tsn/fx/#")
             brk.subscribe("tsn/ptp")
             brk.subscribe("tsn/fx/stream")

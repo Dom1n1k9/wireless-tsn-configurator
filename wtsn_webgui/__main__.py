@@ -6,7 +6,7 @@ import threading
 
 from . import mqtt_link, state
 from .mqtt_link import mqtt_listener_loop
-from .server import WEB_HOST, WTSNServer, make_handler
+from .server import WEB_HOST, WTSNServer, make_handler, ws_broadcaster
 from .sim import sim_runner
 
 
@@ -35,6 +35,7 @@ def main(argv=None):
     state.LISTENER_STOP.clear()
     threading.Thread(target=sim_runner, daemon=True).start()
     threading.Thread(target=mqtt_listener_loop, daemon=True).start()
+    threading.Thread(target=ws_broadcaster, daemon=True).start()
 
     srv = WTSNServer((host, port), make_handler())
 

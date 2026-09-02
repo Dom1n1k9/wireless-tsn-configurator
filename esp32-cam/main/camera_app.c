@@ -27,6 +27,9 @@
 #include "esp_camera.h"
 #include "wtsn_prov.h"
 #include "wtsn_version.h"
+#include "wtsn_ota.h"
+#include "sntp.h"
+#include <time.h>
 
 static const char *TAG = "cam_agent";
 
@@ -64,6 +67,8 @@ static void nvs_str_set(const char *key, const char *val) {
     nvs_close(h);
 }
 static char g_device_id[32] = "esp32-cam-01";
+static char g_ip[16] = "0.0.0.0";
+static bool g_sntp_started = false;
 static esp_mqtt_client_handle_t g_mqtt = NULL;
 static httpd_handle_t g_stream_server = NULL;
 
@@ -167,12 +172,60 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 
 /* ---------------- MQTT ---------------- */
 
+static void ota_go(const char *url);
+
+static void mqtt_data(void *arg, esp_mqtt_event_handle_t e) {
+    (void)arg;
+    /* The CAM only acts on its own OTA command: {"url":"http://<host>/fw/x.bin"} */
+    if (e->topic_len >= 9 && strncmp(e->topic, "tsn/cmd/", 8) == 0) {
+        char topic[64] = {0};
+        int tl = e->topic_len < (int)sizeof(topic) - 1 ? e->topic_len : (int)sizeof(topic) - 1;
+        memcpy(topic, e->topic, (size_t)tl);
+        if (strcmp(topic + tl - 3, "/ota") == 0) {
+            char *p = (char *)e->data;
+            const char *u = strstr(p, "\"url\"");
+            if (u) {
+                u = strchr(u + 5, ':');
+                if (u) {
+                    u = strchr(u + 1, '"');
+                    if (u) {
+                        const char *v = u + 1;
+                        char url[256] = {0};
+                        size_t i = 0;
+                        for (; v[i] && v[i] != '"' && i < sizeof(url) - 1; i++) {
+                            url[i] = v[i];
+                        }
+                        url[i] = '\0';
+                        ota_go(url);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void ota_go(const char *url) {
+    if (!url || !url[0]) return;
+    char ack_topic[48], ack[64];
+    snprintf(ack_topic, sizeof(ack_topic), "tsn/ack/%s", g_device_id);
+    snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true}", g_device_id);
+    ESP_LOGI(TAG, "OTA command: %s", url);
+    esp_mqtt_client_publish(g_mqtt, ack_topic, ack, 0, 0, 0);
+    wtsn_ota_start(url);
+}
+
 static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
-    (void)base; (void)event_data;
+    (void)base; (void)handler_args;
     if (event_id == MQTT_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "MQTT connected; publishing discover");
-        char buf[96];
-        snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"fw\":\"%s\"}", g_device_id, WTSN_FW_VERSION);
+        char t[64];
+        snprintf(t, sizeof(t), "tsn/cmd/%s/ota", g_device_id);
+        esp_mqtt_client_subscribe(g_mqtt, t, 0);
+        esp_mqtt_client_register_event(g_mqtt, MQTT_EVENT_DATA, mqtt_data, NULL);
+        char buf[192];
+        snprintf(buf, sizeof(buf),
+                 "{\"id\":\"%s\",\"fw\":\"%s\",\"ip\":\"%s\",\"kind\":\"cam\"}",
+                 g_device_id, WTSN_FW_VERSION, g_ip);
         esp_mqtt_client_publish(g_mqtt, "tsn/discover", buf, 0, 1, 0);
     }
 }
@@ -180,10 +233,21 @@ static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_
 static esp_err_t mqtt_start(void) {
     char host[64] = {0}; nvs_str_get("mqtt_host", host, sizeof(host));
     if (!host[0]) snprintf(host, sizeof(host), "wtsn-broker.local");
+    /* LWT: broker marks the CAM offline (retained) if it vanishes unexpectedly. */
+    char will_topic[48];
+    snprintf(will_topic, sizeof(will_topic), "tsn/lwt/%s", g_device_id);
+    static const char will_msg[] = "offline";
     esp_mqtt_client_config_t cfg = {
         .broker = { .address = { .hostname = host, .port = 1883, .transport = MQTT_TRANSPORT_OVER_TCP } },
         .credentials = { .client_id = g_device_id },
-        .session = { .keepalive = 30 },
+        .session = { .keepalive = 30,
+                     .last_will = {
+                         .topic = will_topic,
+                         .msg = will_msg,
+                         .msg_len = (size_t)strlen(will_msg),
+                         .qos = 1,
+                         .retain = 1,
+                     } },
     };
     g_mqtt = esp_mqtt_client_init(&cfg);
     if (!g_mqtt) return ESP_FAIL;
@@ -233,6 +297,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         g_disconnect_streak = 0;
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
+        snprintf(g_ip, sizeof(g_ip), IPSTR, IP2STR(&e->ip_info.ip));
+        if (!g_sntp_started) {
+            g_sntp_started = true;
+            sntp_setoperatingmode(SNTP_OPMODE_POLL);
+            sntp_setservername(0, "pool.ntp.org");
+            sntp_init();
+        }
         if (!g_mqtt) {
             if (mqtt_start() != ESP_OK) ESP_LOGE(TAG, "mqtt start failed");
             /* start stream http server */

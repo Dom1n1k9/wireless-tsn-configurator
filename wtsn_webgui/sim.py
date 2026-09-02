@@ -10,7 +10,8 @@ PROFILES = [(0, "esp32", "192.168.1.10", "ESP32 Gateway"),
             (2, "rpi", "192.168.1.20", "Raspberry Pi"),
             (0, "linux", "192.168.1.30", "Linux Node"),
             (3, "stm32", "192.168.1.40", "STM32 Sensor"),
-            (0, "nxp", "192.168.1.50", "NXP Node")]
+            (0, "nxp", "192.168.1.50", "NXP Node"),
+            (5, "esp32-cam", "192.168.1.60", "ESP32-CAM")]
 TSN_FUNCS = ["802.1Q QoS", "802.1Q VLAN", "gPTP 802.1AS", "802.1Qbv TAS",
              "802.1Qbu Preemption", "OPC UA", "OPC UA PubSub", "FX Multicast"]
 
@@ -62,6 +63,8 @@ def sim_tick():
         for t in ["devices", "sensors", "timesync_status",
                   "device_tsn_features"]:
             con.execute("DELETE FROM %s" % t)
+        # append one history sample per simulated sensor (for sparklines)
+        prev = con.execute("SELECT device_id,sensor_id,value FROM sensors").fetchall()
         for k, kv in kept.items():
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
                         "last_seen,domain) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -84,9 +87,17 @@ def sim_tick():
                             (did, f))
             for sid, typ, unit, basev in (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
                                            ("imu1", 2, "g", 0.3), ("gpio1", 4, "V", 1.0)):
+                val = round(basev + random.uniform(-1.5, 1.5), 1)
                 con.execute("INSERT OR REPLACE INTO sensors(device_id,sensor_id,type,name,"
                             "value,unit,healthy,last_update) VALUES(?,?,?,?,?,?,1,strftime('%s','now'))",
-                            (did, sid, typ, sid, basev, unit))
+                            (did, sid, typ, sid, val, unit))
+                con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
+                            "VALUES(?,?,strftime('%s','now'),?)", (did, sid, val))
+        for r in prev:
+            con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
+                        "VALUES(?,?,strftime('%s','now'),?)",
+                        (r["device_id"], r["sensor_id"], r["value"]))
+        con.execute("DELETE FROM sensor_history WHERE ts < strftime('%s','now','-1 hours')")
         gm = devs[0] if devs else "esp32-01"
         if saved_ts and saved_ts["grandmaster"]:
             gm = saved_ts["grandmaster"]

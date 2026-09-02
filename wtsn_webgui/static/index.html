@@ -90,14 +90,34 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="help")m.innerHTML=help();
  else if(p==="settings")m.innerHTML=settings();}
 function execAll(){api("exec_all",{}).then(load)}
+function camCell(d){
+  const isCam=(d.kind===5)||/cam/i.test(d.id||"");
+  if(!isCam||!d.ip)return "<span class='muted'>-</span>";
+  return "<img src='http://"+esc(d.ip)+"/stream' style='width:96px;height:72px;object-fit:cover;border-radius:6px' onerror=\"this.outerHTML='<span class=muted>no signal</span>'\">"}
+function devRow(d){
+  const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+esc(d.id)+"\")'>OTA</button> ":"":"";
+  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>"}
+function otaDev(id){api("start_ota",{id:id})}
 function devices(){
- const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");
- return "<h2>Devices</h2><div class='card'><h3>Add TSN device</h3>"+
-  "<div class='row'><label>id</label><input id=did></div>"+
-  "<div class='row'><label>name</label><input id=dname></div>"+
-  "<div class='row'><label>ip</label><input id=dip></div>"+
-  "<button onclick=saveDev()>Add Device</button></div>"+
-  "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th><th></th></tr>"+rows+"</table>"}
+  const rows=D.devices.map(devRow).join("");
+  const otaCard=D.mode==="real"?("<div class='card'><h3>Firmware update (OTA)</h3>"+
+   "<div class='row'><label>.bin file</label><input type=file id=ota_file accept='.bin,.img,.hex' style='width:260px'></div>"+
+   "<div class='row'><label>device</label><select id=ota_dev>"+D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("")+"</select></div>"+
+   "<button onclick=startOta()>Upload + start OTA</button> <span class='muted'>the .bin is served at <code>/fw/&lt;file&gt;</code> and the device fetches it over HTTP, then reboots on the new slot (A/B rollback)</span></div>"):"";
+  return "<h2>Devices</h2>"+otaCard+"<div class='card'><h3>Add TSN device</h3>"+
+   "<div class='row'><label>id</label><input id=did></div>"+
+   "<div class='row'><label>name</label><input id=dname></div>"+
+   "<div class='row'><label>ip</label><input id=dip></div>"+
+   "<button onclick=saveDev()>Add Device</button></div>"+
+   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows+"</table>"}
+async function startOta(){
+  const f=$("ota_file").files[0];
+  if(!f){toast("pick a .bin file first",false);return}
+  const r=await fetch("/api/firmware",{method:"POST",headers:{"X-Filename":f.name},body:f});
+  const j=await r.json();
+  if(!j.ok){toast(j.msg,false);return}
+  toast("uploaded "+j.file+" ("+j.size+" B)",true);
+  api("start_ota",{id:$("ota_dev").value,file:j.file})}
 function tsnFor(id){
  const f=(D.device_tsn_features||[]).filter(x=>x.device_id===id).map(x=>x.feature);
  if((D.qos_configs||[]).some(q=>q.device_id===id))f.push("802.1Q QoS");
@@ -121,7 +141,7 @@ function rvLoad(){const m=$("cv_list");m.innerHTML="<div class='muted'>loading..
 function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
 function diffV(id){fetch("/api/actions/diff_versions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
 
-function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(d=>"<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(tsnFor(d.id))+"</td><td><button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>").join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>tsn</th><th></th><th></th></tr>"+rows}}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
  let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");
@@ -233,21 +253,39 @@ function refreshMon(){if($("mon")){const keep=$("mon").innerHTML;const going=MON
  const f=($("mon_filter")?$("mon_filter").value:"").trim().toLowerCase();
  let list=src.slice(0,120);if(f){list=list.filter(e=>((e.source||"")+(e.dest||"")+(e.proto||"")+(e.msg||"")+(e.ts||"")).toLowerCase().indexOf(f)>=0)}
  const ev=list.map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||"<div class='monrow'><span>no traffic yet</span></div>"}}
+function spark(pts){
+  if(!pts||pts.length<2)return "<span class='muted'>-</span>";
+  const w=120,h=28;
+  let mn=Infinity,mx=-Infinity;
+  pts.forEach(p=>{mn=Math.min(mn,p[1]);mx=Math.max(mx,p[1])});
+  const rng=(mx-mn)||1;
+  const step=(w-4)/Math.max(1,pts.length-1);
+  const path=pts.map((p,i)=>(i?"L":"M")+(2+i*step).toFixed(1)+","+(h-2-((p[1]-mn)/rng)*(h-6)).toFixed(1)).join(" ");
+  return "<svg width='"+w+"' height='"+h+"' style='background:var(--surf2);border-radius:4px'><path d='"+path+"' fill='none' stroke='var(--sec)' stroke-width='1.5'/></svg>"}
+function loadSpark(dev){
+  fetch("/api/actions/get_history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({device_id:dev})}).then(r=>r.json()).then(j=>{
+   if(!j.ok)return;
+   const hist=j.history||{};
+   document.querySelectorAll("[data-spark]").forEach(td=>{
+    const key=td.dataset.spark.split(":")[1];
+    if(hist[key])td.innerHTML=spark(hist[key])})})}
 function sensors(){
- const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
- const now=Math.floor(Date.now()/1000);
- function age(s){if(!s||!s.last_update)return"";const a=now-(s.last_update>1000000000000?s.last_update/1000:s.last_update);return a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
- function stat(s){const a=s?now-(s.last_update>1000000000000?s.last_update/1000:s.last_update):9999;return a<30?"<span class='ok'>updated</span>":"<span class='warn'>stale</span>"}
- let r="";
- for(const dev in byDev){
-  const g=byDev[dev],t=g.temp1,h=g.hum1,p=g.press1;
-  if(!(t||h||p))continue;
-  const any=t||h||p;
-  if(t||h||p){const parts=[];if(h)parts.push("hum "+h.value+" %");if(t)parts.push("temp "+t.value+" °C");if(p)parts.push("press "+p.value+" hPa");r+="<tr><td>"+esc(dev)+"</td><td>BME280</td><td>"+esc(parts.join(" • "))+"</td><td>"+age(any)+"</td><td>"+stat(any)+"</td></tr>"}
-  if(g.light1){r+="<tr><td>"+esc(dev)+"</td><td>Light</td><td>"+Math.round(g.light1.value)+" lx</td><td>"+age(g.light1)+"</td><td>"+stat(g.light1)+"</td></tr>"}
-  if(g.pir1){const d=g.pir1.value?1:0;r+="<tr><td>"+esc(dev)+"</td><td>Motion</td><td>"+(d?"motion detected":"no motion")+"</td><td>"+age(g.pir1)+"</td><td class='"+(d?"det":"ok")+"'>"+(d?"detected":"")+"</td></tr>"}
- }
- return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(r?("<table><tr><th>device</th><th>sensor</th><th>value</th><th>last updated</th><th>status</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="real"?"Connect real sensors — none identified yet.":"Waiting for simulation sensors...")+"</div>")}
+  const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
+  const now=Math.floor(Date.now()/1000);
+  function age(s){if(!s||!s.last_update)return"";const a=now-(s.last_update>1000000000000?s.last_update/1000:s.last_update);return a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
+  function stat(s){const a=s?now-(s.last_update>1000000000000?s.last_update/1000:s.last_update):9999;return a<30?"<span class='ok'>updated</span>":"<span class='warn'>stale</span>"}
+  let r="";const devs=[];
+  for(const dev in byDev){
+   const g=byDev[dev],t=g.temp1,h=g.hum1,p=g.press1;
+   if(!(t||h||p))continue;
+   devs.push(dev);
+   const any=t||h||p;
+   if(t||h||p){const parts=[];if(h)parts.push("hum "+h.value+" %");if(t)parts.push("temp "+t.value+" °C");if(p)parts.push("press "+p.value+" hPa");r+="<tr><td>"+esc(dev)+"</td><td>BME280</td><td>"+esc(parts.join(" • "))+"</td><td><span data-spark='"+esc(dev)+":temp1'></span> <span data-spark='"+esc(dev)+":press1'></span></td><td>"+age(any)+"</td><td>"+stat(any)+"</td></tr>"}
+   if(g.light1){r+="<tr><td>"+esc(dev)+"</td><td>Light</td><td>"+Math.round(g.light1.value)+" lx</td><td><span data-spark='"+esc(dev)+":light1'></span></td><td>"+age(g.light1)+"</td><td>"+stat(g.light1)+"</td></tr>"}
+   if(g.pir1){const d=g.pir1.value?1:0;r+="<tr><td>"+esc(dev)+"</td><td>Motion</td><td>"+(d?"motion detected":"no motion")+"</td><td><span data-spark='"+esc(dev)+":pir1'></span></td><td>"+age(g.pir1)+"</td><td class='"+(d?"det":"ok")+"'>"+(d?"detected":"")+"</td></tr>"}
+  }
+  setTimeout(()=>devs.forEach(loadSpark),0);
+  return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(r?("<table><tr><th>device</th><th>sensor</th><th>value</th><th>trend (1 h)</th><th>last updated</th><th>status</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="real"?"Connect real sensors — none identified yet.":"Waiting for simulation sensors...")+"</div>")}
 function streams(){
  const rows=(D.tsn_streams||[]).map(s=>{const memb=(D.tsn_stream_members||[]).filter(x=>x.stream_id==s.stream_id);
   const talker=(memb.find(x=>x.role==="talker")||{}).device_id||s.talker||"";
@@ -332,5 +370,17 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  const dataChanged=JSON.stringify(D.qos_configs)!==JSON.stringify(dj.qos_configs)||JSON.stringify(D.vlan_groups)!==JSON.stringify(dj.vlan_groups)||JSON.stringify(D.tas_schedules)!==JSON.stringify(dj.tas_schedules)||JSON.stringify(D.preemption_configs)!==JSON.stringify(dj.preemption_configs)||JSON.stringify(D.tsn_streams)!==JSON.stringify(dj.tsn_streams)||JSON.stringify(D.gcl_entries)!==JSON.stringify(dj.gcl_entries);
  D.qos_configs=dj.qos_configs;D.vlan_groups=dj.vlan_groups;D.tas_schedules=dj.tas_schedules;D.preemption_configs=dj.preemption_configs;D.tsn_streams=dj.tsn_streams;D.tsn_stream_members=dj.tsn_stream_members;D.gcl_entries=dj.gcl_entries;
  if(dataChanged){if(cur==="qos"&&$("main"))$("main").innerHTML=qos();else if(cur==="vlan"&&$("main"))$("main").innerHTML=vlan();else if(cur==="tas"&&$("main"))$("main").innerHTML=tas();else if(cur==="preemption"&&$("main"))$("main").innerHTML=preemption();else if(cur==="streams"&&$("main"))$("main").innerHTML=streams();}}
-setInterval(pollEvents,2000);
+let pollTimer=null,wsConn=null;
+function startPolling(){if(!pollTimer)pollTimer=setInterval(pollEvents,2000)}
+function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
+function wsConnect(){
+  try{
+   wsConn=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+   wsConn.onopen=()=>{stopPolling()};
+   wsConn.onmessage=()=>{pollEvents()};
+   wsConn.onclose=()=>{wsConn=null;startPolling();setTimeout(wsConnect,2000)};
+   wsConn.onerror=()=>{try{wsConn.close()}catch(e){}}
+  }catch(e){startPolling()}}
+startPolling();
+wsConnect();
 </script></body></html>

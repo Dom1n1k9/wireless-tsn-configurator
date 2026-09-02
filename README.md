@@ -216,7 +216,13 @@ fallback if it cannot join the saved WiFi within ~15 s:
 - **Persistent per-device config on the ESP32 agent** — QoS / VLAN / TimeSync /
   TAS-GCL / Preemption stored to NVS and restored on reboot
 - **Sensor management** — temperature, pressure, IMU, distance, GPIO sensors with
-  diagnostics
+  diagnostics, **1 h history + sparklines** in the GUI
+- **Firmware OTA** — upload a `.bin` in the GUI, the configurator serves it over HTTP
+  (`/fw/<file>`) and commands the device to download + flash it (A/B slots, auto
+  rollback on bad boot)
+- **Live camera** — ESP32-CAM nodes show their MJPEG stream inline on the Devices page
+- **Instant updates** — the GUI gets state changes over a **WebSocket** (automatic
+  polling fallback if the socket drops)
 - **OPC UA FX over MQTT (FXMQTT)** — PubSub / C2C Field Exchange over MQTT
 - **MQTT client** — the single communication channel
 - **Live monitor** — a searchable, pausable network/frame trace in the GUI
@@ -233,9 +239,9 @@ A self-contained single-file SPA served on http://127.0.0.1:8000:
 
 | Page        | Purpose                                                        |
 |-------------|----------------------------------------------------------------|
-| Devices     | add/remove/ping nodes, view status, IP and TSN features           |
+| Devices     | add/remove/ping nodes, status, IP, **firmware version**, **live camera (ESP32-CAM)**, TSN features; **firmware upload + OTA** |
 | Monitor     | live network/frame trace with **search filter**, **Pause/Start** and Clear |
-| Sensors     | live values per node                                             |
+| Sensors     | live values per node + **1 h history sparklines**                 |
 | FXMQTT      | Field Server / Participant, broker address                          |
 | Sync        | gPTP grandmaster / slave setup                                  |
 | QoS / VLAN  | priority mapping, VLAN groups and membership                       |
@@ -318,10 +324,25 @@ cmake --build build --target tsn-node-agent
 | `--mqtt-port`  | MQTT port (default 1883)          |
 
 Commands on `tsn/cmd/<device>`: `apply` (preferred — full JSON snapshot), `qos`,
-`vlan`, `timesync`, `tas`, `status`, `wifi`, `fx`. The agent replies with an ACK on
+`vlan`, `timesync`, `tas`, `status`, `wifi`, `fx`, `ota`. The agent replies with an ACK on
 `tsn/ack/<id>`. Linux/Raspberry Pi apply QoS/VLAN via `iproute2`+`tc`; ESP32/
 STM32/NXP use embedded adapters. The **ESP32 agent** (`esp32-agent/`) is the reference
 implementation with zero-touch provisioning.
+
+**ESP32 agent / ESP32-CAM features**:
+
+- **OTA updates** — `{"url":"http://<host>/fw/x.bin"}` on `tsn/cmd/<id>/ota`
+  downloads and flashes the image via `esp_https_ota` onto the A/B slot, then reboots;
+  a corrupted boot rolls back automatically (see `shared/wtsn_ota`)
+- **MQTT last will** — each node registers a retained LWT on `tsn/lwt/<id>`; the GUI
+  marks the node offline the moment it disappears
+- **Factory reset** — hold the BOOT button (GPIO0) for 3 s on the ESP32 agent: erases
+  the provisioning NVS partition and reboots into provisioning mode
+- **SNTP time** — the node syncs a NTP clock; sensor / heartbeat payloads carry a
+  `ts` timestamp
+- **LED status** — solid off = provisioning, blinking = connecting, solid = online
+- **Discovery extras** — `tsn/discover` now carries `ip`, `fw` (firmware version) and
+  `kind` (`esp32` / `cam`), which the GUI shows per device
 
 ---
 

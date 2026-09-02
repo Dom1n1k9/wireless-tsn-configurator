@@ -17,6 +17,10 @@ CONFIG_FREERTOS_HZ=1000
 # Flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
-# Custom partition table (micro:bit display via wired UART)
+# Custom partition table (OTA A/B + rollback; micro:bit display via wired UART)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="./partitions.csv"
+
+# Allow plain-HTTP OTA URLs (web GUI serves the image on the trusted LAN).
+# Use HTTPS URLs for update paths that leave the LAN.
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

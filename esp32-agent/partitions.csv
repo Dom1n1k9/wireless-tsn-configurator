@@ -1,7 +1,10 @@
-# Name:   wtsn-esp32-agent
+# Name:   wtsn-esp32-agent (OTA A/B)
 # Flash:  4MB
-# Template based on ESP-IDF default single-app layout
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 2M,
+# Two OTA app partitions + otadata for rollback. A bad update reboots back
+# into the previous partition automatically. App partitions are 64KB-aligned.
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+otadata,  data, ota,     0x10000,  0x2000,
+ota_0,    app,  ota_0,   0x20000,  0x170000,
+ota_1,    app,  ota_1,   0x190000, 0x170000,
