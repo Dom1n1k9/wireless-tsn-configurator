@@ -4,6 +4,28 @@ All notable changes to the WTSN Configurator. Firmware releases bump
 `WTSN_FW_VERSION` in `shared/wtsn_version/wtsn_version.h`; host releases are
 tagged the same way.
 
+## [Unreleased]
+
+### Documentation
+- Reorganized the README into a single, consistent reference (quick start,
+  architecture, components, provisioning, protocol, security, build/test,
+  layout, FAQ) with a table of contents.
+- Rewrote `docs/ARCHITECTURE.md` (removed the dead GUI controller/view, fixed
+  the FX topic map, added the web GUI package structure and threading model).
+- Rewrote `docs/BUILD.md` (dropped the non-existent `WTSN_DB_PATH` option,
+  documented `WTSN_TLS_*`, CTest incl. `test_json_host`, ASan/cppcheck as
+  blocking, action-handler development).
+- Updated `esp32-agent/README.md` to match the actual firmware: NVS
+  `ap_pass`/broker-auth keys, the real FX (`tsn/fx/cmd`, `tsn/fx/data`) and
+  telemetry topic table, UART CRC-16/CCITT framing, default
+  `wtsn-broker.local` broker, `WTSN_DEVICE_ID` override.
+
+### Changed (UI)
+- The web GUI *Domains* page is now clearly labelled as **organizational**:
+  it stores the per-cell grouping and device→domain assignment, but deployment
+  (`exec_all`) is still global and does not yet scope by domain. Same note
+  added to the README and `docs/ARCHITECTURE.md`.
+
 ## [1.1.0] — 2026-09-02
 
 ### Fixed

@@ -34,9 +34,10 @@ To re-provision later, use the `wifi` MQTT command from the web GUI
 
 > **Security note:** the portal is plain HTTP on an open SoftAP, so the WiFi
 > password is sent in cleartext while provisioning. The SoftAP is only up for
-> the few minutes of provisioning, after which it is gone. Set `PROV_AP_PASS`
-> in `shared/wtsn_prov/wtsn_prov.c` to WPA2-protect the setup AP if you need
-> more. See the main README, *Security note: plaintext provisioning*.
+> the few minutes of provisioning, after which it is gone. To WPA2-protect the
+> setup AP, store a password in NVS (namespace `wtsn`, key `ap_pass`, min 8
+> chars); the compile-time fallback is `PROV_AP_PASS_DEFAULT` in
+> `shared/wtsn_prov/wtsn_prov.c`. See the main README, *Security*.
 
 ## Out-of-band configuration via NVS
 
@@ -44,8 +45,12 @@ You can also pre-seed settings in NVS (`idf.py menuconfig` not wired to these;
 write them via a small NVS utility or the portal above):
 
 - WiFi SSID / pass — stored in NVS under `wtsn` namespace
-- MQTT host: `192.168.1.10:1883` (see `wtsn_cfg.c`), override via portal
-- Device id: `esp32-01` (edit `g_device_id` in `main/main.c`)
+- MQTT host: default `wtsn-broker.local:1883` (see `wtsn_cfg.c`), override via
+  portal or the `wifi` command
+- Device id: auto-detected (`esp32-01` sensor board / `esp32-02` relay board),
+  override with `WTSN_DEVICE_ID` or a NVS `device_id` key, or in the portal
+- Optional broker auth/TLS (namespace `wtsn`): `muser`, `mpass`, `mtls` (1=on),
+  `mtls_ca` (PEM), `minsec` (1 = skip verify, dev only)
 
 ## Build & flash
 
@@ -68,10 +73,11 @@ idf.py build -p /dev/ttyUSB0 flash monitor
    agent consumes, plus `status`. The agent replies on `tsn/ack/<id>` and
    `tsn/status`; the webgui subscribes to these so devices show online.
 
-The webgui embeds a stdlib-only MQTT 3.1.1 client (no paho needed), see the
-`MqttBroker` class in `webgui.py`. Set broker with env `WTSN_BROKER=host:port`
-or via the FXMQTT / Settings pages. Broker auth via `WTSN_USER`/`WTSN_PASS`
-env vars.
+The webgui embeds a paho-based MQTT client (see the `MqttBroker` class in
+`wtsn_webgui/mqtt_broker.py`). Set the broker with env `WTSN_BROKER=host:port` or
+via the FXMQTT / Settings pages. Broker auth via `WTSN_USER`/`WTSN_PASS` and TLS via
+`WTSN_TLS_*` env vars; the agent-side equivalents are the NVS `muser`/`mpass`/`mtls*`
+keys (see above).
 
 **Note:** in simulation mode nothing is published — it stays a pure in-browser/DB
 demo. Real commands only go out in **real** mode.
@@ -90,13 +96,18 @@ status / ack / FX on:
 | `tsn/cmd/<id>/tas`          | in: `<cycle_ns>`                       |
 | `tsn/cmd/<id>/preemption`   | in: `<mode>,<emac>,<pmac>`            |
 | `tsn/cmd/<id>/status`       | in: empty -> replies on `tsn/status`    |
+| `tsn/cmd/<id>/ota`          | in: `{"url":"http://<host>/fw/x.bin"}` |
+| `tsn/cmd/<id>/ping`         | in: `1` -> ACK with `ip` + LED blink   |
 | `tsn/ack/<id>`              | out: `{"id","ok"}`                     |
-| `tsn/status`               | out: JSON status                        |
+| `tsn/status`               | out: JSON status (rssi, fw, ip)         |
 | `tsn/discover`             | out: on connect                        |
-| `tsn/fx/#`                | FX / C2C field exchange                 |
-| `tsn/fx/field`            | in/out: C2C field exchange             |
-| `tsn/fx/<id>`             | in/out: device field exchange           |
- | `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: per-sensor readable topics |
+| `tsn/fx/cmd/#`             | in: FX / C2C commands (e.g. stream)     |
+| `tsn/fx/data`              | in/out: shared FX data feed (motion)    |
+| `tsn/fx/<id>`              | out: per-device field exchange          |
+| `tsn/sensors` / `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: telemetry |
+| `tsn/sensors/event`        | out: PIR motion events                 |
+| `tsn/lwt/<id>`             | retained "offline" last will           |
+| `tsn/ptp`                  | out: gPTP reports                      |
 
 ## micro:bit display panel (wired UART)
 
@@ -116,6 +127,11 @@ value, **A** = previous. It **beeps through the V2 built-in speaker**
 (`music.setBuiltInSpeakerEnabled(true)`) and flashes a heart when the PIR
 reports motion (`M:1`, rising edge). A test tone plays at startup. No external
 piezo needed (MakeCode variant).
+
+Every UART frame is terminated with a **CRC-16/CCITT** trailer (`*XXXX`, poly
+`0x1021`, init `0xFFFF`); both the ESP and the panel drop frames that fail the
+check, so a corrupted wire never shows wrong values. Legacy frames without the
+trailer are still accepted for compatibility.
 
 ## Limitations on ESP32
 

@@ -56,7 +56,7 @@ cmake --build build --target tsn-node-simulator
 ./build/tsn-node-simulator \
   --profile profiles/esp32.ini \
   --profile profiles/nxp.ini \
-  --mqtt-host 192.168.1.10 --mqtt-port 1883 \
+  --mqtt-host 192.168.0.149 --mqtt-port 1883 \
   --once
 ```
 
