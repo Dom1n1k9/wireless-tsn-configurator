@@ -11,6 +11,9 @@
  * NOTE: the portal is plain HTTP (no TLS) and the SoftAP is open by default,
  * which is normal for a provisioning-only AP, but the WiFi password is
  * submitted in cleartext. Only use it on a trusted local network.
+ * To lock the SoftAP behind WPA2-PSK, store a password in NVS under the key
+ * "ap_pass" (namespace "wtsn") or change PROV_AP_PASS_DEFAULT in
+ * wtsn_prov.c. The portal then can only be opened after joining the secured AP.
  */
 
 /* Called when the user submits credentials from the portal. devid may be

@@ -83,6 +83,7 @@ def connect():
         con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA busy_timeout=5000")
         con.execute("PRAGMA synchronous=NORMAL")
+        con.execute("PRAGMA foreign_keys=ON")
     except sqlite3.Error:
         pass
     ensure_schema(con)

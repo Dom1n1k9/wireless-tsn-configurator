@@ -139,8 +139,18 @@ provisioning examples do the same in their basic form), but it means:
 - the portal is only reachable from that SoftAP, so the exposure window is the few
   minutes you spend provisioning, not your production network.
 
-For sensitive deployments, keep provisioning physically supervised, or change the
-`PROV_AP_PASS` in `shared/wtsn_prov/wtsn_prov.c` to put the SoftAP behind WPA2.
+For sensitive deployments, keep provisioning physically supervised, or secure the
+provisioning AP:
+
+- Store a **SoftAP password** in NVS (namespace `wtsn`, key `ap_pass`, min 8 chars)
+  to put `WTSN-Setup-*` behind **WPA2-PSK** (`PROV_AP_PASS_DEFAULT` in
+  `shared/wtsn_prov/wtsn_prov.c` is the compile-time fallback; leave it empty for an
+  open AP).
+- MQTT broker access can be restricted to **username/password + TLS**: on the agent,
+  store `muser` / `mpass` / `mtls` / `mtls_ca` / `minsec` in NVS (namespace `wtsn`),
+  or set `WTSN_USER` / `WTSN_PASS` / `WTSN_TLS_CA` / `WTSN_TLS_CERT` / `WTSN_TLS_KEY`
+  (and `WTSN_TLS_INSECURE=1` to skip verification, dev only) for the web GUI.
+
 After provisioning the SoftAP is gone and normal operation only uses MQTT.
 
 ---

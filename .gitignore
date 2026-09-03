@@ -1,6 +1,7 @@
 build/
 build_verify/
 build_win/
+build-asan/
 __pycache__/
 *.pyc
 *.o

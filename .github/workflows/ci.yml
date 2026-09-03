@@ -26,7 +26,9 @@ jobs:
 
       - name: Run tests
         working-directory: build
-        run: ./wtsn-tests
+        run: |
+          ./wtsn-tests
+          ctest --output-on-failure   # includes test_json_host (agent JSON parser)
 
       - name: CPack package
         working-directory: build
@@ -54,8 +56,8 @@ jobs:
   sanitizer:
     name: Sanitized build & test (ASan/UBSan)
     runs-on: ubuntu-latest
-    # Experimental job: make blocking once the baseline is clean.
-    continue-on-error: true
+    # Blocking: ASan/UBSan must stay clean (leaks and UB fail the build).
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
 
@@ -75,13 +77,14 @@ jobs:
 
       - name: Run tests
         working-directory: build-asan
-        run: ASAN_OPTIONS=detect_leaks=1 ./wtsn-tests
+        run: |
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 ctest --output-on-failure
 
   cppcheck:
     name: Static analysis (cppcheck)
     runs-on: ubuntu-latest
-    # Informational only for now; promote to blocking when noise is down.
-    continue-on-error: true
+    # Blocking: keep the warning/performance/portability baseline clean.
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
 

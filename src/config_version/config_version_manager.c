@@ -358,8 +358,8 @@ wtsn_error wtsn_cfg_ver_diff(wtsn_config_version_manager *m, int id_a, int id_b,
     (void)w; (void)h;
     int maxl = (int)(out_size / (w + h));
     int an = 0, bn = 0;
-    const char *arow[1024];
-    const char *brow[1024];
+    const char *arow[1024] = {0};
+    const char *brow[1024] = {0};
     char *saveA = NULL, *saveB = NULL;
     char *ta = strtok_r(pa, " ", &saveA);
     while (ta && an < 1024) { arow[an++] = ta; ta = strtok_r(NULL, " ", &saveA); }

@@ -32,9 +32,7 @@ set(WTSN_SOURCES
   src/common/log.c
   src/common/str_util.c
   src/mvc/model.c
-  src/mvc/controller.c
   src/mvc/event_bus.c
-  src/mvc/view.c
   src/db/db.c
   src/db/db_devices.c
   src/db/db_qos.c
@@ -98,6 +96,17 @@ target_include_directories(wtsn-tests PRIVATE
   ${MOSQUITTO_INCLUDE_DIRS})
 if(BUILD_TESTING)
   add_test(NAME wtsn-tests COMMAND wtsn-tests)
+endif()
+
+# ---- Host unit test of the ESP32 agent's JSON parser (wtsn_json.c has no
+#      ESP-IDF dependencies, so it builds and runs on the host in CI) ----
+if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/esp32-agent/components/wtsn_agent/wtsn_json.c")
+  add_executable(test_json_host
+    esp32-agent/test/test_json.c
+    esp32-agent/components/wtsn_agent/wtsn_json.c
+  )
+  target_include_directories(test_json_host PRIVATE esp32-agent/components/wtsn_agent)
+  add_test(NAME test_json_host COMMAND test_json_host)
 endif()
 
 # ---- TSN Node Simulator (independent feature; does not touch core) ----

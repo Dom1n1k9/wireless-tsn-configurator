@@ -14,7 +14,6 @@ from wtsn_webgui.db import clamp, connect, load_all
 from wtsn_webgui.mqtt_link import parse_listener_msg
 from wtsn_webgui.server import WTSNServer, make_handler
 
-
 class WebGuiActionTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -180,6 +179,92 @@ class WebGuiActionTest(unittest.TestCase):
             data = load_all()
             self.assertTrue(any(s["device_id"] == "d2" and s["sensor_id"] == "temp1"
                                 for s in data["sensors"]))
+        finally:
+            con.close()
+
+
+class MockBroker:
+    """A stand-in for mqtt_broker.MqttBroker that records what was published."""
+
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload, qos=0):
+        self.published.append((topic, payload))
+        return True
+
+
+class WebGuiRealModeTest(unittest.TestCase):
+    """Integration: command/ack cycle over (a mocked) MQTT in REAL mode."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="wtsn_real_")
+        cls._old_sim = state.DB_SIM
+        cls._old_real = state.DB_REAL
+        state.DB_SIM = os.path.join(cls.tmp, "sim.db")
+        state.DB_REAL = os.path.join(cls.tmp, "real.db")
+
+    @classmethod
+    def tearDownClass(cls):
+        state.DB_SIM = cls._old_sim
+        state.DB_REAL = cls._old_real
+        state.MODE["mode"] = "sim"
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        state.MODE["mode"] = "real"
+        state.EVENTS.clear()
+        state.RECENT_ACKS.clear()
+        self.broker = MockBroker()
+        from wtsn_webgui import mqtt_link
+        self._orig = mqtt_link.get_real_mqtt
+        mqtt_link.get_real_mqtt = lambda con: self.broker
+
+    def tearDown(self):
+        from wtsn_webgui import mqtt_link
+        mqtt_link.get_real_mqtt = self._orig
+        state.MODE["mode"] = "sim"
+
+    def act(self, name, data=None):
+        return run_action(name, data or {})
+
+    def test_exec_all_publishes_apply_and_status(self):
+        self.act("save_devices", {"device": {"id": "esp32-01", "name": "gw"}})
+        r = self.act("exec_all")
+        self.assertTrue(r["ok"])
+        topics = [t for t, _ in self.broker.published]
+        self.assertIn("tsn/cmd/esp32-01/apply", topics)
+        self.assertIn("tsn/cmd/esp32-01/status", topics)
+
+    def test_stream_deploy_uses_fx_cmd_topic(self):
+        self.act("save_devices", {"device": {"id": "talker1"}})
+        self.act("save_devices", {"device": {"id": "l1"}})
+        self.act("save_stream", {"stream_id": "st1", "name": "ctrl",
+                                 "talker": "talker1", "listeners": ["l1"]})
+        r = self.act("deploy_stream", {"stream_id": "st1"})
+        self.assertTrue(r["ok"])
+        topics = [t for t, _ in self.broker.published]
+        # FX command channel must be used, not the old tsn/fx/field/stream.
+        self.assertIn("tsn/fx/cmd/talker1", topics)
+        self.assertIn("tsn/cmd/talker1/stream", topics)
+        self.assertIn("tsn/cmd/l1/stream", topics)
+        self.assertNotIn("tsn/fx/field", topics)
+        self.assertNotIn("tsn/fx/stream", topics)
+
+    def test_ping_uses_device_command_topic(self):
+        self.act("save_devices", {"device": {"id": "esp32-01"}})
+        r = self.act("ping_device", {"id": "esp32-01"})
+        self.assertTrue(r["ok"])
+        self.assertIn(("tsn/cmd/esp32-01/ping", "1"), self.broker.published)
+
+    def test_ack_recorded_in_state(self):
+        con = connect()
+        try:
+            parse_listener_msg(con, "tsn/ack/esp32-01",
+                               json.dumps({"id": "esp32-01", "ok": True}))
+            self.assertIn("esp32-01", state.RECENT_ACKS)
+            self.assertTrue(state.RECENT_ACKS["esp32-01"][0])
         finally:
             con.close()
 

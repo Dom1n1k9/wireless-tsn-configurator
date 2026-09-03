@@ -41,6 +41,7 @@ wtsn_plugin *wtsn_plugin_create(void) {
     p->api_version = WTSN_PLUGIN_API_VERSION;
     wtsn_strlcpy(p->name, "mqtt-discovery", sizeof(p->name));
     mqtt_plugin_data *d = calloc(1, sizeof(mqtt_plugin_data));
+    if (!d) { free(p); return NULL; }
     wtsn_strlcpy(d->broker, "localhost", sizeof(d->broker));
     d->port = 1883;
     wtsn_strlcpy(d->topic_prefix, "tsn/discovery", sizeof(d->topic_prefix));

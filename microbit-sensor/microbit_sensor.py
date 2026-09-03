@@ -46,7 +46,34 @@ def beep():
 vals = {"T": 0, "P": 0, "H": 0, "L": 0, "M": 0, "A": 0}
 
 
+def crc16(data):
+    """CRC-16/CCITT (poly 0x1021, init 0xFFFF), matches the ESP's C impl."""
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+def line_ok(line):
+    """True if the line is legacy (no '*') or passes its trailing *XXXX CRC."""
+    star = line.rfind("*")
+    if star < 0:
+        return True
+    try:
+        expect = int(line[star + 1:], 16)
+    except ValueError:
+        return False
+    return crc16(line[:star].encode("utf-8")) == expect
+
+
 def parse_line(line):
+    if not line_ok(line):
+        return
     for tok in line.split(" "):
         key, sep, num = tok.partition(":")
         if sep and key in vals:
@@ -95,5 +122,9 @@ while True:
         display.show(Image.HEART, delay=1500)
         beep()
     prev_pir = vals["M"]
+    # Report the panel's own onboard-sensor readback to the ESP on TX (P0),
+    # CRC-protected so the ESP only republishes intact mb_* values on MQTT.
+    payload = "T:%d L:%d P:%d" % (int(vals["T"]), int(vals["L"]), int(vals["M"]))
+    uart.write((payload + "*%04X\n") % (crc16(payload.encode("utf-8")),))
     # hold the current view; re-render after the ~2 s display + short gap
     sleep(3)

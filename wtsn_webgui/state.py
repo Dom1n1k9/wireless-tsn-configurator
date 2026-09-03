@@ -24,6 +24,7 @@ LISTENER_STOP = threading.Event()
 WS_NOTIFY = threading.Event()   # set whenever state changes; the WS hub picks it up
 RECENT_ACKS = {}
 ACK_LOCK = threading.Lock()
+MQTT_LOCK = threading.Lock()   # guards the cached REAL_MQTT client in mqtt_link
 SIM_USER_DEVICES = set()
 SIM_USER_DEVICES_LOCK = threading.Lock()
 OFFLINE_AFTER = 20

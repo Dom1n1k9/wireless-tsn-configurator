@@ -62,7 +62,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
-function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 async function api(a,d){const r=await fetch("/api/actions/"+a,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d||{})});const j=await r.json();toast(j.msg,j.ok);return j}
 function toast(m,ok){const t=$("toast");t.style.display="block";t.style.borderColor=ok?"var(--sec)":"var(--err)";t.textContent=m;clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",2200)}
 async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go(cur||"devices")}
@@ -95,9 +95,10 @@ function camCell(d){
   if(!isCam||!d.ip)return "<span class='muted'>-</span>";
   return "<img src='http://"+esc(d.ip)+"/stream' style='width:96px;height:72px;object-fit:cover;border-radius:6px' onerror=\"this.outerHTML='<span class=muted>no signal</span>'\">"}
 function devRow(d){
-  const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+esc(d.id)+"\")'>OTA</button> ":"";
+  const eid=esc(d.id);
+  const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+eid+"\")'>OTA</button> ":"";
   const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
-  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+esc(d.id)+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>"}
+  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
 function avReset(id){if(!confirm("Reset device "+id+"? Clears its WiFi + TSN config and reboots it."))return;api("save_devices",{reset:[id]}).then(load)}
 function otaDev(id){api("start_ota",{id:id})}
 function devices(){

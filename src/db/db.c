@@ -5,6 +5,7 @@
 #include "common/log.h"
 #include "common/str_util.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static const char *SCHEMA =
@@ -18,12 +19,12 @@ static const char *SCHEMA =
     ");"
     "CREATE TABLE IF NOT EXISTS device_tsn_features ("
     "  device_id TEXT, feature TEXT,"
-    "  FOREIGN KEY(device_id) REFERENCES devices(id)"
+    "  FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE"
     ");"
     "CREATE TABLE IF NOT EXISTS qos_configs ("
     "  device_id TEXT PRIMARY KEY, priority INTEGER, traffic_class INTEGER,"
     "  bandwidth_kbps INTEGER, latency_ms INTEGER, preemption INTEGER,"
-    "  FOREIGN KEY(device_id) REFERENCES devices(id)"
+    "  FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE"
     ");"
     "CREATE TABLE IF NOT EXISTS vlan_groups ("
     "  id TEXT PRIMARY KEY, name TEXT, vlan_id INTEGER"
@@ -36,7 +37,7 @@ static const char *SCHEMA =
     ");"
     "CREATE TABLE IF NOT EXISTS gcl_entries ("
     "  schedule_id TEXT, \"index\" INTEGER, gate_state TEXT, duration_ns INTEGER,"
-    "  FOREIGN KEY(schedule_id) REFERENCES tas_schedules(id)"
+    "  FOREIGN KEY(schedule_id) REFERENCES tas_schedules(id) ON DELETE CASCADE"
     ");"
     "CREATE TABLE IF NOT EXISTS timesync_status ("
     "  id TEXT PRIMARY KEY, mode TEXT, grandmaster TEXT, offset_ns INTEGER,"
@@ -46,7 +47,7 @@ static const char *SCHEMA =
     "  device_id TEXT, sensor_id TEXT, type TEXT, name TEXT, value REAL,"
     "  unit TEXT, healthy INTEGER, last_update INTEGER,"
     "  PRIMARY KEY(device_id, sensor_id),"
-    "  FOREIGN KEY(device_id) REFERENCES devices(id)"
+    "  FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE"
     ");"
     "CREATE TABLE IF NOT EXISTS settings ("
     "  key TEXT PRIMARY KEY, value TEXT"
@@ -59,7 +60,7 @@ static const char *SCHEMA =
     ");"
     "CREATE TABLE IF NOT EXISTS tsn_stream_members ("
     "  stream_id TEXT, role TEXT, device_id TEXT,"
-    "  FOREIGN KEY(stream_id) REFERENCES tsn_streams(stream_id)"
+    "  FOREIGN KEY(stream_id) REFERENCES tsn_streams(stream_id) ON DELETE CASCADE"
     ");"
     "CREATE TABLE IF NOT EXISTS trace_log ("
     "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -95,6 +96,10 @@ wtsn_error wtsn_db_open(wtsn_db *db, const char *path) {
         wtsn_log(WTSN_LOG_ERROR, "sqlite open failed: %s", sqlite3_errmsg(db->handle));
         return WTSN_ERR_DB;
     }
+    /* Enforce the FOREIGN KEY clauses declared in the schema. SQLite keeps this
+     * off by default, so without it orphans accumulate. Must be set per
+     * connection (it is not persisted). */
+    sqlite3_exec(db->handle, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
     wtsn_strlcpy(db->path, path, sizeof(db->path));
     return wtsn_db_migrate(db);
 }
@@ -107,10 +112,34 @@ wtsn_error wtsn_db_migrate(wtsn_db *db) {
         sqlite3_free(err);
         return WTSN_ERR_DB;
     }
+    /* Versioned migrations: user_version tracks the schema level so a future
+     * migration only needs one more step here instead of string-matching
+     * "duplicate column name" in ALTER TABLE (the old approach). */
+    int ver = 0;
+    {
+        sqlite3_stmt *st = NULL;
+        if (sqlite3_prepare_v2(db->handle, "PRAGMA user_version;", -1, &st, NULL) == SQLITE_OK &&
+            sqlite3_step(st) == SQLITE_ROW) {
+            ver = sqlite3_column_int(st, 0);
+        }
+        if (st) sqlite3_finalize(st);
+    }
     /* existing databases created before the preemption column */
-    run_migration(db, "ALTER TABLE qos_configs ADD COLUMN preemption INTEGER DEFAULT 0;");
-    run_migration(db, "ALTER TABLE devices ADD COLUMN domain TEXT DEFAULT 'default';");
-    run_migration(db, "ALTER TABLE devices ADD COLUMN heartbeat_at INTEGER DEFAULT 0;");
+    if (ver < 1) {
+        run_migration(db, "ALTER TABLE qos_configs ADD COLUMN preemption INTEGER DEFAULT 0;");
+        run_migration(db, "ALTER TABLE devices ADD COLUMN domain TEXT DEFAULT 'default';");
+        run_migration(db, "ALTER TABLE devices ADD COLUMN heartbeat_at INTEGER DEFAULT 0;");
+        ver = 1;
+    }
+    /* Future schema changes: add `if (ver < N) { ...; ver = N; }` steps here. */
+    if (ver < 2) {
+        ver = 2;
+    }
+    {
+        char sql[64];
+        snprintf(sql, sizeof(sql), "PRAGMA user_version=%d;", ver);
+        sqlite3_exec(db->handle, sql, NULL, NULL, NULL);
+    }
     return WTSN_OK;
 }
 

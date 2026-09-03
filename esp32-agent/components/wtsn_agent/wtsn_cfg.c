@@ -108,6 +108,40 @@ bool wtsn_cfg_save(const char *device_id, const char *wifi_ssid,
     return true;
 }
 
+/* Optional broker auth/TLS keys (namespace "wtsn").
+ *   muser / mpass  -> MQTT credentials (empty user = no auth)
+ *   mtls           -> 1 to require TLS, 0 otherwise
+ *   mtls_ca        -> CA certificate (PEM) or bundle name to verify the broker
+ *   minsec         -> 1 to skip certificate verification (dev only) */
+#define KEY_MQTT_USER "muser"
+#define KEY_MQTT_PASS "mpass"
+#define KEY_MQTT_TLS  "mtls"
+#define KEY_MQTT_TLS_CA "mtls_ca"
+#define KEY_MQTT_INSECURE "minsec"
+
+void wtsn_cfg_get_broker_auth(char *user, size_t user_sz,
+                              char *pass, size_t pass_sz,
+                              bool *tls, char *tls_ca, size_t tls_ca_sz,
+                              bool *insecure) {
+    wtsn_strlcpy(user, "", user_sz);
+    wtsn_strlcpy(pass, "", pass_sz);
+    wtsn_strlcpy(tls_ca, "", tls_ca_sz);
+    if (tls) *tls = wtsn_nvs_get_int(KEY_MQTT_TLS, 0) != 0;
+    if (insecure) *insecure = wtsn_nvs_get_int(KEY_MQTT_INSECURE, 0) != 0;
+    wtsn_nvs_get_str(KEY_MQTT_USER, user, user_sz, "");
+    wtsn_nvs_get_str(KEY_MQTT_PASS, pass, pass_sz, "");
+    wtsn_nvs_get_str(KEY_MQTT_TLS_CA, tls_ca, tls_ca_sz, "");
+}
+
+void wtsn_cfg_set_broker_auth(const char *user, const char *pass,
+                              bool tls, const char *tls_ca, bool insecure) {
+    if (user) wtsn_nvs_set_str(KEY_MQTT_USER, user);
+    if (pass) wtsn_nvs_set_str(KEY_MQTT_PASS, pass);
+    if (tls_ca) wtsn_nvs_set_str(KEY_MQTT_TLS_CA, tls_ca);
+    wtsn_nvs_set_int(KEY_MQTT_TLS, tls ? 1 : 0);
+    wtsn_nvs_set_int(KEY_MQTT_INSECURE, insecure ? 1 : 0);
+}
+
 void wtsn_cfg_set_wifi(const char *ssid, const char *pass) {
     if (ssid) wtsn_nvs_set_str(KEY_WIFI_SSID, ssid);
     if (pass) wtsn_nvs_set_str(KEY_WIFI_PASS, pass);

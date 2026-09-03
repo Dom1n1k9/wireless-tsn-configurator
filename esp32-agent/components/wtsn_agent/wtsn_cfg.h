@@ -38,6 +38,15 @@ bool wtsn_cfg_load_tsn_state(int *priority, int *traffic_class, int *vlan_id,
                              int *preemption, int *timesync_mode, int64_t *tas_cycle_ns,
                              int *gates, int64_t *durations, int *gcl_entries);
 
+/* Optional broker auth / TLS, read from NVS (keys: muser, mpass, mtls, mtls_ca,
+ * minsec). Empty user means "no auth". See wtsn_mqtt_create_auth(). */
+void wtsn_cfg_get_broker_auth(char *user, size_t user_sz,
+                              char *pass, size_t pass_sz,
+                              bool *tls, char *tls_ca, size_t tls_ca_sz,
+                              bool *insecure);
+void wtsn_cfg_set_broker_auth(const char *user, const char *pass,
+                              bool tls, const char *tls_ca, bool insecure);
+
 /* tiny substitute for the host-side str_util */
 void wtsn_strlcpy(char *dst, const char *src, size_t sz);
 

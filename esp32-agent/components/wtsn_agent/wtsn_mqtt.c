@@ -103,6 +103,14 @@ static void on_event(void *handler_args, esp_event_base_t base, int32_t event_id
 
 wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
                              wtsn_cmd_cb cb, wtsn_connected_cb conn_cb, void *ud) {
+    return wtsn_mqtt_create_auth(host, port, client_id, NULL, NULL,
+                                 false, NULL, false, cb, conn_cb, ud);
+}
+
+wtsn_mqtt *wtsn_mqtt_create_auth(const char *host, int port, const char *client_id,
+                                 const char *user, const char *pass,
+                                 bool tls, const char *tls_ca_pem, bool insecure,
+                                 wtsn_cmd_cb cb, wtsn_connected_cb conn_cb, void *ud) {
     wtsn_mqtt *m = calloc(1, sizeof(wtsn_mqtt));
     if (!m) return NULL;
     m->cb = cb;
@@ -115,11 +123,18 @@ wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
     snprintf(will_topic, sizeof(will_topic), "tsn/lwt/%s", client_id ? client_id : "unknown");
     static const char will_msg[] = "offline";
 
+    esp_mqtt_transport_t transport = MQTT_TRANSPORT_OVER_TCP;
+#if defined(MQTT_TRANSPORT_OVER_SSL)
+    if (tls) transport = MQTT_TRANSPORT_OVER_SSL;
+#else
+    (void)tls;
+#endif
     esp_mqtt_client_config_t cfg = {
         .broker = { .address = { .uri = NULL, .hostname = host, .port = port,
-                                 .transport = MQTT_TRANSPORT_OVER_TCP } },
+                                 .transport = transport } },
         .credentials = { .client_id = client_id },
         .session = { .keepalive = 30,
+                     .disable_clean_session = 0,
                      .last_will = {
                          .topic = will_topic,
                          .msg = will_msg,
@@ -128,6 +143,14 @@ wtsn_mqtt *wtsn_mqtt_create(const char *host, int port, const char *client_id,
                          .retain = 1,
                      } },
     };
+#if defined(CONFIG_ESP_TLS_INSECURE) || defined(CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY)
+    if (tls && insecure) cfg.broker.verification.skip_cert_common_name_check = true;
+#endif
+    if (tls && tls_ca_pem && tls_ca_pem[0]) {
+        cfg.broker.verification.certificate = tls_ca_pem;
+    }
+    if (user && user[0]) cfg.credentials.username = user;
+    if (pass && pass[0]) cfg.credentials.authentication.password = pass;
     m->c = esp_mqtt_client_init(&cfg);
     if (!m->c) { free(m); return NULL; }
     esp_mqtt_client_register_event(m->c, ESP_EVENT_ANY_ID, on_event, m);

@@ -6,7 +6,17 @@
 
 wtsn_error wtsn_db_qos_save(wtsn_db *db, const wtsn_qos_config *cfg) {
     if (!db || !db->handle || !cfg) return WTSN_ERR_INVALID_ARG;
+    /* FK integrity: the device must exist before we attach QoS to it. If the
+     * caller only pushed QoS (no explicit device_upsert), create a stub device
+     * row so the foreign key does not silently fail. */
     sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db->handle,
+            "INSERT OR IGNORE INTO devices(id,name) VALUES(?,?);", -1, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(st, 1, cfg->device_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 2, cfg->device_id, -1, SQLITE_TRANSIENT);
+        sqlite3_step(st);
+        sqlite3_finalize(st);
+    }
     const char *sql =
         "INSERT INTO qos_configs (device_id,priority,traffic_class,bandwidth_kbps,latency_ms,preemption)"
         " VALUES (?,?,?,?,?,?)"

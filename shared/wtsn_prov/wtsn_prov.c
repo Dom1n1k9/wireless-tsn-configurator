@@ -16,7 +16,13 @@
 
 static const char *TAG = "prov";
 
-#define PROV_AP_PASS ""
+/* SoftAP password when no NVS override is set. Leave empty for an open AP
+ * (the historical default). To lock the provisioning AP down, set a
+ * non-empty password here OR store one under the NVS key "ap_pass" (namespace
+ * "wtsn") -- the NVS value wins. */
+#define PROV_AP_PASS_DEFAULT ""
+
+#define PROV_AP_PASS_MAX 64
 
 static struct {
     const char *title;
@@ -200,22 +206,46 @@ static void ensure_netif(void) {
 }
 
 static void configure_ap(void) {
+    /* Resolve the SoftAP password: an NVS "ap_pass" override wins over the
+     * compile-time default. A non-empty password puts the AP behind WPA2-PSK
+     * so credentials entered into the portal are not exposed to the open air. */
+    char ap_pass[PROV_AP_PASS_MAX] = {0};
+    nvs_handle_t ah = 0;
+    if (nvs_open("wtsn", NVS_READONLY, &ah) == ESP_OK) {
+        size_t plen = sizeof(ap_pass) - 1;
+        if (nvs_get_str(ah, "ap_pass", ap_pass, &plen) != ESP_OK) {
+            snprintf(ap_pass, sizeof(ap_pass), "%s", PROV_AP_PASS_DEFAULT);
+        }
+        nvs_close(ah);
+    } else {
+        snprintf(ap_pass, sizeof(ap_pass), "%s", PROV_AP_PASS_DEFAULT);
+    }
+
     wifi_config_t ap = {
         .ap = {
             .ssid = "",
             .ssid_len = 0,
-            .password = PROV_AP_PASS,
+            .password = "",
             .max_connection = 4,
-            .authmode = PROV_AP_PASS[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+            .authmode = WIFI_AUTH_OPEN,
         },
     };
     const char *ssid = ap_ssid();
     snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", ssid);
     ap.ap.ssid_len = (uint8_t)strlen(ssid);
+    if (ap_pass[0]) {
+        if (strlen(ap_pass) < 8) {
+            ESP_LOGW(TAG, "ap_pass too short (<8 chars) -> keeping AP open");
+        } else {
+            snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", ap_pass);
+            ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        }
+    }
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_AP, &ap);
     esp_wifi_start();
-    ESP_LOGI(TAG, "SoftAP '%s' started; connect and open http://192.168.4.1/", ssid);
+    ESP_LOGI(TAG, "SoftAP '%s' started (auth=%s); connect and open http://192.168.4.1/",
+             ssid, ap.ap.authmode == WIFI_AUTH_WPA2_PSK ? "WPA2" : "open");
 }
 
 /* Bring up the provisioning SoftAP on an ALREADY-initialised wifi stack (STA from

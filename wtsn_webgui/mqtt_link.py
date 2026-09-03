@@ -1,4 +1,5 @@
 """Real-mode MQTT link: broker access plus the background status listener."""
+import logging
 import json
 import os
 import sqlite3
@@ -6,7 +7,9 @@ import time
 
 from . import state
 from .db import add_event, ensure_schema, get_self_ip
-from .mqtt_broker import MqttBroker
+from .mqtt_broker import MqttBroker, NONE_PUB
+
+log = logging.getLogger("wtsn.mqtt_link")
 
 REAL_MQTT = None
 
@@ -14,25 +17,26 @@ REAL_MQTT = None
 def get_real_mqtt(con):
     """Return connected broker client (cached), connecting from settings or env."""
     global REAL_MQTT
-    try:
-        brk = con.execute("SELECT key,value FROM settings WHERE key='broker'").fetchone()
-    except Exception:
-        brk = None
-    addr = brk["value"] if brk and brk["value"] else os.environ.get("WTSN_BROKER", "127.0.0.1:1883")
-    try:
-        host, port = addr.rsplit(":", 1)
-        port = int(port)
-    except Exception:
-        host, port = "127.0.0.1", 1883
-    if REAL_MQTT is not None:
-        if (REAL_MQTT.host, REAL_MQTT.port) != (host, port):
-            REAL_MQTT.close()
-            REAL_MQTT = None
-    if REAL_MQTT is None:
-        REAL_MQTT = MqttBroker(host, port, "wtsn-webgui")
-        if not REAL_MQTT.connect():
-            return None
-    return REAL_MQTT
+    with state.MQTT_LOCK:
+        try:
+            brk = con.execute("SELECT key,value FROM settings WHERE key='broker'").fetchone()
+        except Exception:
+            brk = None
+        addr = brk["value"] if brk and brk["value"] else os.environ.get("WTSN_BROKER", "127.0.0.1:1883")
+        try:
+            host, port = addr.rsplit(":", 1)
+            port = int(port)
+        except Exception:
+            host, port = "127.0.0.1", 1883
+        if REAL_MQTT is not None:
+            if (REAL_MQTT.host, REAL_MQTT.port) != (host, port):
+                REAL_MQTT.close()
+                REAL_MQTT = None
+        if REAL_MQTT is None:
+            REAL_MQTT = MqttBroker(host, port, "wtsn-webgui")
+            if not REAL_MQTT.connect():
+                return None
+        return REAL_MQTT
 
 
 def parse_listener_msg(con, topic, payload):
@@ -137,8 +141,9 @@ def parse_listener_msg(con, topic, payload):
             return
         con.commit()
         add_event(topic.split("/")[0], did or "broker", topic + " <- " + payload)
-    except Exception:
-        pass
+    except Exception as ex:  # noqa: BLE001 - anything that slips must not kill the listener
+        log.exception("parse_listener_msg failed for topic=%r payload=%r",
+                      topic, payload[:200], exc_info=ex)
 
 
 def mqtt_listener_loop():
@@ -188,18 +193,30 @@ def mqtt_listener_loop():
             brk.subscribe("tsn/lwt/#")
             brk.subscribe("tsn/fx/#")
             brk.subscribe("tsn/ptp")
-            brk.subscribe("tsn/fx/stream")
-            brk.subscribe("tsn/sensors")
+            brk.subscribe("tsn/sensors/#")
             if cons is None:
                 cons = sqlite3.connect(wanted_db, timeout=3)
                 cons.row_factory = sqlite3.Row
                 ensure_schema(cons)
             prev_db = wanted_db
+            idle_since = time.time()
             while not state.LISTENER_STOP.is_set():
                 r = brk.recv_publish(timeout=1.0)
+                if r is NONE_PUB:
+                    # No message this second: not a disconnect. Only re-check the
+                    # mode / broker address occasionally so an idle broker does
+                    # not reconnect every second (and drop messages meanwhile).
+                    if time.time() - idle_since >= 60.0:
+                        idle_since = time.time()
+                        cur_db = state.DB_REAL if state.MODE["mode"] == "real" else state.DB_SIM
+                        if cur_db != prev_db:
+                            prev_db = cur_db
+                            break
+                    continue
                 if r is None:
-                    # reconnect to re-evaluate mode / broker address if it changed
+                    # real disconnect (network down / broker gone) -> reconnect
                     break
+                idle_since = time.time()
                 parse_listener_msg(cons, r[0], r[1])
                 # re-evaluate mode / broker after each message; switch DB if changed
                 cur_db = state.DB_REAL if state.MODE["mode"] == "real" else state.DB_SIM
@@ -209,4 +226,5 @@ def mqtt_listener_loop():
             if cons:
                 cons.commit()
         except Exception:
+            log.exception("mqtt_listener_loop iteration failed")
             time.sleep(3)

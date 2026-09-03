@@ -70,11 +70,13 @@ def main(argv=None):
         pass
     finally:
         state.LISTENER_STOP.set()
-        if mqtt_link.REAL_MQTT:
-            try:
-                mqtt_link.REAL_MQTT.close()
-            except Exception:
-                pass
+        with state.MQTT_LOCK:
+            if mqtt_link.REAL_MQTT:
+                try:
+                    mqtt_link.REAL_MQTT.close()
+                except Exception:
+                    pass
+                mqtt_link.REAL_MQTT = None
         srv.server_close()
         print("WTSN web GUI stopped", flush=True)
     return 0

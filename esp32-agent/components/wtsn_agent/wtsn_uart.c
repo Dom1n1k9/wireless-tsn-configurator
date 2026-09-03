@@ -10,6 +10,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 static const char *TAG = "uart_link";
 
@@ -20,11 +21,41 @@ static const char *TAG = "uart_link";
 /* how often the sensor values are pushed to the micro:bit display */
 #define MB_PUSH_MS   1000
 
+/* Every UART frame is terminated by "*<CRC16-CCITT hex>" so a corrupted byte
+ * on the wire is detected instead of showing wrong values on the micro:bit
+ * panel / mb_* MQTT sensors. Frames without a trailing CRC (legacy peer) are
+ * accepted for compatibility but never sent. */
+#define CRC16_POLY 0x1021u
+
+static uint16_t crc16_ccitt(const char *data, size_t len) {
+    uint16_t crc = 0xFFFFu;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)(uint8_t)data[i] << 8;
+        for (int b = 0; b < 8; b++) {
+            crc = (crc & 0x8000u) ? (uint16_t)((crc << 1) ^ CRC16_POLY)
+                                  : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+/* Returns 1 if the frame passes its trailing "*XXXX" CRC check, 0 otherwise.
+ * Frames without a "*" are treated as legacy (accepted). */
+static int frame_ok(const char *line) {
+    const char *star = strrchr(line, '*');
+    if (!star) return 1;
+    unsigned expect = 0;
+    if (sscanf(star + 1, "%4x", &expect) != 1) return 0;
+    return crc16_ccitt(line, (size_t)(star - line)) == (uint16_t)expect;
+}
+
 static wtsn_mqtt *g_mqtt = NULL;
 static char g_dev_id[32] = {0};
 
 static void publish_line(const char *line) {
     if (!g_mqtt) return;
+    /* Drop frames that failed their CRC check (micro:bit's own readback). */
+    if (!frame_ok(line)) return;
     /* The micro:bit is a display add-on of THIS node, so publish its onboard
      * sensors under the node's own id (mb_* sensor ids) - a separate
      * "mb-<id>" device would show up as a phantom node in the webgui. */
@@ -41,8 +72,15 @@ static void publish_line(const char *line) {
 }
 
 void wtsn_uart_send_line(const char *line) {
-    if (line && line[0])
-        uart_write_bytes(LINK_UART, line, (unsigned)strlen(line));
+    if (!line || !line[0]) return;
+    /* Append the CRC trailer: "<line>*<XXXX>\n". The line already includes the
+     * trailing '\n' but the CRC must cover only the payload. */
+    size_t base = strlen(line);
+    if (base && line[base - 1] == '\n') base -= 1;
+    char framed[160];
+    uint16_t crc = crc16_ccitt(line, base);
+    snprintf(framed, sizeof(framed), "%.*s*%04X\n", (int)base, line, crc);
+    uart_write_bytes(LINK_UART, framed, (unsigned)strlen(framed));
 }
 
 /* Push the cached sensor readings to the micro:bit so it can display them and
@@ -70,8 +108,10 @@ static void uart_task(void *arg) {
     for (;;) {
         int n = uart_read_bytes(LINK_UART, &b, 1, pdMS_TO_TICKS(50));
         if (n <= 0) continue;
-        if (b == '\n') { if (pos) { linebuf[pos] = 0; publish_line(linebuf); } pos = 0; }
-        else if (pos < sizeof(linebuf) - 1) linebuf[pos++] = (char)b;
+        if (b == '\n') {
+            if (pos) { linebuf[pos] = 0; publish_line(linebuf); }
+            pos = 0;
+        } else if (pos < sizeof(linebuf) - 1) linebuf[pos++] = (char)b;
     }
 }
 

@@ -117,12 +117,11 @@ static wtsn_error linux_read_sensors(void *state) {
 
 static wtsn_error linux_send(void *state, const char *topic, const unsigned char *data, size_t len) {
     (void)state;
-    /* publish via mqtt client, buffering data into a null-terminated string */
-    char *buf = malloc(len + 1);
-    if (buf) {
-        memcpy(buf, data, len);
-        buf[len] = '\0';
-    }
+    (void)topic;
+    (void)data;
+    (void)len;
+    /* TODO(host-agent): publish via the mqtt client. Currently a no-op; the
+     * previous implementation allocated a buffer that was never used or freed. */
     return WTSN_OK;
 }
 

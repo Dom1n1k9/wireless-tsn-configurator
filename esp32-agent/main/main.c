@@ -248,7 +248,9 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         char buf[96];
         snprintf(buf, sizeof(buf), "{\"id\":\"%s\",\"ok\":true,\"mode\":%d,\"prev\":%d}",
                  g_device_id, mode, prev);
-        wtsn_mqtt_publish(g_mqtt, "tsn/ack/%s", buf);
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        wtsn_mqtt_publish(g_mqtt, topic, buf);
         return;
     } else if (strcmp(cmd, "ping") == 0) {
         /* reply with the device IP so the CNC can show src(PC)->dst(ESP) in the monitor,
@@ -256,7 +258,9 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         identify_start();
         char ack[160];
         snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true,\"ip\":\"%s\"}", g_device_id, g_ip);
-        wtsn_mqtt_publish(g_mqtt, "tsn/ack/%s", ack);
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        wtsn_mqtt_publish(g_mqtt, topic, ack);
         return;
     } else if (strcmp(cmd, "identify") == 0) {
         identify_start();
@@ -450,8 +454,15 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             sntp_init();
         }
         if (!g_mqtt) {
-            g_mqtt = wtsn_mqtt_create(ctx->host, ctx->port, g_device_id,
-                                        on_command, on_connected, NULL);
+            char muser[64] = {0}, mpass[64] = {0}, mtls_ca[1024] = {0};
+            bool mtls = false, minsec = false;
+            wtsn_cfg_get_broker_auth(muser, sizeof(muser), mpass, sizeof(mpass),
+                                     &mtls, mtls_ca, sizeof(mtls_ca), &minsec);
+            g_mqtt = wtsn_mqtt_create_auth(ctx->host, ctx->port, g_device_id,
+                                           muser[0] ? muser : NULL,
+                                           mpass[0] ? mpass : NULL,
+                                           mtls, mtls_ca[0] ? mtls_ca : NULL, minsec,
+                                           on_command, on_connected, NULL);
             if (g_mqtt) {
                 wtsn_mqtt_set_device_id(g_mqtt, g_device_id);
                 wtsn_mqtt_start(g_mqtt);
@@ -684,7 +695,7 @@ void app_main(void) {
     int mqtt_port = 1883;
     ensure_device_id();
     actor_init();
-    wtsn_prov_init("WTSN Node Setup", "192.168.1.10", prov_save, prov_load_id);
+    wtsn_prov_init("WTSN Node Setup", "wtsn-broker.local", prov_save, prov_load_id);
     wtsn_cfg_load(g_device_id, sizeof(g_device_id),
                   wifi_ssid, sizeof(wifi_ssid), wifi_pass, sizeof(wifi_pass),
                   mqtt_host, sizeof(mqtt_host), &mqtt_port);
