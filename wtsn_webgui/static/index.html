@@ -95,8 +95,10 @@ function camCell(d){
   if(!isCam||!d.ip)return "<span class='muted'>-</span>";
   return "<img src='http://"+esc(d.ip)+"/stream' style='width:96px;height:72px;object-fit:cover;border-radius:6px' onerror=\"this.outerHTML='<span class=muted>no signal</span>'\">"}
 function devRow(d){
-  const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+esc(d.id)+"\")'>OTA</button> ":"":"";
-  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>"}
+  const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+esc(d.id)+"\")'>OTA</button> ":"";
+  const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
+  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+esc(d.id)+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+esc(d.id)+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+esc(d.id)+"\"]}).then(load)'>Del</button></td></tr>"}
+function avReset(id){if(!confirm("Reset device "+id+"? Clears its WiFi + TSN config and reboots it."))return;api("save_devices",{reset:[id]}).then(load)}
 function otaDev(id){api("start_ota",{id:id})}
 function devices(){
   const rows=D.devices.map(devRow).join("");
@@ -109,7 +111,7 @@ function devices(){
    "<div class='row'><label>name</label><input id=dname></div>"+
    "<div class='row'><label>ip</label><input id=dip></div>"+
    "<button onclick=saveDev()>Add Device</button></div>"+
-   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows+"</table>"}
+   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows+"</table>"}
 async function startOta(){
   const f=$("ota_file").files[0];
   if(!f){toast("pick a .bin file first",false);return}
@@ -141,7 +143,7 @@ function rvLoad(){const m=$("cv_list");m.innerHTML="<div class='muted'>loading..
 function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
 function diffV(id){fetch("/api/actions/diff_versions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
 
-function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows}}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th></th><th></th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
  let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");

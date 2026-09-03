@@ -29,15 +29,30 @@ static void ota_task(void *arg) {
     esp_https_ota_config_t cfg = {
         .http_config = &http_cfg,
     };
-    esp_https_ota_handle_t handle = &cfg;
 
-    err = esp_https_ota(&handle);
+    /* Correct API: begin() allocates the handle, then perform/finish stream the
+     * image onto the other partition. Passing a pointer to the *config* struct
+     * as the handle (the previous code) relies on unspecified struct layout
+     * and leaks/use-after-free as soon as IDF reshuffles it. */
+    esp_https_ota_handle_t handle = NULL;
+    err = esp_https_ota_begin(&cfg, NULL, &handle);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "OTA download complete, rebooting into new app");
-        vTaskDelay(pdMS_TO_TICKS(200));
-        esp_restart();
+        err = esp_https_ota_perform(handle);
+        if (err == ESP_ERR_HTTPS_OTA_IN_PROGRESS) err = ESP_OK;
     }
-    ESP_LOGE(TAG, "OTA failed: %s (previous app stays active)", esp_err_to_name(err));
+    if (err == ESP_OK) {
+        esp_err_t ferr = esp_https_ota_finish(handle);
+        if (ferr != ESP_OK) {
+            ESP_LOGE(TAG, "OTA finish failed: %s", esp_err_to_name(ferr));
+            err = ferr;
+        } else {
+            ESP_LOGI(TAG, "OTA download complete, rebooting into new app");
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+    } else {
+        ESP_LOGE(TAG, "OTA failed: %s (previous app stays active)", esp_err_to_name(err));
+    }
 
     free(url);
     g_busy = 0;

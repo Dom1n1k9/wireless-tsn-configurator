@@ -33,6 +33,17 @@ static char g_ip[16] = "0.0.0.0";
 static wtsn_mqtt *g_mqtt = NULL;
 static void ensure_device_id(void);
 static void identify_start(void);
+static volatile int g_wifi_ready = 0;   /* declared here so current_rssi() can see it */
+static volatile int g_prov_fallback_started = 0;
+
+/* Current STA signal strength (RSSI) in dBm, or 0 if not connected yet. The
+ * webgui shows it per device so a weak/faulty antenna is visible from the GUI. */
+static int current_rssi(void) {
+    if (!g_wifi_ready) return 0;
+    wifi_ap_record_t ap = {0};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return 0;
+    return ap.rssi;
+}
 
 /* ------------------------------------------------------------------ */
 /* Actor / relay output (Z-3807-M style module wired to GPIO16): the
@@ -46,6 +57,10 @@ static void identify_start(void);
 static volatile int g_relay_active = 0;
 static volatile int g_has_sensors = 0;
 static void relay_click(void);
+/* Serialises relay GPIO access against actor_init() reconfiguration. The relay
+ * pulse runs on its own task while MQTT callbacks and init run elsewhere, so
+ * without this a simultaneous actor_init() could leave the relay stuck on. */
+static portMUX_TYPE g_relay_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void send_ack(bool ok, const char *reason) {
     char buf[128];
@@ -78,8 +93,8 @@ static void on_connected(const char *client_id, void *ud) {
     (void)client_id; (void)ud;
     char buf[192];
     snprintf(buf, sizeof(buf),
-             "{\"id\":\"%s\",\"fw\":\"%s\",\"ip\":\"%s\",\"kind\":\"esp32\"}",
-             g_device_id, WTSN_FW_VERSION, g_ip);
+             "{\"id\":\"%s\",\"fw\":\"%s\",\"ip\":\"%s\",\"kind\":\"esp32\",\"rssi\":%d}",
+             g_device_id, WTSN_FW_VERSION, g_ip, current_rssi());
     wtsn_mqtt_publish(g_mqtt, "tsn/discover", buf);
     ESP_LOGI(TAG, "published discover for %s (fw %s)", g_device_id, WTSN_FW_VERSION);
 }
@@ -136,10 +151,12 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     if (strstr(topic, "/apply")) { apply_snapshot(payload); return; }
 
     /* FX field exchange: the sensor node publishes {"id":"...","motion":1} on
-     * tsn/sensors/event / tsn/fx/... -- on motion=1 pulse the relay (only on
-     * the relay board, i.e. the one WITHOUT the sensor add-on). */
-    if ((strstr(topic, "/fx/") || strncmp(topic, "tsn/fx/", 7) == 0 ||
-         strstr(topic, "sensors/event")) && !g_has_sensors) {
+     * tsn/sensors/event / tsn/fx/data -- on motion=1 pulse the relay (only on
+     * the relay board, i.e. the one WITHOUT the sensor add-on). tsn/fx/cmd/#
+     * is a separate command channel and must NOT drive the actor. */
+    if (!g_has_sensors &&
+        (strcmp(topic, "tsn/fx/data") == 0 ||
+         strcmp(topic, "tsn/sensors/event") == 0)) {
         int motion = 0;
         if (wtsn_json_get_int(payload, "motion", &motion) && motion) {
             ESP_LOGI(TAG, "motion detected via FX -> relay click");
@@ -216,10 +233,10 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         snprintf(buf, sizeof(buf),
                   "{\"id\":\"%s\",\"status\":\"online\",\"prio\":%d,\"vlan\":%d,"
                   "\"preempt\":%d,\"tc\":%d,\"tas_cycle_ns\":%lld,\"gcl_entries\":%d,"
-                  "\"timesync_mode\":%d,\"fw\":\"%s\"}",
+                  "\"timesync_mode\":%d,\"fw\":\"%s\",\"rssi\":%d}",
                   g_device_id, st->priority, st->vlan_id, st->preemption,
                   st->traffic_class, (long long)st->tas_cycle_ns, st->gcl_entries,
-                  st->timesync_mode, WTSN_FW_VERSION);
+                  st->timesync_mode, WTSN_FW_VERSION, current_rssi());
         wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
     } else if (strcmp(cmd, "fx") == 0) {
         char buf[64];
@@ -258,6 +275,27 @@ static void on_command(const char *topic, const char *payload, void *ud) {
             send_ack(false, "ota_bad_url");
         }
         return;
+    } else if (strcmp(cmd, "reset") == 0) {
+        /* GUI "delete device" sends tsn/cmd/<id>/reset -> clear the persisted TSN
+         * state and the saved WiFi so the node forgets its assignment and can be
+         * re-provisioned. ACK first so the GUI sees a clean reply, then reboot. */
+        wtsn_cfg_net_clear();
+        wtsn_cfg_set_wifi("", "");
+        wtsn_tsn_reset_state();
+        send_ack(true, "reset_ok");
+        ESP_LOGW(TAG, "reset requested -> clearing config, rebooting");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        return;
+    } else if (strcmp(cmd, "reboot") == 0) {
+        send_ack(true, "reboot");
+        ESP_LOGI(TAG, "reboot requested");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+        return;
+    } else if (strcmp(cmd, "factory") == 0) {
+        factory_reset();
+        return;   /* never reached (reboots) */
     }
 }
 
@@ -270,6 +308,7 @@ typedef struct {
 
 static void set_led(int on);
 static bool try_net(int idx);
+static void factory_reset(void);
 
 static wifi_ctx_t g_ctx;
 
@@ -310,8 +349,6 @@ static volatile int g_led_steady = 0;
 static volatile int g_identifying = 0;
 /* 1 once we are connected to WiFi (GOT_IP). Used to decide whether to fall back
  * to the provisioning SoftAP when the saved network cannot be reached. */
-static volatile int g_wifi_ready = 0;
-static volatile int g_prov_fallback_started = 0;
 static bool g_sntp_started = false;
 /* Count of consecutive STA disconnects with no GOT_IP in between. When it climbs
  * past PROV_FALLBACK_DISCONNECTS the device gives up retrying and brings back the
@@ -538,30 +575,40 @@ static void btn_task(void *arg) {
 /* Relay pulse task: on motion a 1 s HIGH pulse is sent to the relay trigger.
  * Re-arm is done by the caller; this task only drives a single click. */
 static void relay_pulse_task(void *arg) {
+    portENTER_CRITICAL(&g_relay_mux);
     gpio_set_level(ACTOR_RELAY_GPIO, 1);
-    vTaskDelay(pdMS_TO_TICKS(ACTOR_RELAY_PULSE_MS));
+    uint32_t pulse_ms = ACTOR_RELAY_PULSE_MS;
+    portEXIT_CRITICAL(&g_relay_mux);
+    vTaskDelay(pdMS_TO_TICKS(pulse_ms));
+    portENTER_CRITICAL(&g_relay_mux);
     gpio_set_level(ACTOR_RELAY_GPIO, 0);
     g_relay_active = 0;
+    portEXIT_CRITICAL(&g_relay_mux);
     vTaskDelete(NULL);
 }
 
 static void relay_click(void) {
-    if (g_relay_active) return;          /* already clicking */
+    portENTER_CRITICAL(&g_relay_mux);
+    if (g_relay_active) { portEXIT_CRITICAL(&g_relay_mux); return; }
     g_relay_active = 1;
+    portEXIT_CRITICAL(&g_relay_mux);
     xTaskCreatePinnedToCore(relay_pulse_task, "wtsn_relay", 2048, NULL, 5, NULL, 1);
 }
 
 static void actor_init(void) {
+    /* Only the relay board (no sensor add-on) drives the relay output; the
+     * sensor board must not configure/reconfigure this pin at all. */
+    if (g_has_sensors) return;
+    portENTER_CRITICAL(&g_relay_mux);
     gpio_config_t io = {0};
     io.pin_bit_mask = (1ULL << ACTOR_RELAY_GPIO);
     io.mode = GPIO_MODE_OUTPUT;
     io.pull_down_en = GPIO_PULLDOWN_ENABLE;
     gpio_config(&io);
     gpio_set_level(ACTOR_RELAY_GPIO, 0);
-    if (!g_has_sensors) {
-        ESP_LOGI(TAG, "actor relay inited on GPIO%d (pulse %d ms)", ACTOR_RELAY_GPIO,
-                 ACTOR_RELAY_PULSE_MS);
-    }
+    portEXIT_CRITICAL(&g_relay_mux);
+    ESP_LOGI(TAG, "actor relay inited on GPIO%d (pulse %d ms)", ACTOR_RELAY_GPIO,
+             ACTOR_RELAY_PULSE_MS);
 }
 
 static void btn_led_init(void) {
@@ -675,8 +722,8 @@ void app_main(void) {
             char buf[224];
             snprintf(buf, sizeof(buf),
                     "{\"id\":\"%s\",\"status\":\"online\",\"lane\":\"heartbeat\","
-                    "\"ssid\":\"%s\",\"fw\":\"%s\",\"ts\":%lld}",
-                    g_device_id, g_ctx.ssid, WTSN_FW_VERSION,
+                    "\"ssid\":\"%s\",\"fw\":\"%s\",\"rssi\":%d,\"ts\":%lld}",
+                    g_device_id, g_ctx.ssid, WTSN_FW_VERSION, current_rssi(),
                     (long long)time(NULL));
             wtsn_mqtt_publish(g_mqtt, "tsn/status", buf);
         }

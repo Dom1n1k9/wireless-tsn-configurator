@@ -40,6 +40,7 @@ typedef struct {
 
 wtsn_tsn_state *wtsn_tsn_get_state(void);
 void wtsn_tsn_restore(void);
+void wtsn_tsn_reset_state(void);
 
 /* apply a full snapshot, return 0 on success (used by /apply handler) */
 int wtsn_tsn_apply_snapshot(const wtsn_config_snapshot *cfg);

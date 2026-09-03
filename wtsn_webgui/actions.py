@@ -72,6 +72,14 @@ def run_action(act, body):
                     if b:
                         b.publish("tsn/cmd/%s/reset" % i, "{}")
                 add_event("config", "cnc", "removed " + i)
+            for i in body.get("reset") or []:
+                if state.MODE["mode"] == "real":
+                    b = get_real_mqtt(con)
+                    if b:
+                        b.publish("tsn/cmd/%s/reset" % i, "{}")
+                        add_event("config", "cnc", "reset issued -> %s" % i)
+                else:
+                    add_event("config", "cnc", "reset (simulation) -> %s" % i)
             dev = body.get("device") or {}
             if dev.get("id"):
                 con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"

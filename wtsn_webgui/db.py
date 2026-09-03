@@ -8,7 +8,7 @@ from . import state
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
     "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER,domain TEXT DEFAULT 'default',"
-    "heartbeat_at INTEGER DEFAULT 0);"
+    "heartbeat_at INTEGER DEFAULT 0,rssi INTEGER DEFAULT 0);"
     "CREATE TABLE IF NOT EXISTS domains(id TEXT PRIMARY KEY,name TEXT,description TEXT);"
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
     "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
@@ -47,7 +47,7 @@ def ensure_schema(con):
     con.executescript(SCHEMA)
     con.commit()
     for tbl, col in (("devices", "domain"), ("devices", "heartbeat_at"),
-                     ("timesync_status", "jitter_ns")):
+                     ("devices", "rssi"), ("timesync_status", "jitter_ns")):
         try:
             cols = [r[1] for r in con.execute("PRAGMA table_info(%s)" % tbl)]
             if col not in cols:

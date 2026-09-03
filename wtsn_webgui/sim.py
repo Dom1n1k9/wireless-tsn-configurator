@@ -34,6 +34,7 @@ def _gen_stable_devices():
             "id": did, "name": name, "ip": ip, "mac": "AA:BB:CC:%02d:%02d" % (i, kind),
             "kind": kind, "firmware": "%d.%d.%d" % (random.randint(1, 5),
                       random.randint(0, 9), random.randint(0, 9)),
+            "rssi": random.randint(-75, -40),
             "tsn": random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS))),
         })
     return devs
@@ -67,10 +68,11 @@ def sim_tick():
         prev = con.execute("SELECT device_id,sensor_id,value FROM sensors").fetchall()
         for k, kv in kept.items():
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                        "last_seen,domain) VALUES(?,?,?,?,?,?,?,?,?)",
+                        "last_seen,domain,rssi) VALUES(?,?,?,?,?,?,?,?,?,?)",
                         (k, kv.get("name", ""), kv.get("ip", ""), kv.get("mac", ""),
                          kv.get("kind", 0), kv.get("firmware", ""), kv.get("status", 0),
-                         kv.get("last_seen", int(time.time())), kv.get("domain", "default")))
+                         kv.get("last_seen", int(time.time())), kv.get("domain", "default"),
+                         kv.get("rssi", 0)))
         with SIM_STABLE_LOCK:
             if SIM_STABLE_DEVICES is None:
                 SIM_STABLE_DEVICES = _gen_stable_devices()
@@ -78,10 +80,10 @@ def sim_tick():
         devs = [d["id"] for d in stable]
         for sd in stable:
             did = sd["id"]
-            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,last_seen,domain)"
-                       " VALUES(?,?,?,?,?,?,0,strftime('%s','now'),'default')",
+            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,last_seen,domain,rssi)"
+                       " VALUES(?,?,?,?,?,?,0,strftime('%s','now'),'default',?)",
                        (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
-                        sd["firmware"]))
+                        sd["firmware"], sd.get("rssi", 0)))
             for f in sd["tsn"]:
                 con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",
                             (did, f))

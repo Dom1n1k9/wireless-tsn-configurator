@@ -112,6 +112,23 @@ void wtsn_tsn_restore(void) {
              (long long)g_state.tas_cycle_ns, g_state.gcl_entries);
 }
 
+/* Forget the persisted TSN configuration (used by the MQTT "reset" command so the
+ * GUI's delete-device flow actually clears the node's assignment). */
+void wtsn_tsn_reset_state(void) {
+    g_loaded = true;   /* prevent a stale reload on the next get_state() call */
+    g_state.priority = 0;
+    g_state.traffic_class = 0;
+    g_state.vlan_id = 0;
+    g_state.preemption = 0;
+    g_state.timesync_mode = 0;
+    g_state.tas_cycle_ns = 0;
+    g_state.gcl_entries = 0;
+    memset(g_state.gates, 0, sizeof(g_state.gates));
+    memset(g_state.durations, 0, sizeof(g_state.durations));
+    wtsn_cfg_save_tsn_state(0, 0, 0, 0, 0, 0, NULL, NULL, 0);
+    ESP_LOGI(TAG, "TSN state reset");
+}
+
 #define WTSN_STREAM_MAX 8
 
 static wtsn_stream g_streams[WTSN_STREAM_MAX];

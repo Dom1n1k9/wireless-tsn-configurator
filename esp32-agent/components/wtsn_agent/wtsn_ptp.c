@@ -310,7 +310,9 @@ int wtsn_ptp_setup(const char *device_id, wtsn_mqtt *mq) {
 
 int wtsn_ptp_start(void) {
     if (g_run) return 0;
-    for (size_t i = 0; i < 8; i++) g_ident.uuid[i] = (uint8_t)g_device_id[i % strlen(g_device_id)];
+    size_t idlen = strlen(g_device_id);
+    if (idlen == 0) idlen = 1;
+    for (size_t i = 0; i < 8; i++) g_ident.uuid[i] = (uint8_t)g_device_id[i % idlen];
     g_ident.portNumber = (uint16_t)(g_device_id[0] & 0xff) ? (uint16_t)(g_device_id[0] & 0xff) : 1;
     g_ident.portNumber |= 0x0001;
 

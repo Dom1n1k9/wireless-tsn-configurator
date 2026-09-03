@@ -33,7 +33,6 @@ let sPress = 0
 let sHum = 0
 let sLight = 0
 let sPir = 0
-let sActor = 0
 let prevPir = 0
 
 // Display views, in B/A cycle order: temp -> press -> hum -> light -> motion.
@@ -63,7 +62,6 @@ function parseLine(line: string) {
         else if (key == "H") sHum = val
         else if (key == "L") sLight = val
         else if (key == "M") sPir = val
-        else if (key == "A") sActor = val
     }
     // Beep (built-in speaker) on the rising edge of the ESP PIR motion flag.
     // The heart flashes immediately so the event is visible.
@@ -74,8 +72,11 @@ function parseLine(line: string) {
     prevPir = sPir
 }
 
+// Read one line at a time. readString() alone (no terminator) can return the
+// line plus whatever else is buffered, so read only up to the newline.
 serial.onDataReceived("\n", () => {
-    parseLine(serial.readString())
+    const line = serial.readUntil(serial.delimiters(Delimiters.NewLine))
+    if (line && line.length > 0) parseLine(line)
 })
 
 // Short string for the current view INCLUDING the unit, e.g. "27C", "1003h",

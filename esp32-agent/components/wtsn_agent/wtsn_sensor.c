@@ -57,9 +57,32 @@ static char g_dev_id[32] = "esp32-01";
 static wtsn_mqtt *g_mq = NULL;
 
 static bool g_bme_ok = false;
+static bool g_i2c_owned = false;   /* true once *this* module installed the I2C driver */
 static int  g_prev_pir = -1;
 static int  g_actor_mode = 0;
 static int64_t g_pir_latch = -1000000000LL;  /* monotonic us of last motion */
+
+/* One-time I2C bus setup used by both wtsn_sensor_probe() and wtsn_sensor_init().
+ * Keeps a flag so the driver is NEVER installed twice (a second
+ * i2c_driver_install() on the same port returns ESP_ERR_INVALID_STATE and
+ * corrupts the bus) while probe-before-init call ordering is preserved. */
+static void i2c_ensure_installed(void) {
+    if (g_i2c_owned) return;
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = WTSN_I2C_SDA,
+        .scl_io_num = WTSN_I2C_SCL,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master = { .clk_speed = WTSN_I2C_FREQ_HZ },
+    };
+    if (i2c_param_config(WTSN_I2C_PORT, &conf) != ESP_OK ||
+        i2c_driver_install(WTSN_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0) != ESP_OK) {
+        ESP_LOGW(TAG, "I2C %d init failed (already in use?)", WTSN_I2C_PORT);
+        return;
+    }
+    g_i2c_owned = true;
+}
 
 static uint16_t calib_temp[3];  /* T1..T3 */
 static int32_t  calib_press[9]; /* P1..P9 (P1 is unsigned 16-bit, others signed) */
@@ -168,16 +191,7 @@ bool wtsn_sensor_probe(void) {
     /* Role probe: the board is the "sensor node" (esp32-01) iff the BME280 is
      * on the I2C bus. TEMT6000/PIR are NOT used: a floating ADC/pin can read as
      * "wired", so only the BME280 chip-ID check is unambiguous. */
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = WTSN_I2C_SDA,
-        .scl_io_num = WTSN_I2C_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master = { .clk_speed = WTSN_I2C_FREQ_HZ },
-    };
-    i2c_param_config(WTSN_I2C_PORT, &conf);
-    i2c_driver_install(WTSN_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    i2c_ensure_installed();
 
     uint8_t chip = 0;
     bool ok = (bme_reg_read8(BME280_ID_REG, &chip) == ESP_OK && chip == 0x60);
@@ -295,15 +309,7 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
     if (device_id) snprintf(g_dev_id, sizeof(g_dev_id), "%s", device_id);
     g_mq = mq;
 
-    i2c_config_t conf = {        .mode = I2C_MODE_MASTER,
-        .sda_io_num = WTSN_I2C_SDA,
-        .scl_io_num = WTSN_I2C_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master = { .clk_speed = WTSN_I2C_FREQ_HZ },
-    };
-    i2c_param_config(WTSN_I2C_PORT, &conf);
-    i2c_driver_install(WTSN_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    i2c_ensure_installed();
 
     bme280_init();
     gpio_config_t io = {0};
@@ -320,11 +326,12 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
                              &g_adc_char);
     g_adc_cal = true;
 
+    /* Leave the on-board actor output (GPIO26) undriven at boot: the external
+     * relay lives on GPIO16 (main.c) and driving this pin from init could fight
+     * another role's output. The "actor" MQTT command still configures it on demand. */
     wtsn_sensor_actor_set_pin();
-    actor_apply(0);
 
-    ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501, actor",
-             g_dev_id);
+    ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501", g_dev_id);
 }
 
 bool wtsn_sensor_present(void) {
