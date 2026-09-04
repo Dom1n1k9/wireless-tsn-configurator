@@ -4,7 +4,7 @@ import re as _re
 import time
 
 from .. import state
-from ..db import add_event, sensor_history
+from ..db import add_event, clamp, sensor_history
 from .. import mqtt_link
 
 
@@ -118,6 +118,68 @@ def _clear_events(con, body):
 def _get_history(con, body):
     did = body.get("device_id", "")
     return {"ok": True, "history": sensor_history(did, int(body.get("limit", 288)))}
+
+
+def _metrics(con, body):
+    """Aggregate the TSN Metrics page data.
+
+    Two rolling windows are reported for both the E2E control-plane latency
+    (RTT samples stored in `latency_log` by `record_round_trip`) and the gPTP
+    clock offset/jitter history (`timesync_reports`). The smaller window is the
+    per-device/last sample granularity, the larger window the summary stat.
+    """
+    now = int(time.time())
+    w1 = clamp(int(body.get("window", 300)), 30, 3600)
+    w2 = clamp(int(body.get("window2", 3600)), 60, 86400)
+    c1 = now - w1
+    c2 = now - w2
+
+    def _agg_metric(metric, unit, table, col, extra=""):
+        """Aggregate rows from `table` for a single metric axis."""
+        dev_rows = con.execute(
+            "SELECT device_id, AVG(%s) AS avg, MIN(%s) AS mn, MAX(%s) AS mx, "
+            "COUNT(*) AS n FROM %s WHERE ts>=? GROUP BY device_id ORDER BY device_id %s"
+            % (col, col, col, table, extra), (c2,)).fetchall()
+        pts = [dict(r) for r in con.execute(
+            "SELECT device_id, ts, %s AS v FROM %s WHERE ts>=? ORDER BY ts" % (col, table),
+            (c1,))]
+        return {"unit": unit, "metric": metric, "summary": [dict(r) for r in dev_rows],
+                "window": w1, "points": pts, "window2": w2}
+
+    out = {
+        "ok": True,
+        "now": now,
+        "latency": _agg_metric("Latency", "ms", "latency_log", "latency_ms"),
+        "timesync": {
+            "unit": "ns",
+            "metric": "gPTP clock offset",
+            "summary": [dict(r) for r in con.execute(
+                "SELECT device_id, AVG(offset_ns) AS avg, MIN(offset_ns) AS mn, "
+                "MAX(offset_ns) AS mx, AVG(jitter_ns) AS jitter, COUNT(*) AS n "
+                "FROM timesync_reports WHERE ts>=? GROUP BY device_id "
+                "ORDER BY device_id", (c2,)).fetchall()],
+            "points": [dict(r) for r in con.execute(
+                "SELECT device_id, ts, offset_ns AS v, jitter_ns FROM "
+                "timesync_reports WHERE ts>=? ORDER BY ts", (c1,)).fetchall()],
+            "window": w1,
+            "window2": w2,
+            "status": [dict(r) for r in con.execute(
+                "SELECT device_id, status, COUNT(*) AS n FROM timesync_reports "
+                "WHERE ts>=? GROUP BY device_id, status", (c2,)).fetchall()],
+        },
+    }
+    return out
+
+
+def _clear_metrics(con, body):
+    """Drop accumulated latency / timesync history for the Metrics page."""
+    days = clamp(int(body.get("days", 7)), 1, 30)
+    c = int(time.time()) - days * 86400
+    del_c = con.execute("DELETE FROM latency_log WHERE ts<?", (c,)).rowcount
+    del_t = con.execute("DELETE FROM timesync_reports WHERE ts<?", (c,)).rowcount
+    con.commit()
+    return {"ok": True, "msg": "cleared %d latency / %d sync samples older than %d day(s)"
+            % (del_c, del_t, days)}
 
 
 def _create_version(con, body):
@@ -337,6 +399,8 @@ HANDLERS = {
     "exec_all": _exec_all,
     "clear_events": _clear_events,
     "get_history": _get_history,
+    "metrics": _metrics,
+    "clear_metrics": _clear_metrics,
     "create_version": _create_version,
     "list_versions": _list_versions,
     "diff_versions": _diff_versions,

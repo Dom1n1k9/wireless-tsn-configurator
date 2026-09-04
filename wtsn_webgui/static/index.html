@@ -60,7 +60,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -86,8 +86,9 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="preemption")m.innerHTML=preemption(); else if(p==="timesync"){m.innerHTML=timesync();redrawSetup();}
  else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
- else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
- else if(p==="sensors")m.innerHTML=sensors();
+  else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
+  else if(p==="metrics")m.innerHTML=metrics();
+  else if(p==="sensors")m.innerHTML=sensors();
  else if(p==="help")m.innerHTML=help();
  else if(p==="settings")m.innerHTML=settings();}
 function execAll(){api("exec_all",{}).then(load)}
@@ -297,6 +298,71 @@ function sensors(){
   }
   setTimeout(()=>devs.forEach(loadSpark),0);
   return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+(r?("<table><tr><th>device</th><th>sensor</th><th>value</th><th>trend (1 h)</th><th>last updated</th><th>status</th></tr>"+r+"</table>"):"<div class='card'>"+(D.mode==="real"?"Connect real sensors — none identified yet.":"Waiting for simulation sensors...")+"</div>")}
+function metricChart(pts,{w=560,h=110,unit="",color="var(--sec)"}={}){
+  if(!pts||!pts.length)return "<div class='muted'>no samples yet — Ping a device (Devices) for latency, or wait for gPTP reports</div>";
+  const now=Math.floor(Date.now()/1000);
+  let t0=pts[0].ts||now,t1=pts[pts.length-1].ts||now;
+  if(t1<=t0){t0=now-300;t1=now}
+  let mn=Infinity,mx=-Infinity;
+  pts.forEach(p=>{const v=parseFloat(p.v);if(!isNaN(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}});
+  if(!isFinite(mn))return "<div class='muted'>no numeric samples</div>";
+  const pad=(mx===mn)?1:((mx-mn)*0.08);
+  mn-=pad;mx+=pad;
+  const W=w,H=h;
+  const x=t=>4+(Math.max(0,Math.min(1,(t-t0)/((t1-t0)||1))))*(W-8);
+  const y=v=>H-6-((v-mn)/(mx-mn))*(H-12);
+  let path="",last="";
+  const perDev={};
+  pts.forEach(k=>{
+    const v=parseFloat(k.v);if(isNaN(v))return;
+    (perDev[k.device_id]=perDev[k.device_id]||[]).push({ts:k.ts,v:v})});
+  const series=Object.keys(perDev);
+  series.forEach((dev,di)=>{
+    const col=["var(--sec)","var(--ok)","var(--warn)","var(--err)"][di%4];
+    const ps=perDev[dev];
+    path+="<path d='"+ps.map((p,i)=>(i?"L":"M")+x(p.ts).toFixed(1)+","+y(p.v).toFixed(1)).join(" ")+"' fill='none' stroke='"+col+"' stroke-width='1.5'/>";
+    const lp=ps[Math.max(0,ps.length-1)];
+    last+="<circle cx='"+x(lp.ts).toFixed(1)+"' cy='"+y(lp.v).toFixed(1)+"' r='2.5' fill='"+col+"'><title>"+esc(dev)+" "+lp.v+" "+unit+"</title></circle>"});
+  const gwidth=Math.max(0,W-8-2);
+  const grid=[0,0.25,0.5,0.75,1].map(f=>"<line x1='"+(4+f*gwidth).toFixed(1)+"' y1='4' x2='"+(4+f*gwidth).toFixed(1)+"' y2='"+(H-6).toFixed(1)+"' stroke='var(--border)' stroke-width='1'/>").join("");
+  const yl=[0,0.25,0.5,0.75,1].map(f=>"<line x1='4' y1='"+(4+f*(H-10)).toFixed(1)+"' x2='"+(W-4).toFixed(1)+"' y2='"+(4+f*(H-10)).toFixed(1)+"' stroke='var(--border)' stroke-width='1'/>").join("");
+  const leg=series.map((dev,di)=>["var(--sec)","var(--ok)","var(--warn)","var(--err)"][di%4]+":"+esc(dev)).join(" · ");
+  return "<svg width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"' style='background:var(--surf2);border-radius:6px;max-width:100%'>"+grid+yl+"</svg>"+
+   "<svg width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"' style='background:transparent;margin-top:-"+H+"px;max-width:100%'>"+path+last+"</svg>"+
+   "<div class='gcllegend' style='margin-top:2px'>"+leg+"</div>"}
+function metrics(){
+  return "<h2>TSN Metrics</h2>"+
+   "<div class='muted' style='margin-bottom:10px'>Control-plane E2E latency (RTT per <b>Ping</b>, stored in <code>latency_log</code>) and gPTP clock offset from <code>timesync_reports</code>. In Simulation, ping/ack samples are not produced — switch to Real mode and Ping a device.</div>"+
+   "<div class='card'><div class='row'><span class='muted'>Aggregate window</span>"+
+   "<select id=mt_win onchange='mtLoad()'><option value=300>last 5 min</option><option value=900>last 15 min</option><option value=3600 selected>last 1 h</option><option value=7200>last 2 h</option></select>"+
+   "<span class='muted'>Summary window</span>"+
+   "<select id=mt_win2 onchange='mtLoad()'><option value=3600>1 h totals</option><option value=86400 selected>24 h totals</option><option value=604800>7 d totals</option></select>"+
+   "<span class='spacer'></span><button class='ghost' onclick='api(\"clear_metrics\",{}).then(load)'>Clear history</button></div><div id=mt_body><div class='muted'>loading...</div></div></div>"}
+function mtLoad(){fetch("/api/actions/metrics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({window:parseInt($("mt_win").value)||300,window2:parseInt($("mt_win2").value)||86400})}).then(r=>r.json()).then(j=>{
+  const b=$("mt_body");if(!b)return;
+  if(!j.ok){b.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}
+  const L=j.latency||{};const T=j.timesync||{};
+  const latSum=(L.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtMs(s.avg)+"</td><td>"+fmtMs(s.mn)+"</td><td>"+fmtMs(s.mx)+"</td><td>"+s.n+"</td></tr>").join("");
+  const synSum=(T.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtNs(s.avg)+"</td><td>"+fmtNs(s.mn)+"</td><td>"+fmtNs(s.mx)+"</td><td>"+fmtNs(s.jitter)+"</td><td>"+s.n+"</td></tr>").join("");
+  const latAll=(L.points||[]).length;
+  const synAll=(T.points||[]).length;
+  b.innerHTML=
+   "<h3>End-to-end latency (control plane ping RTT)</h3>"+
+   "<div class='row'><span class='muted'>summary (1 h window)</span></div>"+
+   "<table><tr><th>device</th><th>avg</th><th>min</th><th>max</th><th>samples</th></tr>"+(latSum||"<tr><td colspan=5 class='muted'>no latency samples</td></tr>")+"</table>"+
+   "<div style='margin-top:10px'>"+metricChart(L.points,{unit:"ms",color:"var(--sec)"})+"</div>"+
+   "<h3 style='margin-top:22px'>gPTP clock offset / jitter</h3>"+
+   "<div class='row'><span class='muted'>summary (1 h window)</span></div>"+
+   "<table><tr><th>device</th><th>avg offset</th><th>min</th><th>max</th><th>avg jitter</th><th>reports</th></tr>"+(synSum||"<tr><td colspan=6 class='muted'>no sync reports</td></tr>")+"</table>"+
+   "<div style='margin-top:10px'>"+metricChart(T.points,{unit:"ns",color:"var(--warn)"})+"</div>"+
+   "<h3 style='margin-top:22px'>Sync status</h3>"+
+   "<table><tr><th>device</th><th>status</th><th>reports</th></tr>"+((T.status||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td><span class='badge "+syncBadge(s.status)+"'>"+esc(s.status)+"</span></td><td>"+s.n+"</td></tr>").join("")||"<tr><td colspan=3 class='muted'>no reports</td></tr>")+"</table>"+
+   "<div class='muted' style='margin-top:8px'>"+fmtTime(j.now)+" — points shown: "+latAll+" latency · "+synAll+" sync</div>"})
+}
+function fmtMs(n){return (n==null?"-":(Math.round(n*10)/10)+" ms")}
+function fmtNs(n){return (n==null?"-":(Math.round(n*10)/10)+" ns")}
+function fmtTime(ts){try{return new Date(ts*1000).toLocaleTimeString()}catch(e){return ts||""}}
+function syncBadge(s){return s==="in_sync"?"ok":(s==="holdover"?"warn":"err")}
 function streams(){
  const rows=(D.tsn_streams||[]).map(s=>{const memb=(D.tsn_stream_members||[]).filter(x=>x.stream_id==s.stream_id);
   const talker=(memb.find(x=>x.role==="talker")||{}).device_id||s.talker||"";

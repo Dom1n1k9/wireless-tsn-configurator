@@ -25,6 +25,11 @@ tagged the same way.
   it stores the per-cell grouping and device→domain assignment, but deployment
   (`exec_all`) is still global and does not yet scope by domain. Same note
   added to the README and `docs/ARCHITECTURE.md`.
+- Added a **Metrics** page that visualizes the control-plane E2E latency
+  (RTT samples from device Ping/ack, stored in `latency_log`) and the gPTP
+  clock offset/jitter history (`timesync_reports`). Per-device summary tables
+  plus time-aligned SVG sparklines over a configurable window; a
+  `metrics`/`clear_metrics` action pair backs it (no `/api/data` bloat).
 
 ## [1.1.0] — 2026-09-02
 

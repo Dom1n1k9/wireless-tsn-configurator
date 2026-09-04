@@ -159,6 +159,7 @@ A self-contained SPA served on http://127.0.0.1:8000:
 | Domains    | group devices into TSN collision/time domains (organizational) |
 | Config Versions | snapshot config, diff + rollback after a deploy |
 | Monitor    | live network/frame trace with search filter, **Pause/Start**, Clear |
+| Metrics    | control-plane E2E latency + gPTP clock offset/jitter history, per-device summary + SVG charts |
 | Sensors    | live values per node + **1 h history sparklines** |
 | FXMQTT     | Field Server / Participant, broker address |
 | Sync       | gPTP grandmaster / slave setup |

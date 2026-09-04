@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -158,6 +159,48 @@ class WebGuiActionTest(unittest.TestCase):
         self.assertFalse(self.act("sync_report", {})["ok"])
         r = self.act("sync_report", {"device_id": "d1", "offset_ns": 100})
         self.assertTrue(r["ok"])
+
+    def test_metrics(self):
+        self.act("save_devices", {"device": {"id": "m1"}})
+        con = connect()
+        try:
+            con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) VALUES('m1',?,2.5)",
+                        (int(time.time()),))
+            con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) VALUES('m1',?,5.5)",
+                        (int(time.time()),))
+            con.execute("INSERT INTO timesync_reports(device_id,ts,offset_ns,jitter_ns,"
+                        "status) VALUES('m1',?,100,10,'in_sync')", (int(time.time()),))
+            con.commit()
+        finally:
+            con.close()
+        r = self.act("metrics")
+        self.assertTrue(r["ok"])
+        lat = r["latency"]
+        self.assertEqual(len(lat["points"]), 2)
+        self.assertTrue(any(s["device_id"] == "m1" for s in lat["summary"]))
+        self.assertEqual(lat["summary"][0]["avg"], 4.0)
+        self.assertEqual(lat["summary"][0]["n"], 2)
+        sync = r["timesync"]
+        self.assertTrue(any(s["device_id"] == "m1" for s in sync["summary"]))
+        self.assertTrue(any(p["device_id"] == "m1" for p in sync["points"]))
+
+    def test_clear_metrics(self):
+        con = connect()
+        try:
+            con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) VALUES('m1',1,2.0)")
+            con.commit()
+            before = con.execute("SELECT COUNT(*) FROM latency_log").fetchone()[0]
+            self.assertGreater(before, 0)
+        finally:
+            con.close()
+        r = self.act("clear_metrics")
+        self.assertTrue(r["ok"])
+        con = connect()
+        try:
+            after = con.execute("SELECT COUNT(*) FROM latency_log").fetchone()[0]
+        finally:
+            con.close()
+        self.assertLess(after, before)
 
     def test_parse_listener_ack(self):
         con = connect()
