@@ -289,6 +289,11 @@ For sensitive deployments, either keep provisioning physically supervised or:
 - **Secure the MQTT channel:** broker username/password + TLS are supported on both the
   agent and the GUI (see below).
 
+> **WiFi password hygiene:** the node **never reports its saved WiFi password back** and
+> `tsn/cmd/<id>/wifi` is accepted with an *optional* `pass` field — when the password is
+> omitted, the agent keeps whatever is stored in NVS. So re-pointing an already-provisioned
+> node to a new SSID does not re-send the secret over plaintext MQTT.
+
 ### MQTT authentication & TLS
 
 Two independent configuration paths — the **agent** (NVS) and the **web GUI** (env):

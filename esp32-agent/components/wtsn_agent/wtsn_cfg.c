@@ -147,6 +147,11 @@ void wtsn_cfg_set_wifi(const char *ssid, const char *pass) {
     if (pass) wtsn_nvs_set_str(KEY_WIFI_PASS, pass);
 }
 
+bool wtsn_cfg_get_wifi_pass(char *out, size_t sz) {
+    if (!out || sz == 0) return false;
+    return wtsn_nvs_get_str(KEY_WIFI_PASS, out, sz, "");
+}
+
 /* ---- Multihome WiFi: multiple saved networks, one per location ----
  * Networks are stored as a blob of {char ssid[33]; char pass[65];} entries in NVS.
  * The legacy single-network keys remain the canonical "active" network. */

@@ -55,6 +55,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <button class="execbtn" onclick="execAll()">Execute settings on controller</button>
 <div class="spacer"></div>
 <span class="mode"><button id="md_real" onclick="setMode('real')">Real</button><button id="md_sim" class="on" onclick="setMode('sim')">Simulation</button></span>
+<span id="bkBadge" class="badge" style="display:none"></span>
 </header>
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
@@ -93,7 +94,14 @@ function execAll(){api("exec_all",{}).then(load)}
 function camCell(d){
   const isCam=(d.kind===5)||/cam/i.test(d.id||"");
   if(!isCam||!d.ip)return "<span class='muted'>-</span>";
-  return "<img src='http://"+esc(d.ip)+"/stream' style='width:96px;height:72px;object-fit:cover;border-radius:6px' onerror=\"this.outerHTML='<span class=muted>no signal</span>'\">"}
+  // Reject anything that is not a plausible IPv4 host as the camera address --
+  // the ip field comes from MQTT announcements, so it must not be able to turn
+  // into markup (URL is built from numeric verified parts only).
+  const m=String(d.ip).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if(!m)return "<span class='muted'>bad ip</span>";
+  const parts=m.slice(1).map(x=>{const n=parseInt(x,10);return n>=0&&n<=255?n:null});
+  if(parts.some(p=>p===null))return "<span class='muted'>bad ip</span>";
+  return "<img src='http://"+parts.join(".")+"/stream' style='width:96px;height:72px;object-fit:cover;border-radius:6px' onerror=\"this.outerHTML='<span class=muted>no signal</span>'\">"}
 function devRow(d){
   const eid=esc(d.id);
   const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+eid+"\")'>OTA</button> ":"";

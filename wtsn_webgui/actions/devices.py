@@ -1,6 +1,7 @@
 """Device-related actions: save/delete/reset devices, roles, ping, OTA."""
 import json
 import os
+import time
 
 from .. import state
 from ..db import add_event, clamp, get_self_ip
@@ -68,6 +69,9 @@ def _ping_device(con, body):
         add_event("config", "cnc", "identify %s (no broker)" % did)
         return {"ok": False, "msg": "no broker in real mode"}
     b.publish("tsn/cmd/%s/ping" % did, "1")
+    # Remember when the ping went out so the ack can be timestamped into an RTT
+    # latency sample for the TSN Metrics page.
+    state.PING_OUT[did] = time.time()
     cnc_ip = get_self_ip()
     add_event("mqtt", "cnc", "PING -> %s" % did, src_ip=cnc_ip, dst_ip="",
               dest=did, proto="MQTT")

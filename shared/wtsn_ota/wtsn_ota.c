@@ -35,7 +35,7 @@ static void ota_task(void *arg) {
      * as the handle (the previous code) relies on unspecified struct layout
      * and leaks/use-after-free as soon as IDF reshuffles it. */
     esp_https_ota_handle_t handle = NULL;
-    err = esp_https_ota_begin(&cfg, NULL, &handle);
+    err = esp_https_ota_begin(&cfg, &handle);
     if (err == ESP_OK) {
         err = esp_https_ota_perform(handle);
         if (err == ESP_ERR_HTTPS_OTA_IN_PROGRESS) err = ESP_OK;

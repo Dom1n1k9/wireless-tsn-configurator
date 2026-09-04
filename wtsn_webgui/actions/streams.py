@@ -10,13 +10,19 @@ from .core import deploy_stream_msg, stream_payload
 def _set_wifi(con, body):
     ssid = body.get("ssid", "")
     pw = body.get("pass", "")
+    # The password is a secret: never echo it into the event log or the response,
+    # and only send it over the (plaintext) MQTT command when it is actually
+    # changing. The agent keeps its saved NVS password when "pass" is absent.
+    wifi_payload = {"ssid": ssid}
+    if pw:
+        wifi_payload["pass"] = pw
     if state.MODE["mode"] == "real":
         b = mqtt_link.get_real_mqtt(con)
         if b:
             did = body.get("device_id", "")
             if did:
-                b.publish("tsn/cmd/%s/wifi" % did, json.dumps({"ssid": ssid, "pass": pw}))
-                add_event("config", "cnc", "wifi cmd -> %s (%s)" % (did, ssid))
+                b.publish("tsn/cmd/%s/wifi" % did, json.dumps(wifi_payload))
+                add_event("config", "cnc", "wifi cmd -> %s (%s)" % (did, ssid or "(unchanged)"))
                 return {"ok": True, "msg": "WiFi command sent to " + did}
             return {"ok": False, "msg": "device_id required"}
         return {"ok": False, "msg": "MQTT broker not reachable"}

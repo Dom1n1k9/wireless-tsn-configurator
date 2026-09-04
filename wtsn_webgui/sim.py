@@ -59,13 +59,27 @@ def sim_tick():
         saved_nodes = con.execute("SELECT * FROM settings WHERE key='sync_nodes'").fetchone()
         saved_nodes = dict(saved_nodes) if saved_nodes else None
         # Config tables are user configuration and must NOT be regenerated/destroyed by
-        # the simulator. Only simulated runtime data is rebuilt each tick, using a stable
-        # simulated device set (generated once) so devices do not appear/disappear each tick.
-        for t in ["devices", "sensors", "timesync_status",
-                  "device_tsn_features"]:
-            con.execute("DELETE FROM %s" % t)
-        # append one history sample per simulated sensor (for sparklines)
-        prev = con.execute("SELECT device_id,sensor_id,value FROM sensors").fetchall()
+        # the simulator. Simulated runtime data (devices/sensors/timesync) is UPSERTed
+        # each tick with a stable simulated device set (generated once) so devices do
+        # not appear/disappear each tick AND user-owned rows survive. Only rows that
+        # are no longer simulated and are not user-owned are removed.
+        with SIM_STABLE_LOCK:
+            if SIM_STABLE_DEVICES is None:
+                SIM_STABLE_DEVICES = _gen_stable_devices()
+            stable = list(SIM_STABLE_DEVICES)
+        devs = [d["id"] for d in stable]
+        sim_ids = set(devs)
+        for row in con.execute("SELECT id FROM devices"):
+            rid = row[0]
+            if rid in sim_ids:
+                continue
+            with state.SIM_USER_DEVICES_LOCK:
+                is_user = rid in state.SIM_USER_DEVICES
+            if not is_user:
+                con.execute("DELETE FROM devices WHERE id=?", (rid,))
+                con.execute("DELETE FROM device_tsn_features WHERE device_id=?", (rid,))
+                con.execute("DELETE FROM sensors WHERE device_id=?", (rid,))
+        # Re-insert user-owned devices each tick so they are stable in the list too.
         for k, kv in kept.items():
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
                         "last_seen,domain,rssi) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -73,20 +87,22 @@ def sim_tick():
                          kv.get("kind", 0), kv.get("firmware", ""), kv.get("status", 0),
                          kv.get("last_seen", int(time.time())), kv.get("domain", "default"),
                          kv.get("rssi", 0)))
-        with SIM_STABLE_LOCK:
-            if SIM_STABLE_DEVICES is None:
-                SIM_STABLE_DEVICES = _gen_stable_devices()
-            stable = list(SIM_STABLE_DEVICES)
-        devs = [d["id"] for d in stable]
         for sd in stable:
             did = sd["id"]
-            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,last_seen,domain,rssi)"
-                       " VALUES(?,?,?,?,?,?,0,strftime('%s','now'),'default',?)",
-                       (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
-                        sd["firmware"], sd.get("rssi", 0)))
+            con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
+                        "last_seen,domain,rssi) VALUES(?,?,?,?,?,?,0,strftime('%s','now'),"
+                        "'default',?)",
+                        (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
+                         sd["firmware"], sd.get("rssi", 0)))
+            prev_feats = set(r[0] for r in con.execute(
+                "SELECT feature FROM device_tsn_features WHERE device_id=?", (did,)))
             for f in sd["tsn"]:
-                con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",
-                            (did, f))
+                if f not in prev_feats:
+                    con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",
+                                (did, f))
+        # Sensor values drift; append one history sample per sensor for sparklines.
+        for sd in stable:
+            did = sd["id"]
             for sid, typ, unit, basev in (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
                                            ("imu1", 2, "g", 0.3), ("gpio1", 4, "V", 1.0)):
                 val = round(basev + random.uniform(-1.5, 1.5), 1)
@@ -95,10 +111,6 @@ def sim_tick():
                             (did, sid, typ, sid, val, unit))
                 con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
                             "VALUES(?,?,strftime('%s','now'),?)", (did, sid, val))
-        for r in prev:
-            con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
-                        "VALUES(?,?,strftime('%s','now'),?)",
-                        (r["device_id"], r["sensor_id"], r["value"]))
         con.execute("DELETE FROM sensor_history WHERE ts < strftime('%s','now','-1 hours')")
         gm = devs[0] if devs else "esp32-01"
         if saved_ts and saved_ts["grandmaster"]:

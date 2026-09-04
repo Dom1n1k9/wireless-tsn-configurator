@@ -33,6 +33,7 @@ static char g_ip[16] = "0.0.0.0";
 static wtsn_mqtt *g_mqtt = NULL;
 static void ensure_device_id(void);
 static void identify_start(void);
+static void factory_reset(void);
 static volatile int g_wifi_ready = 0;   /* declared here so current_rssi() can see it */
 static volatile int g_prov_fallback_started = 0;
 
@@ -79,8 +80,18 @@ static void crate_set_wifi(const char *payload) {
     char ssid[64] = {0};
     char pass[64] = {0};
     wtsn_json_get_str(payload, "ssid", ssid, sizeof(ssid));
-    wtsn_json_get_str(payload, "pass", pass, sizeof(pass));
+    bool have_pass = wtsn_json_get_str(payload, "pass", pass, sizeof(pass));
     if (ssid[0]) {
+        if (!have_pass) {
+            /* No new password supplied -> keep whatever is already saved in NVS
+             * (the password must never be read back out of the node, so a remote
+             * re-point on tsn/cmd/<id>/wifi can simply omit "pass" to change only
+             * the SSID without re-sending the secret over plaintext MQTT). */
+            char old_pass[96] = {0};
+            if (wtsn_cfg_get_wifi_pass(old_pass, sizeof(old_pass)) && old_pass[0]) {
+                wtsn_strlcpy(pass, old_pass, sizeof(pass));
+            }
+        }
         wtsn_cfg_set_wifi(ssid, pass);
         ESP_LOGI(TAG, "set_wifi: %s (restart to connect)", ssid);
         /* Restart will apply the new credentials from NVS on boot. */
@@ -312,7 +323,6 @@ typedef struct {
 
 static void set_led(int on);
 static bool try_net(int idx);
-static void factory_reset(void);
 
 static wifi_ctx_t g_ctx;
 

@@ -14,6 +14,10 @@ bool wtsn_cfg_load(char *device_id, size_t device_id_sz,
 bool wtsn_cfg_save(const char *device_id, const char *wifi_ssid,
                    const char *wifi_pass, const char *mqtt_host, int mqtt_port);
 void wtsn_cfg_set_wifi(const char *ssid, const char *pass);
+/* Read back the currently saved ("active") WiFi password from NVS into out.
+ * Returns true if a password was stored. Used so a remote `wifi` re-point can
+ * keep the secret without ever re-sending it over plaintext MQTT. */
+bool wtsn_cfg_get_wifi_pass(char *out, size_t sz);
 void wtsn_cfg_set_device_id(const char *device_id);
 bool wtsn_cfg_load_device_id(char *out, size_t *sz);
 

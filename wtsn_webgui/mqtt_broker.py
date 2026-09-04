@@ -95,11 +95,20 @@ class MqttBroker:
             self._inbox.append((msg.topic, msg.payload.decode("utf-8", "replace")))
             self._inbox_cv.notify()
 
+    def is_connected(self):
+        return bool(self._paho) and self._connected
+
     def subscribe(self, topic, qos=0):
         if not self._paho or not self._connected:
             return False
         try:
-            self._paho.subscribe(topic, qos)
+            res = self._paho.subscribe(topic, qos)
+            # paho v2 returns (result, mid); result may be a ReasonCode.
+            if isinstance(res, tuple):
+                rc = res[0]
+                if hasattr(rc, "is_failure"):
+                    return not rc.is_failure()
+                return rc == 0
             return True
         except Exception:
             return False

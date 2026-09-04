@@ -40,6 +40,8 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);"
     "CREATE TABLE IF NOT EXISTS sensor_history(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "device_id TEXT,sensor_id TEXT,ts INTEGER,value REAL);"
+    "CREATE TABLE IF NOT EXISTS latency_log(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "device_id TEXT,ts INTEGER,latency_ms REAL);"
 )
 
 
@@ -73,6 +75,18 @@ def ensure_schema(con):
             con.commit()
     except Exception:
         pass
+    # Indexes for the telemetry/history hot paths (sensor sparklines, perf stats,
+    # sync reports, latency samples). Full-table scans are avoidable here.
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS ix_sensor_history_dev ON sensor_history(device_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_latency_log_dev ON latency_log(device_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_sync_reports_dev ON timesync_reports(device_id, ts)",
+    ):
+        try:
+            con.execute(ddl)
+        except Exception:
+            pass
+    con.commit()
 
 
 def connect():
@@ -139,6 +153,8 @@ def load_all():
             ls = d.get("last_seen") or 0
             if ls and (now - ls) > state.OFFLINE_AFTER and state.MODE["mode"] == "real":
                 d["status"] = 1
+        # Let the UI show when real mode is selected but the broker is unreachable.
+        out["broker_ok"] = state.BROKER.get("ok", False) if state.MODE["mode"] == "real" else True
     finally:
         con.close()
     return out

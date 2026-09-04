@@ -39,6 +39,37 @@ def get_real_mqtt(con):
         return REAL_MQTT
 
 
+def prune_recent_acks(now=None, ttl=state.ACK_TTL):
+    """Drop acks older than ttl so RECENT_ACKS cannot grow without bound."""
+    if now is None:
+        now = time.time()
+    with state.ACK_LOCK:
+        stale = [did for did, (ok, at) in state.RECENT_ACKS.items() if now - at > ttl]
+        for did in stale:
+            state.RECENT_ACKS.pop(did, None)
+
+
+def record_round_trip(con, did, now=None):
+    """Store a measured E2E latency sample (ms) for the TSN Metrics page.
+
+    Uses the time a `ping` was sent (state.PING_OUT) and the time its ack
+    arrives as a round-trip sample. Silently ignored when the ping was not
+    recorded (e.g. simulation or ack for a non-ping command).
+    """
+    if now is None:
+        now = time.time()
+    t0 = state.PING_OUT.pop(did, None)
+    if t0 is None:
+        return
+    rtt_ms = (now - t0) * 1000.0
+    try:
+        con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) VALUES(?,?,?)",
+                    (did, int(now), round(rtt_ms, 2)))
+        con.commit()
+    except Exception:
+        log.exception("record_round_trip failed for %r", did)
+
+
 def parse_listener_msg(con, topic, payload):
     try:
         j = json.loads(payload.replace("\r", "").replace("\n", "").strip())
@@ -89,8 +120,11 @@ def parse_listener_msg(con, topic, payload):
                 else:
                     con.execute("UPDATE devices SET ip=?,last_seen=strftime('%s','now') WHERE id=?",
                                 (j.get("ip", ""), did))
+                # ping reply -> RTT latency sample for the Metrics page
+                record_round_trip(con, did)
             else:
                 add_event("config", "cnc", "ack %s %s" % (did, "OK" if ok else "FAIL"))
+            prune_recent_acks()
             con.commit()
             return
         elif "/ptp" in topic and did:
@@ -99,7 +133,18 @@ def parse_listener_msg(con, topic, payload):
                      (j.get("offset_ns", 0), j.get("jitter_ns", 0),
                       ["in sync", "holdover", "unsync"][j.get("state", 2) % 3]),
                      proto="IEEE 802.1AS")
-            con.commit()
+            # Persist a per-report sample so the Metrics page can aggregate clock
+            # offset / sync state history (same source the Monitor already uses).
+            try:
+                con.execute("INSERT INTO timesync_reports(device_id,ts,offset_ns,jitter_ns,"
+                            "packet_count,packet_loss,status) VALUES(?,?,?,?,?,?,?)",
+                            (did, int(time.time()), int(j.get("offset_ns", 0)),
+                             int(j.get("jitter_ns", 0)), int(j.get("packet_count", 0)),
+                             int(j.get("packet_loss", 0)),
+                             ["in_sync", "holdover", "unsync"][j.get("state", 2) % 3]))
+                con.commit()
+            except Exception:
+                log.exception("ptp report persist failed")
             return
         elif "/sensors" in topic and did:
             s_list = j.get("sensors", [])
@@ -185,8 +230,14 @@ def mqtt_listener_loop():
                 brk = MqttBroker(h, p, "wtsn-webgui-listener")
                 host, port = h, p
             if not brk.connect():
+                with state.BROKER:
+                    state.BROKER["ok"] = False
+                    state.BROKER["checked_at"] = time.time()
                 time.sleep(3)
                 continue
+            with state.BROKER:
+                state.BROKER["ok"] = True
+                state.BROKER["checked_at"] = time.time()
             brk.subscribe("tsn/ack/#")
             brk.subscribe("tsn/status")
             brk.subscribe("tsn/discover")

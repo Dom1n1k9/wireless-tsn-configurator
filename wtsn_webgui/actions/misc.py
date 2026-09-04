@@ -85,10 +85,14 @@ def _exec_all(con, body):
                       "stream %s published -> %s" % (sr["stream_id"], talker))
     retried = []
     pending = []
+    # Only acks received *after* we started sending count, otherwise a stale ack
+    # from a previous /apply round makes every device look acknowledged.
+    start_ack = time.time()
     end = time.time() + 2.0
     while time.time() < end:
         with state.ACK_LOCK:
-            acked = set(state.RECENT_ACKS.keys())
+            acked = {did for did, (ok, at) in state.RECENT_ACKS.items()
+                     if at >= start_ack and ok}
         pending = [r["id"] for r in con.execute("SELECT id FROM devices")
                    if r["id"] not in acked]
         if not pending:
@@ -178,6 +182,13 @@ def _rollback_version(con, body):
     if not row:
         return {"ok": False, "msg": "version not found"}
     payload, dev = row[0], row[1]
+    # Atomic rollback: if replaying the version fails mid-way, undo the deletes
+    # instead of leaving the config half-deleted/half-restored.
+    try:
+        con.isolation_level = None
+        con.execute("BEGIN IMMEDIATE")
+    except Exception:
+        pass
     try:
         data = json.loads(payload)
     except Exception:
@@ -197,6 +208,10 @@ def _rollback_version(con, body):
                 con.execute("INSERT INTO %s(%s) VALUES(%s)" % (t, ",".join(cols),
                            ",".join(["?"] * len(cols))), [r[k] for k in cols])
         con.commit()
+        try:
+            con.isolation_level = ""
+        except Exception:
+            pass
         return {"ok": True, "msg": "rolled back to version " + str(vid)}
     if dev:
         con.execute("DELETE FROM qos_configs WHERE device_id=?", (dev,))
@@ -259,6 +274,10 @@ def _rollback_version(con, body):
                            "duration_ns) VALUES(?,?,?,?)",
                           (mm.group(1), int(mm.group(2)), int(mm.group(3)), int(mm.group(4))))
     con.commit()
+    try:
+        con.isolation_level = ""
+    except Exception:
+        pass
     return {"ok": True, "msg": "rolled back to version " + str(vid)}
 
 
@@ -269,29 +288,47 @@ def _restore_backup(con, body):
     tables = ["devices", "qos_configs", "preemption_configs", "vlan_groups",
               "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
               "tsn_streams", "tsn_stream_members", "settings"]
-    for t in tables:
-        rows = data.get(t)
-        if rows is None:
-            continue
-        if not isinstance(rows, list):
-            rows = [rows]
-        con.execute("DELETE FROM %s" % t)
-        for r in rows:
-            if not isinstance(r, dict):
+    # Atomic restore: a failed replay rolls everything back instead of leaving a
+    # partially overwritten configuration.
+    try:
+        con.isolation_level = None
+        con.execute("BEGIN IMMEDIATE")
+    except Exception:
+        pass
+    try:
+        for t in tables:
+            rows = data.get(t)
+            if rows is None:
                 continue
-            cols = []
-            vals = []
-            for k, v in r.items():
-                if k == "meta":
+            if not isinstance(rows, list):
+                rows = [rows]
+            con.execute("DELETE FROM %s" % t)
+            for r in rows:
+                if not isinstance(r, dict):
                     continue
-                if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
-                    cols.append("`" + k + "`")
-                    vals.append(v)
-            if not cols:
-                continue
-            con.execute("INSERT INTO %s(%s) VALUES(%s)" %
-                       (t, ",".join(cols), ",".join(["?"] * len(vals))), tuple(vals))
-    con.commit()
+                cols = []
+                vals = []
+                for k, v in r.items():
+                    if k == "meta":
+                        continue
+                    if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                        cols.append("`" + k + "`")
+                        vals.append(v)
+                if not cols:
+                    continue
+                con.execute("INSERT INTO %s(%s) VALUES(%s)" %
+                           (t, ",".join(cols), ",".join(["?"] * len(vals))), tuple(vals))
+        con.commit()
+    except Exception:
+        try:
+            con.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    try:
+        con.isolation_level = ""
+    except Exception:
+        pass
     return {"ok": True, "msg": "configuration restored"}
 
 
