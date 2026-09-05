@@ -47,21 +47,9 @@ static int current_rssi(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Actor / relay output (Z-3807-M style module wired to GPIO16): the
- * Trigger input (~1.8–5V logic, with GND_T as its return) is driven high
- * when motion is seen so the relay clicks for RELAY_PULSE_MS.
- * Enabled at runtime only on the board without the sensor add-on
- * (auto-detected; the relay board is esp32-02).
- */
-#define ACTOR_RELAY_GPIO GPIO_NUM_16
-#define ACTOR_RELAY_PULSE_MS 1000
-static volatile int g_relay_active = 0;
+/* Board role detection: the board with the sensor add-on (BME280 on I2C)
+ * becomes esp32-01; any other board is esp32-02. */
 static volatile int g_has_sensors = 0;
-static void relay_click(void);
-/* Serialises relay GPIO access against actor_init() reconfiguration. The relay
- * pulse runs on its own task while MQTT callbacks and init run elsewhere, so
- * without this a simultaneous actor_init() could leave the relay stuck on. */
-static portMUX_TYPE g_relay_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void send_ack(bool ok, const char *reason) {
     char buf[128];
@@ -160,20 +148,6 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     (void)ud;
     ESP_LOGI(TAG, "cmd %s <- %s", topic, payload);
     if (strstr(topic, "/apply")) { apply_snapshot(payload); return; }
-
-    /* FX field exchange: the sensor node publishes {"id":"...","motion":1} on
-     * tsn/sensors/event / tsn/fx/data -- on motion=1 pulse the relay (only on
-     * the relay board, i.e. the one WITHOUT the sensor add-on). tsn/fx/cmd/#
-     * is a separate command channel and must NOT drive the actor. */
-    if (!g_has_sensors &&
-        (strcmp(topic, "tsn/fx/data") == 0 ||
-         strcmp(topic, "tsn/sensors/event") == 0)) {
-        int motion = 0;
-        if (wtsn_json_get_int(payload, "motion", &motion) && motion) {
-            ESP_LOGI(TAG, "motion detected via FX -> relay click");
-            relay_click();
-        }
-    }
 
     char *slash = strrchr(topic, '/');
     const char *cmd = slash ? slash + 1 : topic;
@@ -593,45 +567,6 @@ static void btn_task(void *arg) {
     }
 }
 
-/* Relay pulse task: on motion a 1 s HIGH pulse is sent to the relay trigger.
- * Re-arm is done by the caller; this task only drives a single click. */
-static void relay_pulse_task(void *arg) {
-    portENTER_CRITICAL(&g_relay_mux);
-    gpio_set_level(ACTOR_RELAY_GPIO, 1);
-    uint32_t pulse_ms = ACTOR_RELAY_PULSE_MS;
-    portEXIT_CRITICAL(&g_relay_mux);
-    vTaskDelay(pdMS_TO_TICKS(pulse_ms));
-    portENTER_CRITICAL(&g_relay_mux);
-    gpio_set_level(ACTOR_RELAY_GPIO, 0);
-    g_relay_active = 0;
-    portEXIT_CRITICAL(&g_relay_mux);
-    vTaskDelete(NULL);
-}
-
-static void relay_click(void) {
-    portENTER_CRITICAL(&g_relay_mux);
-    if (g_relay_active) { portEXIT_CRITICAL(&g_relay_mux); return; }
-    g_relay_active = 1;
-    portEXIT_CRITICAL(&g_relay_mux);
-    xTaskCreatePinnedToCore(relay_pulse_task, "wtsn_relay", 2048, NULL, 5, NULL, 1);
-}
-
-static void actor_init(void) {
-    /* Only the relay board (no sensor add-on) drives the relay output; the
-     * sensor board must not configure/reconfigure this pin at all. */
-    if (g_has_sensors) return;
-    portENTER_CRITICAL(&g_relay_mux);
-    gpio_config_t io = {0};
-    io.pin_bit_mask = (1ULL << ACTOR_RELAY_GPIO);
-    io.mode = GPIO_MODE_OUTPUT;
-    io.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    gpio_config(&io);
-    gpio_set_level(ACTOR_RELAY_GPIO, 0);
-    portEXIT_CRITICAL(&g_relay_mux);
-    ESP_LOGI(TAG, "actor relay inited on GPIO%d (pulse %d ms)", ACTOR_RELAY_GPIO,
-             ACTOR_RELAY_PULSE_MS);
-}
-
 static void btn_led_init(void) {
     gpio_config_t io = {0};
     io.pin_bit_mask = (1ULL << FACTORY_BTN_GPIO);
@@ -704,7 +639,6 @@ void app_main(void) {
     char mqtt_host[64] = {0};
     int mqtt_port = 1883;
     ensure_device_id();
-    actor_init();
     wtsn_prov_init("WTSN Node Setup", "wtsn-broker.local", prov_save, prov_load_id);
     wtsn_cfg_load(g_device_id, sizeof(g_device_id),
                   wifi_ssid, sizeof(wifi_ssid), wifi_pass, sizeof(wifi_pass),
@@ -754,8 +688,8 @@ void app_main(void) {
 
 static void ensure_device_id(void) {
     /* Auto-detect role from hardware: the board that has the sensor add-on
-     * (BME280 on I2C) wired becomes esp32-01; any other board is esp32-02
-     * (relay / actor). This survives a physical swap of the two boards.
+     * (BME280 on I2C) wired becomes esp32-01; any other board is esp32-02.
+     * This survives a physical swap of the two boards.
      * WTSN_DEVICE_ID (build-time) still overrides if explicitly provided. */
 #ifdef WTSN_DEVICE_ID
     snprintf(g_device_id, sizeof(g_device_id), "%s", WTSN_DEVICE_ID);

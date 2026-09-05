@@ -326,9 +326,9 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
                              &g_adc_char);
     g_adc_cal = true;
 
-    /* Leave the on-board actor output (GPIO26) undriven at boot: the external
-     * relay lives on GPIO16 (main.c) and driving this pin from init could fight
-     * another role's output. The "actor" MQTT command still configures it on demand. */
+    /* Leave the on-board actor output (GPIO26) undriven at boot so it does not
+     * fight another role's output. The "actor" MQTT command configures it on
+     * demand. */
     wtsn_sensor_actor_set_pin();
 
     ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501", g_dev_id);
