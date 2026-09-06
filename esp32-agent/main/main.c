@@ -25,6 +25,7 @@
 
 #include "nvs.h"
 #include "sntp.h"
+#include "mdns.h"
 #include <time.h>
 
 static const char *TAG = "wtsn_main";
@@ -34,6 +35,7 @@ static wtsn_mqtt *g_mqtt = NULL;
 static void ensure_device_id(void);
 static void identify_start(void);
 static void factory_reset(void);
+static void resolve_mqtt_host(char *host, size_t host_sz);
 static volatile int g_wifi_ready = 0;   /* declared here so current_rssi() can see it */
 static volatile int g_prov_fallback_started = 0;
 
@@ -442,7 +444,10 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             bool mtls = false, minsec = false;
             wtsn_cfg_get_broker_auth(muser, sizeof(muser), mpass, sizeof(mpass),
                                      &mtls, mtls_ca, sizeof(mtls_ca), &minsec);
-            g_mqtt = wtsn_mqtt_create_auth(ctx->host, ctx->port, g_device_id,
+            char mqtt_host[64];
+            snprintf(mqtt_host, sizeof(mqtt_host), "%s", ctx->host);
+            resolve_mqtt_host(mqtt_host, sizeof(mqtt_host));
+            g_mqtt = wtsn_mqtt_create_auth(mqtt_host, ctx->port, g_device_id,
                                            muser[0] ? muser : NULL,
                                            mpass[0] ? mpass : NULL,
                                            mtls, mtls_ca[0] ? mtls_ca : NULL, minsec,
@@ -456,7 +461,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             wtsn_sensor_init(g_device_id, g_mqtt);
             wtsn_uart_init(g_mqtt, g_device_id);
             wtsn_uart_start();
-            ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, ctx->host, ctx->port);
+            ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, mqtt_host, ctx->port);
         }
     }
 }
@@ -600,12 +605,45 @@ static bool try_net(int idx) {
     return true;
 }
 
+/* Resolve a possibly ".local" MQTT broker hostname into an IP string. The
+ * lwIP getaddrinfo() path in this IDF setup does not reliably answer .local
+ * names even with the mDNS resolver hooked, so we issue an explicit mDNS
+ * query (espressif/mdns) and fall back to a known LAN IP if it times out. */
+static void resolve_mqtt_host(char *host, size_t host_sz) {
+    if (!host || !host[0]) return;
+    bool is_local = (strstr(host, ".local") != NULL);
+    if (!is_local) return;
+    /* mdns_query_a expects the bare hostname WITHOUT the ".local" suffix
+     * (mDNS uses the '.local' domain internally). */
+    char q[64];
+    snprintf(q, sizeof(q), "%s", host);
+    size_t ql = strlen(q);
+    if (ql > 6 && strcmp(q + ql - 6, ".local") == 0) q[ql - 6] = '\0';
+    esp_ip4_addr_t addr = {0};
+    esp_err_t err = mdns_query_a(q, 2000, &addr);
+    if (err == ESP_OK && addr.addr != 0) {
+        snprintf(host, host_sz, IPSTR, IP2STR(&addr));
+        ESP_LOGI(TAG, "mDNS resolved %s -> %s", q, host);
+        return;
+    }
+    ESP_LOGW(TAG, "mDNS query for %s failed (%d) -> fallback 192.168.0.149", q, err);
+    snprintf(host, host_sz, "192.168.0.149");
+}
+
 static void wifi_init(const char *ssid, const char *pass) {
     (void)ssid; (void)pass;   /* networks come from NVS multihome list */
     load_nets();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
+    /* Enable the mDNS resolver so ".local" hostnames (e.g. the default
+     * wtsn-broker.local broker) resolve over the LAN. mdns_init() must run
+     * after the STA netif exists and needs to be bound to it so multicast
+     * queries go out over WiFi (not only the provisioning AP). */
+    ESP_ERROR_CHECK(mdns_init());
+    mdns_hostname_set(g_device_id);
+    esp_netif_t *nsta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (nsta) mdns_register_netif(nsta);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 

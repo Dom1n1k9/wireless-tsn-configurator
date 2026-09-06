@@ -2,8 +2,16 @@
 CONFIG_ESP_WIFI_ENABLED=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
+# The WiFi system event task ("sys_evt") overflows its stack during STA
+# connect on some networks; enlarge it so connecting does not reboot the node.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
 # LWIP
 CONFIG_LWIP_DHCP_GET_HOSTNAME=y
+
+# Route .local hostnames from getaddrinfo()/netconn through the mDNS resolver
+# (espressif/mdns). Without this hook, resolving "wtsn-broker.local" fails.
+CONFIG_LWIP_HOOK_NETCONN_EXT_RESOLVE_DEFAULT=y
 
 # MQTT (ESP-IDF built-in)
 CONFIG_MQTT_PROTOCOL_311=y

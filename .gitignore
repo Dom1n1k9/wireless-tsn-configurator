@@ -16,6 +16,8 @@ esp32-agent/sdkconfig.old
 esp32-cam/sdkconfig
 esp32-cam/sdkconfig.old
 esp32-cam/managed_components/
+esp32-agent/managed_components/
+esp32-agent/dependencies.lock
 webgui_*.log
 microbit-sensor/built/
 microbit-sensor/node_modules/
