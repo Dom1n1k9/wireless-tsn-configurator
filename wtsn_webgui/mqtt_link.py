@@ -82,11 +82,14 @@ def parse_listener_msg(con, topic, payload):
     rssi = j.get("rssi")
     try:
         if "/status" in topic and did:
-            rssi_sql = "rssi=COALESCE(?,rssi)," if rssi is not None else ""
-            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
-                        "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip)," + rssi_sql +
-                        " WHERE id=?",
-                        ([fw, ip] if rssi is None else [fw, ip, rssi]) + [did])
+            sets = ["status=0", "last_seen=strftime('%s','now')",
+                    "firmware=COALESCE(?,firmware)", "ip=COALESCE(?,ip)"]
+            params = [fw, ip]
+            if rssi is not None:
+                sets.append("rssi=?")
+                params.append(rssi)
+            con.execute("UPDATE devices SET %s WHERE id=?" % ",".join(sets),
+                        params + [did])
             con.commit()
             return
         elif "/lwt" in topic and did:
@@ -98,10 +101,10 @@ def parse_listener_msg(con, topic, payload):
             kind_v = 5 if kind == "cam" else (0 if kind == "esp32" else None)
             rssi_sql = "rssi=COALESCE(?,rssi)," if rssi is not None else ""
             params = [fw, ip] + ([rssi] if rssi is not None else []) + [kind_v, did]
-            con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
-                        "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip)," + rssi_sql +
-                        "kind=COALESCE(?,kind) WHERE id=?", params)
-            if con.rowcount == 0:
+            cur = con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
+                              "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip)," + rssi_sql +
+                              "kind=COALESCE(?,kind) WHERE id=?", params)
+            if cur.rowcount == 0:
                 con.execute("INSERT INTO devices(id,name,status,last_seen,firmware,ip,kind,rssi) "
                             "VALUES(?,?,0,strftime('%s','now'),?,?,?,COALESCE(?,0))",
                             (did, did, fw, ip, kind_v, rssi))
@@ -230,12 +233,12 @@ def mqtt_listener_loop():
                 brk = MqttBroker(h, p, "wtsn-webgui-listener")
                 host, port = h, p
             if not brk.connect():
-                with state.BROKER:
+                with state.BROKER_LOCK:
                     state.BROKER["ok"] = False
                     state.BROKER["checked_at"] = time.time()
                 time.sleep(3)
                 continue
-            with state.BROKER:
+            with state.BROKER_LOCK:
                 state.BROKER["ok"] = True
                 state.BROKER["checked_at"] = time.time()
             brk.subscribe("tsn/ack/#")

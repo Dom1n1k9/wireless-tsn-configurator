@@ -64,7 +64,10 @@ function crc16(str: string): number {
 }
 
 function lineOk(line: string): boolean {
-    const star = line.lastIndexOf("*")
+    let star = -1
+    for (let i = line.length - 1; i >= 0; i--) {
+        if (line.charAt(i) == "*") { star = i; break }
+    }
     if (star < 0) return true            // legacy frame, accept
     const expect = parseInt(line.substr(star + 1), 16)
     return !isNaN(expect) &&
@@ -159,10 +162,17 @@ basic.forever(function () {
 // as mb_temp/mb_light/mb_pir on MQTT, so we can compare them with the ESP's own
 // pir1/temp1 telemetry. The frame is CRC-protected so the ESP only republishes
 // data that made it to the wire intact.
+const HEXD = "0123456789ABCDEF"
+function toHex4(n: number): string {
+    let s = ""
+    for (let i = 3; i >= 0; i--) {
+        s = s + HEXD.charAt((n >> (i * 4)) & 0xF)
+    }
+    return s
+}
 basic.forever(function () {
     let payload = "T:" + sTemp + " L:" + sLight + " P:" + sPir
-    let c = crc16(payload).toString(16).toUpperCase()
-    while (c.length < 4) c = "0" + c
+    let c = toHex4(crc16(payload))
     serial.writeLine(payload + "*" + c)
     basic.pause(700)
 })

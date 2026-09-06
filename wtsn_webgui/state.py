@@ -28,6 +28,7 @@ ACK_TTL = 15.0   # seconds an ack counts as "fresh" before it is pruned
 # Last known MQTT broker reachability, maintained by the background listener loop
 # so request handlers never block on a TCP connect just to answer /api/data.
 BROKER = {"ok": False, "checked_at": 0.0}
+BROKER_LOCK = threading.Lock()
 PING_OUT = {}    # {device_id: sent_epoch_seconds} for RTT latency measurement
 MQTT_LOCK = threading.Lock()   # guards the cached REAL_MQTT client in mqtt_link
 SIM_USER_DEVICES = set()
