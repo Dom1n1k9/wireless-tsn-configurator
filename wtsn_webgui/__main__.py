@@ -43,10 +43,9 @@ def main(argv=None):
         else:
             i += 1
 
-    if mqtt_host and mqtt_port is not None:
-        os.environ["WTSN_BROKER"] = "%s:%d" % (mqtt_host, mqtt_port)
-    elif mqtt_host:
-        os.environ["WTSN_BROKER"] = mqtt_host + (os.environ.get("WTSN_BROKER", "").rsplit(":", 1)[-1] if os.environ.get("WTSN_BROKER") else ":1883")
+    if mqtt_host:
+        # --mqtt-host given (optionally --mqtt-port); default port 1883.
+        os.environ["WTSN_BROKER"] = "%s:%d" % (mqtt_host, mqtt_port if mqtt_port is not None else 1883)
 
     state.LISTENER_STOP.clear()
     threading.Thread(target=sim_runner, daemon=True).start()
