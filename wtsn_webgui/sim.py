@@ -125,6 +125,25 @@ def sim_tick():
         if saved_nodes and saved_nodes["value"]:
             con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('sync_nodes',?)",
                        (saved_nodes["value"],))
+        # Simulated telemetry for the Metrics page (latency_log + timesync_reports).
+        # One latency sample every ~4 ticks and one gPTP report per tick, so the
+        # Metrics sparklines/summary have data to show in Simulation mode too.
+        now_i = int(time.time())
+        for sd in stable:
+            if random.random() < 0.25:
+                con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) VALUES(?,?,?)",
+                            (sd["id"], now_i, round(random.uniform(2, 40), 1)))
+        if random.random() < 0.9:
+            con.execute("INSERT INTO timesync_reports(device_id,ts,offset_ns,jitter_ns,"
+                        "packet_count,packet_loss,status) VALUES(?,?,?,?,?,?,?)",
+                        (devs[0] if devs else gm, now_i,
+                         random.randint(-500, 500), random.randint(0, 200),
+                         random.randint(50, 500), random.randint(0, 5),
+                         ["in_sync", "holdover", "unsync"][
+                             random.choices([0, 1, 2], weights=[80, 15, 5])[0]]))
+        # prune simulated metrics history so the DB does not grow unbounded
+        con.execute("DELETE FROM latency_log WHERE ts < ?", (now_i - 86400,))
+        con.execute("DELETE FROM timesync_reports WHERE ts < ?", (now_i - 86400,))
         con.commit()
         gm_ip = "192.168.1.%d" % random.randint(2, 50)
         add_event("discovery", "cnc", "nodes announced, %d nodes on network" % len(devs),

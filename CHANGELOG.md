@@ -6,6 +6,14 @@ tagged the same way.
 
 ## [Unreleased]
 
+### Fixed (UI)
+- Metrics page now loads its data immediately when opened (previously it showed
+  "loading..." until the window selector was changed because `mtLoad()` was never
+  called on navigation).
+- Simulation now generates realistic `latency_log` + `timesync_reports` samples
+  so the Metrics page has something to show in Simulation mode instead of an
+  empty screen.
+
 ### Documentation
 - Reorganized the README into a single, consistent reference (quick start,
   architecture, components, provisioning, protocol, security, build/test,

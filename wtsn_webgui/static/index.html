@@ -87,7 +87,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
-  else if(p==="metrics")m.innerHTML=metrics();
+  else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
   else if(p==="sensors")m.innerHTML=sensors();
  else if(p==="help")m.innerHTML=help();
  else if(p==="settings")m.innerHTML=settings();}
@@ -332,7 +332,7 @@ function metricChart(pts,{w=560,h=110,unit="",color="var(--sec)"}={}){
    "<div class='gcllegend' style='margin-top:2px'>"+leg+"</div>"}
 function metrics(){
   return "<h2>TSN Metrics</h2>"+
-   "<div class='muted' style='margin-bottom:10px'>Control-plane E2E latency (RTT per <b>Ping</b>, stored in <code>latency_log</code>) and gPTP clock offset from <code>timesync_reports</code>. In Simulation, ping/ack samples are not produced — switch to Real mode and Ping a device.</div>"+
+   "<div class='muted' style='margin-bottom:10px'>Control-plane E2E latency (RTT per <b>Ping</b>, stored in <code>latency_log</code>) and gPTP clock offset from <code>timesync_reports</code>. In Simulation, synthetic samples are generated so you can see how the page behaves; in Real mode they come from real device Ping/acks and gPTP reports.</div>"+
    "<div class='card'><div class='row'><span class='muted'>Aggregate window</span>"+
    "<select id=mt_win onchange='mtLoad()'><option value=300>last 5 min</option><option value=900>last 15 min</option><option value=3600 selected>last 1 h</option><option value=7200>last 2 h</option></select>"+
    "<span class='muted'>Summary window</span>"+
