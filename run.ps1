@@ -56,6 +56,15 @@ function Start-Broker {
     } else {
         Log "WARNING: broker did not start listening on $mqttPort"
     }
+    # Advertise wtsn-broker.local -> this PC's LAN IP so ESP32 nodes that were
+    # provisioned with the default broker name resolve it even on networks where
+    # the PC's IP changes (home routers, mDNS via Bonjour/dns-sd on Windows).
+    $dnsSd = Get-Command dns-sd.exe -ErrorAction SilentlyContinue
+    if ($dnsSd) {
+        Start-Process -FilePath $dnsSd.Source -ArgumentList @("-N", "wtsn-broker.local", "$lanIp") -WindowStyle Hidden -ErrorAction SilentlyContinue
+    } else {
+        Log "dns-sd.exe not found - ESP32 nodes provisioned with 'wtsn-broker.local' must have mDNS resolver on the LAN, or use the PC's IP ($lanIp) as broker in the setup portal."
+    }
 }
 
 # ---------------- 2) web GUI ----------------

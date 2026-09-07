@@ -608,7 +608,11 @@ static bool try_net(int idx) {
 /* Resolve a possibly ".local" MQTT broker hostname into an IP string. The
  * lwIP getaddrinfo() path in this IDF setup does not reliably answer .local
  * names even with the mDNS resolver hooked, so we issue an explicit mDNS
- * query (espressif/mdns) and fall back to a known LAN IP if it times out. */
+ * query (espressif/mdns). The broker daemon on the provisioning PC advertises
+ * "wtsn-broker.local"; when mDNS is unavailable we leave the configured host in
+ * place so lwIP's own resolver (or DHCP search domain) still has a chance to
+ * answer - there is no sensible hardcoded IP to fall back to because the PC can
+ * be anywhere on the LAN. */
 static void resolve_mqtt_host(char *host, size_t host_sz) {
     if (!host || !host[0]) return;
     bool is_local = (strstr(host, ".local") != NULL);
@@ -626,8 +630,7 @@ static void resolve_mqtt_host(char *host, size_t host_sz) {
         ESP_LOGI(TAG, "mDNS resolved %s -> %s", q, host);
         return;
     }
-    ESP_LOGW(TAG, "mDNS query for %s failed (%d) -> fallback 192.168.0.149", q, err);
-    snprintf(host, host_sz, "192.168.0.149");
+    ESP_LOGW(TAG, "mDNS query for %s failed (%d) - keeping '%s'", q, err, host);
 }
 
 static void wifi_init(const char *ssid, const char *pass) {

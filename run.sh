@@ -14,20 +14,20 @@ if [ -z "$IDF_PATH" ]; then
         if [ -f "$d/export.sh" ]; then IDF_PATH="$d"; break; fi
     done
 fi
-MQTT_HOST_FALLBACK="192.168.0.149"   # this PC IP (broker) - auto-detected below
 MQTT_PORT=1883
 GUI_PORT=8000
 GUI_LOG=/tmp/webgui.log
 
-# detect current LAN IP (first non-loopback)
+# detect current LAN IP (first non-loopback); the broker runs on THIS PC so the
+# ESP32 nodes must reach it at this IP (or via the mDNS name "wtsn-broker.local").
 LAN_IP=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "127.0.0.1" | head -1 | sed 's/inet //')
-[ -z "$LAN_IP" ] && LAN_IP="$MQTT_HOST_FALLBACK"
+[ -z "$LAN_IP" ] && LAN_IP="127.0.0.1"
 
 log() { echo -e "\033[1;36m[wtsn]\033[0m $*"; }
 
 get_lan_ip() {
     local ip=$(ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | grep -v "^inet 127" | head -1 | sed 's/inet //')
-    [ -z "$ip" ] && ip="$MQTT_HOST_FALLBACK"
+    [ -z "$ip" ] && ip="127.0.0.1"
     echo "$ip"
 }
 
@@ -98,7 +98,8 @@ ensure_broker() {
 gui_pid=""
 start_gui() {
     cd "$PROJ_DIR"
-    setsid python3 webgui.py --mqtt-host "$LAN_IP" --mqtt-port "$MQTT_PORT" \
+    # webgui.py does not take --mqtt-host; the broker address is passed by env.
+    WTSN_BROKER="$LAN_IP:$MQTT_PORT" python3 webgui.py --host 127.0.0.1 \
          < /dev/null > "$GUI_LOG" 2>&1 &
     gui_pid=$!
     disown

@@ -13,13 +13,18 @@ from .sim import sim_runner
 def main(argv=None):
     host = WEB_HOST
     port = state.PORT
+    mqtt_host = None
+    mqtt_port = None
     args = list(sys.argv[1:] if argv is None else argv)
     i = 0
     while i < len(args):
         if args[i] in ("-h", "--help"):
-            print("Usage: python3 webgui.py [--host H] [--port P] [--help]")
+            print("Usage: python3 webgui.py [--host H] [--port P] "
+                  "[--mqtt-host H] [--mqtt-port P] [--help]")
             print("  --host H      bind address (default %s, use 0.0.0.0 to expose)" % WEB_HOST)
             print("  --port P      port (default %d)" % port)
+            print("  --mqtt-host H MQTT broker host used by the listener (default WTSN_BROKER or 127.0.0.1)")
+            print("  --mqtt-port P MQTT broker port (default 1883)")
             print("Env: WTSN_HOST, WTSN_PORT, WTSN_DB, WTSN_BROKER, WTSN_USER,")
             print("     WTSN_PASS, WTSN_WEB_USER, WTSN_WEB_PASS")
             return 0
@@ -29,8 +34,19 @@ def main(argv=None):
         elif args[i] == "--port" and i + 1 < len(args):
             port = int(args[i + 1])
             i += 2
+        elif args[i] == "--mqtt-host" and i + 1 < len(args):
+            mqtt_host = args[i + 1]
+            i += 2
+        elif args[i] == "--mqtt-port" and i + 1 < len(args):
+            mqtt_port = int(args[i + 1])
+            i += 2
         else:
             i += 1
+
+    if mqtt_host and mqtt_port is not None:
+        os.environ["WTSN_BROKER"] = "%s:%d" % (mqtt_host, mqtt_port)
+    elif mqtt_host:
+        os.environ["WTSN_BROKER"] = mqtt_host + (os.environ.get("WTSN_BROKER", "").rsplit(":", 1)[-1] if os.environ.get("WTSN_BROKER") else ":1883")
 
     state.LISTENER_STOP.clear()
     threading.Thread(target=sim_runner, daemon=True).start()
