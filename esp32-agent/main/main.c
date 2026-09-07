@@ -631,6 +631,12 @@ static void resolve_mqtt_host(char *host, size_t host_sz) {
         return;
     }
     ESP_LOGW(TAG, "mDNS query for %s failed (%d) - keeping '%s'", q, err, host);
+    /* mDNS is often blocked on guest Wi-Fi / firewalls. Fall back to the
+     * provisioning PC's well-known broker IP so the node still comes online. */
+    if (strstr(host, ".local") != NULL) {
+        snprintf(host, host_sz, "192.168.0.149");
+        ESP_LOGW(TAG, "using fallback broker IP %s", host);
+    }
 }
 
 static void wifi_init(const char *ssid, const char *pass) {
