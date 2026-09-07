@@ -22,6 +22,10 @@ del _mod, _name, _fn
 def run_action(act, body):
     con = connect()
     handler = _REGISTRY.get(act)
+    if body is None:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
     try:
         if handler is None:
             return {"ok": False, "msg": "unknown action: %s" % act}
