@@ -296,14 +296,15 @@ function sensors(){
   let r="";
   for(const dev in byDev){
    const g=byDev[dev],t=g.temp1,h=g.hum1,p=g.press1;
-   const info=(n)=>{const s=g[n];if(!s)return"";const nm=sensorLabel(n);const un={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx"}[s.sensor_id]||"";return "<span class='chip'>"+esc(nm)+": <b>"+fmtAxis(s.value)+" "+un+"</b></span>"};
+   const info=(n)=>{const s=g[n];if(!s)return"";const nm=sensorLabel(n);const un={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx","mb_sound":""}[s.sensor_id]||"";return "<span class='chip' data-sen='"+esc(n)+"' data-val='"+esc(fmtAxis(s.value))+"'>"+esc(nm)+": <b>"+fmtAxis(s.value)+" "+un+"</b></span>"};
    const chips=[];
-   ["temp1","hum1","press1","light1"].forEach(n=>{if(g[n])chips.push(info(n))});
-   if(g.pir1)chips.push("<span class='chip "+((g.pir1.value)?"det":"")+"'>Motion: <b>"+((g.pir1.value)?"detected":"no motion")+"</b></span>");
+   ["temp1","hum1","press1","light1","mb_temp","mb_light","mb_sound"].forEach(n=>{if(g[n])chips.push(info(n))});
+   if(g.pir1)chips.push("<span class='chip "+(g.pir1.value?"det":"")+"' data-sen='pir1' data-val='"+(g.pir1.value?"1":"0")+"'>Motion: <b>"+(g.pir1.value?"detected":"no motion")+"</b></span>");
+   const anyLatest=[t,h,p,g.light1,g.pir1,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
    if(!chips.length)continue;
-   r+="<div class='card'><div class='row'><img style='width:0;height:0'>"+
+   r+="<div class='card' data-did='"+esc(dev)+"'><div class='row'><img style='width:0;height:0'>"+
       "<div style='font-size:16px;font-weight:700'>"+esc(dev)+"</div>"+
-      "<span class='muted' style='font-size:12px'>"+age(t||h||p||g.light1||g.pir1)+"</span>"+
+      "<span class='muted' style='font-size:12px' data-age='"+esc(dev)+"'>"+age(anyLatest)+"</span>"+
       "<span class='spacer'></span>"+chips.join(" ")+
       "</div><div style='margin-top:8px' data-big='" + esc(dev) + "'></div></div>";
   }
@@ -349,7 +350,32 @@ function bigSensorChart(sid, pts, hist, color, unit){
    "</svg></div>"
 }
 function sensorLabel(sid){
-  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion"}[sid]||sid;
+  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
+}
+// Live-update the Sensors cards WITHOUT re-rendering (keeps scroll position).
+function sensorsLive(){
+  const now=Math.floor(Date.now()/1000);
+  if(!D.sensors)return;
+  const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
+  document.querySelectorAll("[data-sen]").forEach(ch=>{
+    const dev=ch.closest(".card");
+    if(!dev)return;
+    const did=dev.dataset.did;
+    const sid=ch.dataset.sen;
+    const s=byDev[did]&&byDev[did][sid];
+    if(!s)return;
+    const un={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx","mb_sound":""}[sid]||"";
+    const b=ch.querySelector("b");
+    if(b)b.textContent=fmtAxis(s.value)+" "+un;
+    ch.dataset.val=""+(fmtAxis(s.value));
+    if(sid==="pir1"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
+  });
+  // update "updated x ago"
+  document.querySelectorAll("[data-age]").forEach(el=>{
+    const did=el.dataset.age,dev=byDev[did];if(!dev)return;
+    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.mb_temp||dev.mb_light||dev.mb_sound;
+    if(t&&t.last_update){let a=now-(t.last_update>1000000000000?t.last_update/1000:t.last_update);el.textContent=a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
+  });
 }
 function fmtAxis(v){if(Math.abs(v)>=1000)return (Math.round(v)).toLocaleString();if(v===Math.round(v))return String(v);return v.toFixed(1)}
 function loadBigSensorCharts(dev){
@@ -358,9 +384,9 @@ function loadBigSensorCharts(dev){
     const hist=j.history||{};
     const box=document.querySelector("[data-big='"+CSS.escape(dev)+"']");
     if(!box)return;
-    const cols={"temp1":"var(--err)","press1":"var(--pri)","hum1":"var(--ok)","light1":"var(--warn)","pir1":"var(--sec)","actor_mode":"var(--dim)"};
-    const units={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx","pir1":"","actor_mode":""};
-    const order=["temp1","press1","hum1","light1","pir1"];
+    const cols={"temp1":"var(--err)","press1":"var(--pri)","hum1":"var(--ok)","light1":"var(--warn)","pir1":"var(--sec)","actor_mode":"var(--dim)","mb_temp":"var(--err)","mb_light":"var(--warn)","mb_sound":"var(--sec)"};
+    const units={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx","pir1":"","actor_mode":"","mb_temp":"°C","mb_light":"","mb_sound":""};
+    const order=["temp1","press1","hum1","light1","pir1","mb_temp","mb_light","mb_sound"];
     let html="<div class='sensor-grid'>";
     order.forEach(sid=>{ if(hist[sid]&&hist[sid].length>=2){ html+=bigSensorChart(sid,hist[sid],hist,cols[sid]||"var(--sec)",units[sid]||"") } });
     html+="</div>";
@@ -509,8 +535,8 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  if((added.length||removed||statusChanged)&&cur==="devices"){D.devices=dj.devices;if($("main"))devices_render()}
   if($("mon") && MON_RUNNING){const f=($("mon_filter")?$("mon_filter").value:"").trim().toLowerCase();let list=(dj.events||[]).slice(0,120);if(f){list=list.filter(e=>((e.source||"")+(e.dest||"")+(e.proto||"")+(e.msg||"")+(e.ts||"")).toLowerCase().indexOf(f)>=0)}const ev=list.map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}
  D.events=dj.events;D.devices=dj.devices;
- // refresh sensor values live so the Sensors page updates in real time
- if(JSON.stringify(D.sensors)!==JSON.stringify(dj.sensors)){D.sensors=dj.sensors;if(cur==="sensors"&&$("main"))$("main").innerHTML=sensors()}
+  // refresh sensor values live so the Sensors page updates in real time
+  if(JSON.stringify(D.sensors)!==JSON.stringify(dj.sensors)){D.sensors=dj.sensors;if(cur==="sensors"&&$("main")){sensorsLive();document.querySelectorAll("[data-big]").forEach(b=>{const d=b.getAttribute("data-big");if(d)loadBigSensorCharts(d)})}}
  // live refresh of configuration tables without losing in-progress form input
  const dataChanged=JSON.stringify(D.qos_configs)!==JSON.stringify(dj.qos_configs)||JSON.stringify(D.vlan_groups)!==JSON.stringify(dj.vlan_groups)||JSON.stringify(D.tas_schedules)!==JSON.stringify(dj.tas_schedules)||JSON.stringify(D.preemption_configs)!==JSON.stringify(dj.preemption_configs)||JSON.stringify(D.tsn_streams)!==JSON.stringify(dj.tsn_streams)||JSON.stringify(D.gcl_entries)!==JSON.stringify(dj.gcl_entries);
  D.qos_configs=dj.qos_configs;D.vlan_groups=dj.vlan_groups;D.tas_schedules=dj.tas_schedules;D.preemption_configs=dj.preemption_configs;D.tsn_streams=dj.tsn_streams;D.tsn_stream_members=dj.tsn_stream_members;D.gcl_entries=dj.gcl_entries;

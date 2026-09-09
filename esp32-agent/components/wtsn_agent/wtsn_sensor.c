@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "driver/i2c.h"
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
@@ -26,6 +27,12 @@ static const char *TAG = "sensor";
 #endif
 #ifndef WTSN_I2C_SCL
 #define WTSN_I2C_SCL GPIO_NUM_22
+#endif
+/* PIR motion buzzer (piezo/buzzer on GPIO25, PWM-driven so both passive and
+ * active buzzers work; passive reproduces the tone, active just buzzes).
+ * Undriven by default so it is safe to leave unpopulated. */
+#ifndef WTSN_BUZZER_GPIO
+#define WTSN_BUZZER_GPIO GPIO_NUM_25
 #endif
 /* The device that has the sensor add-on board wired publishes telemetry.
  * main.c defaults to "esp32-01". */
@@ -61,6 +68,7 @@ static bool g_i2c_owned = false;   /* true once *this* module installed the I2C 
 static int  g_prev_pir = -1;
 static int  g_actor_mode = 0;
 static int64_t g_pir_latch = -1000000000LL;  /* monotonic us of last motion */
+static volatile int g_pir_flag = 0;          /* set by PIR ISR, consumed by buzzer task */
 
 /* One-time I2C bus setup used by both wtsn_sensor_probe() and wtsn_sensor_init().
  * Keeps a flag so the driver is NEVER installed twice (a second
@@ -331,6 +339,8 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
      * demand. */
     wtsn_sensor_actor_set_pin();
 
+    wtsn_sensor_buzzer_init();
+
     ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501", g_dev_id);
 }
 
@@ -339,6 +349,115 @@ bool wtsn_sensor_present(void) {
 }
 
 static int64_t g_last_tick = 0;
+
+/* ---- PIR motion buzzer (passive/active piezo on GPIO25) ---- */
+static bool g_buzzer_on = false;
+static bool g_buzzer_active = false;
+static esp_timer_handle_t g_buzzer_timer = NULL;
+
+static void buzzer_stop_now(void) {
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    g_buzzer_active = false;
+}
+
+static void buzzer_timer_cb(void *arg) {
+    (void)arg;
+    buzzer_stop_now();
+}
+
+/* Non-blocking beep: driven from the PIR GPIO ISR, so it reacts immediately
+ * instead of waiting for the (up to 2 s) telemetry tick - and it also works
+ * when MQTT is not yet connected. */
+static void buzzer_beep(uint16_t freq_hz, uint32_t dur_ms) {
+    if (!g_buzzer_on || g_buzzer_active) return;
+    ledc_timer_config_t t = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = (uint32_t)freq_hz,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ledc_timer_config(&t);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 128);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    g_buzzer_active = true;
+    if (g_buzzer_timer) {
+        esp_timer_stop(g_buzzer_timer);
+        esp_timer_start_once(g_buzzer_timer, (uint64_t)dur_ms * 1000ULL);
+    }
+}
+
+void wtsn_sensor_buzzer_beep(uint16_t freq_hz, uint32_t dur_ms) {
+    buzzer_beep(freq_hz, dur_ms);
+}
+
+static void IRAM_ATTR pir_isr(void *arg) {
+    (void)arg;
+    if (gpio_get_level(WTSN_PIR_GPIO) != 0) {
+        g_pir_latch = esp_timer_get_time();
+        /* Most esp_timer / ledc calls are not ISR-safe in every IDF version, so
+         * we only latch here and use a deferral flag; the actual beep is done
+         * from the background buzzer task. */
+        g_pir_flag = 1;
+    }
+}
+
+static void pir_isr_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        if (g_pir_flag) {
+            g_pir_flag = 0;
+            buzzer_beep(880, 200);
+        }
+    }
+}
+
+void wtsn_sensor_buzzer_init(void) {
+    gpio_config_t io = {0};
+    io.pin_bit_mask = (1ULL << WTSN_BUZZER_GPIO);
+    io.mode = GPIO_MODE_OUTPUT;
+    io.pull_up_en = GPIO_PULLUP_DISABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_config(&io);
+    gpio_set_level(WTSN_BUZZER_GPIO, 0);
+
+    ledc_timer_config_t t = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 1000,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ledc_timer_config(&t);
+    ledc_channel_config_t ch = {
+        .gpio_num = WTSN_BUZZER_GPIO,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 0,
+        .hpoint = 0,
+    };
+    ledc_channel_config(&ch);
+
+    esp_timer_create_args_t ta = {
+        .callback = buzzer_timer_cb,
+        .arg = NULL,
+        .name = "buz",
+    };
+    esp_timer_create(&ta, &g_buzzer_timer);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(WTSN_PIR_GPIO, pir_isr, NULL);
+    gpio_set_intr_type(WTSN_PIR_GPIO, GPIO_INTR_POSEDGE);
+
+    xTaskCreatePinnedToCore(pir_isr_task, "wtsn_buz", 4096, NULL, 10, NULL, 1);
+
+    g_buzzer_on = true;
+    ESP_LOGI(TAG, "buzzer ready on GPIO%d (PIR alarm)", WTSN_BUZZER_GPIO);
+}
 
 void wtsn_sensor_tick(void) {
     int64_t now = esp_timer_get_time() * 1000;

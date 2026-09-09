@@ -45,4 +45,10 @@ int  wtsn_sensor_motion(void);
 void wtsn_sensor_last(float *temp_c, float *press_hpa, float *hum_pct,
                       int *light, int *pir, int *actor);
 
+/* Motion buzzer (piezo) on GPIO25 - beeps when the PIR trips. */
+void wtsn_sensor_buzzer_init(void);
+
+/* Public beep API (used by the micro:bit command pad for "identify"). */
+void wtsn_sensor_buzzer_beep(uint16_t freq_hz, uint32_t dur_ms);
+
 #endif
