@@ -300,7 +300,8 @@ function sensors(){
    const chips=[];
    ["temp1","hum1","press1","light1","mb_temp","mb_light","mb_sound"].forEach(n=>{if(g[n])chips.push(info(n))});
    if(g.pir1)chips.push("<span class='chip "+(g.pir1.value?"det":"")+"' data-sen='pir1' data-val='"+(g.pir1.value?"1":"0")+"'>Motion: <b>"+(g.pir1.value?"detected":"no motion")+"</b></span>");
-   const anyLatest=[t,h,p,g.light1,g.pir1,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
+   if(g.wifi_motion)chips.push("<span class='chip "+(g.wifi_motion.value?"det":"")+"' data-sen='wifi_motion' data-val='"+(g.wifi_motion.value?"1":"0")+"' title='RSSI-jitter/CSI based WiFi motion (WiFiVision)'>WiFi: <b>"+(g.wifi_motion.value?"detected":"no motion")+"</b></span>");
+   const anyLatest=[t,h,p,g.light1,g.pir1,g.wifi_motion,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
    if(!chips.length)continue;
    r+="<div class='card' data-did='"+esc(dev)+"'><div class='row'><img style='width:0;height:0'>"+
       "<div style='font-size:16px;font-weight:700'>"+esc(dev)+"</div>"+
@@ -350,7 +351,7 @@ function bigSensorChart(sid, pts, hist, color, unit){
    "</svg></div>"
 }
 function sensorLabel(sid){
-  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
+  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","wifi_motion":"WiFi Motion","wifi_rssi":"WiFi RSSI jitter","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
 }
 // Live-update the Sensors cards WITHOUT re-rendering (keeps scroll position).
 function sensorsLive(){
@@ -369,11 +370,13 @@ function sensorsLive(){
     if(b)b.textContent=fmtAxis(s.value)+" "+un;
     ch.dataset.val=""+(fmtAxis(s.value));
     if(sid==="pir1"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
+    if(sid==="wifi_motion"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
+    if(sid==="wifi_rssi"){if(b)b.textContent=s.value+" (jitter)"}
   });
   // update "updated x ago"
   document.querySelectorAll("[data-age]").forEach(el=>{
     const did=el.dataset.age,dev=byDev[did];if(!dev)return;
-    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.mb_temp||dev.mb_light||dev.mb_sound;
+    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.wifi_motion||dev.mb_temp||dev.mb_light||dev.mb_sound;
     if(t&&t.last_update){let a=now-(t.last_update>1000000000000?t.last_update/1000:t.last_update);el.textContent=a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
   });
 }

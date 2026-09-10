@@ -2,6 +2,10 @@
 CONFIG_ESP_WIFI_ENABLED=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
+# WiFiVision: per-frame RSSI + CSI channel-variance for device-free motion
+# detection. CSI costs ~STATIC_RX_BUFFER_NUM KB of RAM (already 10 by default).
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+
 # The WiFi system event task ("sys_evt") overflows its stack during STA
 # connect on some networks; enlarge it so connecting does not reboot the node.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #include "wtsn_mqtt.h"
+#include "wtsn_wifimotion.h"
 
 /* Sensor types matching the webgui schema (type column). */
 enum {

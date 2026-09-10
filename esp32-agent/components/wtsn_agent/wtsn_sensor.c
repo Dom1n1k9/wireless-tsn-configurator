@@ -63,6 +63,13 @@ static const char *TAG = "sensor";
 static char g_dev_id[32] = "esp32-01";
 static wtsn_mqtt *g_mq = NULL;
 
+/* Last RSSI std-dev (dB) measured by the WiFi motion sensor, kept for the
+ * telemetry payload; the sensor module owns its own copy. */
+static float g_wifi_motion_std = 0.0f;
+/* Persisted per-sensor JSON for the wifi_motion topic (the local buffer above
+ * goes out of scope before the per-sensor loop publishes it). */
+static char g_last_buf_wfm[80] = "";
+
 static bool g_bme_ok = false;
 static bool g_i2c_owned = false;   /* true once *this* module installed the I2C driver */
 static int  g_prev_pir = -1;
@@ -341,6 +348,10 @@ void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq) {
 
     wtsn_sensor_buzzer_init();
 
+    /* Device-free WiFi motion ("WiFiVision"): starts the CSI + RSSI-jitter
+     * detectors, which decide themselves whether the radio supports them. */
+    wtsn_wifimotion_init(device_id, mq);
+
     ESP_LOGI(TAG, "sensors ready (dev=%s): BME280 I2C, TEMT6000 ADC, HC-S501", g_dev_id);
 }
 
@@ -487,8 +498,8 @@ void wtsn_sensor_tick(void) {
     size_t m = (size_t)n;
 
     int written = 0;
-    char buf_temp[96], buf_press[96], buf_hum[96], buf_light[96], buf_pir[96];
-    buf_temp[0] = buf_press[0] = buf_hum[0] = buf_light[0] = buf_pir[0] = 0;
+    char buf_temp[96], buf_press[96], buf_hum[96], buf_light[96], buf_pir[96], buf_wfm[80];
+    buf_temp[0] = buf_press[0] = buf_hum[0] = buf_light[0] = buf_pir[0] = buf_wfm[0] = 0;
     if (temp > -500) {
         snprintf(buf_temp, sizeof(buf_temp),
              "{\"sensor_id\":\"temp1\",\"type\":0,\"value\":%.1f,\"unit\":\"C\",\"healthy\":1}",
@@ -513,6 +524,21 @@ void wtsn_sensor_tick(void) {
     snprintf(buf_pir, sizeof(buf_pir),
          "{\"sensor_id\":\"pir1\",\"type\":4,\"value\":%d,\"unit\":\"\",\"healthy\":1}", pir_report);
     m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_pir);
+    /* WiFi motion channel ("WiFiVision") exposed through the same sensors feed so
+     * the GUI shows it next to the wired PIR. Value is the debounced 0/1; the
+     * per-window RSSI std-dev (a rough activity indicator) goes into the unit
+     * field so history sparklines are meaningful. */
+    {
+        int wfm = wtsn_wifimotion_motion();
+        int wfm_std = (int)(g_wifi_motion_std * 10.0f);   /* 1 ddB resolution */
+        snprintf(buf_wfm, sizeof(buf_wfm),
+             "{\"sensor_id\":\"wifi_motion\",\"type\":4,\"value\":%d,\"unit\":\"%d\",\"healthy\":1}",
+             wfm, wfm_std);
+        m += (size_t)snprintf(buf + m, sizeof(buf) - m, "%s%s", written++ ? "," : "", buf_wfm);
+        /* stash for the per-sensor topic publish below (goes out of scope) */
+        g_last_buf_wfm[0] = '\0';
+        (void)snprintf(g_last_buf_wfm, sizeof(g_last_buf_wfm), "%s", buf_wfm);
+    }
     m += (size_t)snprintf(buf + m, sizeof(buf) - m,
          "%s{\"sensor_id\":\"actor_mode\",\"type\":4,\"value\":%d,\"unit\":\"\",\"healthy\":1}",
          written++ ? "," : "", g_actor_mode);
@@ -550,6 +576,8 @@ void wtsn_sensor_tick(void) {
         wtsn_mqtt_publish(g_mq, sub, buf_light);
         snprintf(sub, sizeof(sub), "tsn/sensors/%s/pir", g_dev_id);
         wtsn_mqtt_publish(g_mq, sub, buf_pir);
+        snprintf(sub, sizeof(sub), "tsn/sensors/%s/wifi_motion", g_dev_id);
+        wtsn_mqtt_publish(g_mq, sub, g_last_buf_wfm[0] ? g_last_buf_wfm : buf_wfm);
     }
 
     if (pir != g_prev_pir) {
@@ -561,6 +589,11 @@ void wtsn_sensor_tick(void) {
         ESP_LOGI(TAG, "PIR raw=%d -> event", pir);
         g_prev_pir = pir;
     }
+    /* WiFi motion detection runs continuously (independent of the PIR) and is
+     * fed by the WiFi task; a 2 s telemetry tick gives the short sampling
+     * window enough data to decide. */
+    wtsn_wifimotion_tick();
+    g_wifi_motion_std = wtsn_wifimotion_rssi_std();
 }
 
 int wtsn_sensor_actor_set(int mode) {
