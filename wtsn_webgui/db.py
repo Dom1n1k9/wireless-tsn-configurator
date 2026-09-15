@@ -42,6 +42,8 @@ SCHEMA = (
     "device_id TEXT,sensor_id TEXT,ts INTEGER,value REAL);"
     "CREATE TABLE IF NOT EXISTS latency_log(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "device_id TEXT,ts INTEGER,latency_ms REAL);"
+    "CREATE TABLE IF NOT EXISTS recordings(device_id TEXT,path TEXT,recorded_at INTEGER,"
+    "PRIMARY KEY(device_id,path));"
 )
 
 

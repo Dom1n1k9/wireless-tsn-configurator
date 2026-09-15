@@ -12,3 +12,14 @@ CONFIG_FREERTOS_HZ=1000
 
 # Allow plain-HTTP OTA URLs (web GUI serves the image on the trusted LAN).
 CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+
+# microSD recording: FAT + SPI SD on the AI-Thinker VSPI pins (2/13/14/15)
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_LFN_STACK=y
+CONFIG_FATFS_USE_LABEL=y
+CONFIG_SPI_FLASH_ERASE_SIZE=4096
+
+# SD-SPI ISR does not need to live in IRAM (no deep-sleep capture) and this
+# frees ~2 KB of IRAM so the FATFS/SD recording path links with the camera.
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=n

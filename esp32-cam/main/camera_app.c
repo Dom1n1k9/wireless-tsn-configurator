@@ -29,9 +29,36 @@
 #include "wtsn_version.h"
 #include "wtsn_ota.h"
 #include "sntp.h"
+
+#include "driver/sdmmc_host.h"
+#include "driver/spi_common.h"
+#include "driver/spi_master.h"
+#include "driver/ledc.h"
+#include "freertos/event_groups.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "mdns.h"
+
+#include <dirent.h>
+
 #include <time.h>
 
 static const char *TAG = "cam_agent";
+
+/* ---- microSD recording (motion-triggered clips) ----
+ * The AI-Thinker ESP32-CAM has an onboard microSD slot wired to the VSPI bus:
+ *   CS=GPIO13, SCK=GPIO14, MOSI=GPIO15, MISO=GPIO2
+ * Recording uses only this bus, so it does not collide with the camera pins.
+ * While a clip is being shot we keep the live /stream working too (the camera
+ * driver serves both consumers from its PSRAM frame buffers). */
+#define SD_HOST_ID        SPI2_HOST
+#define SD_PIN_CS         13
+#define SD_PIN_SCK        14
+#define SD_PIN_MOSI       15
+#define SD_PIN_MISO       2
+#define SD_MOUNT_POINT    "/sdcard"
+#define RECORD_MS         30000            /* clip length: 30 s */
+#define REC_LED_GPIO      GPIO_NUM_33      /* on-board flash/LED for "recording" */
 
 /* ---- board / pins (ESP32-CAM / AI Thinker AI-Thinker) ---- */
 #define PWDN_GPIO_NUM    32
@@ -71,6 +98,24 @@ static char g_ip[16] = "0.0.0.0";
 static bool g_sntp_started = false;
 static esp_mqtt_client_handle_t g_mqtt = NULL;
 static httpd_handle_t g_stream_server = NULL;
+
+/* ---- motion-triggered recording state ----
+ * g_rec_active  : 1 while a 30 s clip is being captured.
+ * g_motion_seen : debounced latch set by an FX/motion event; recording is started
+ *                 on the next camera-frame tick so we do not grab in an interrupt. */
+static volatile int  g_motion_seen = 0;
+static volatile int  g_rec_active = 0;
+static bool          g_sd_mounted = false;
+static int           g_rec_index = 0;      /* monotonic clip counter for filenames */
+
+/* Last recorded clip metadata so the GUI can replay it ("Play" button):
+ * offsets/lengths of every JPEG frame inside g_last_clip_path. Kept in RAM for
+ * the session; on reboot just point the GUI at the SD card name again. */
+#define LAST_CLIP_MAX_FRAMES 2400
+static char    g_last_clip_path[96];
+static int     g_last_clip_frames = 0;
+static uint32_t g_last_offs[LAST_CLIP_MAX_FRAMES];
+static uint32_t g_last_lens[LAST_CLIP_MAX_FRAMES];
 
 /* ---------------- provisioning (shared component: shared/wtsn_prov) ---------------- */
 static void cam_prov_save(const char *ssid, const char *pass,
@@ -113,7 +158,7 @@ static void camera_init(void) {
     config.pixel_format = PIXFORMAT_JPEG;
     config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 12;
-    config.fb_count = 2;
+    config.fb_count = 3;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_LATEST;
 
@@ -130,6 +175,204 @@ static void camera_init(void) {
         s->set_saturation(s, 2);
     }
     ESP_LOGI(TAG, "camera ready");
+}
+
+/* ---------------- recording LED ---------------- */
+static void rec_led_set(bool on) {
+    static bool cfg = false;
+    if (!cfg) {
+        gpio_config_t io = {0};
+        io.pin_bit_mask = (1ULL << REC_LED_GPIO);
+        io.mode = GPIO_MODE_OUTPUT;
+        gpio_config(&io);
+        cfg = true;
+    }
+    gpio_set_level(REC_LED_GPIO, on ? 1 : 0);
+}
+
+static void rec_led_task(void *arg) {
+    (void)arg;
+    bool on = false;
+    for (;;) {
+        /* blink while recording, off after */
+        if (g_rec_active) {
+            on = !on;
+            rec_led_set(on);
+        } else {
+            if (on) { rec_led_set(false); on = false; }
+        }
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+}
+
+/* ---------------- microSD mount ---------------- */
+static void sd_init(void) {
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = SD_HOST_ID;
+    host.max_freq_khz = 20000;
+
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = SD_PIN_MOSI,
+        .miso_io_num = SD_PIN_MISO,
+        .sclk_io_num = SD_PIN_SCK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 32768,
+    };
+    esp_err_t err = spi_bus_initialize(host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "spi_bus_init failed: 0x%x", err);
+        return;
+    }
+
+    sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_cfg.gpio_cs = SD_PIN_CS;
+    slot_cfg.host_id = host.slot;
+
+    esp_vfs_fat_sdmmc_mount_config_t mcfg = {
+        .format_if_mount_failed = false,
+        .max_files = 4,
+        .allocation_unit_size = 16 * 1024,
+    };
+    sdmmc_card_t *card = NULL;
+    err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot_cfg, &mcfg, &card);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SD mount failed: 0x%x (no recording)", err);
+        return;
+    }
+    g_sd_mounted = true;
+    ESP_LOGI(TAG, "SD mounted: %llu MB", (unsigned long long)card->csd.capacity / 1024ULL);
+}
+
+/* ---------------- motion-triggered recording ---------------- */
+
+/* Event payload from esp32-01 sensor node arrives on tsn/fx/data and
+ * tsn/sensors/event as  {"id":"esp32-01","motion":1,...}  or as a short JSON
+ * {"motion":1,"raw":1}. Any frame whose motion/wifi_motion field is non-zero
+ * starts a clip. */
+static bool json_motion_true(const char *payload) {
+    if (!payload) return false;
+    const char *m = strstr(payload, "\"motion\"");
+    if (!m) m = strstr(payload, "\"wifi_motion\"");
+    if (m) {
+        const char *col = strchr(m, ':');
+        if (col) {
+            const char *v = col + 1;
+            while (*v == ' ') v++;
+            if (*v == '1') return true;
+        }
+    }
+    return false;
+}
+
+static void mqtt_motion_event(const char *topic, const char *payload) {
+    (void)topic;
+    if (!payload) return;
+    if (json_motion_true(payload)) {
+        ESP_LOGI(TAG, "motion event via FXMQTT -> recording trigger");
+        g_motion_seen = 1;
+    }
+}
+
+/* Capture one clip: grab camera frames and write each JPEG to a numbered file.
+ * Runs while RECORD_MS elapses; stops early if the SD card disappears. */
+static void record_task(void *arg) {
+    (void)arg;
+    if (g_rec_active) { vTaskDelete(NULL); return; }
+    g_rec_active = 1;
+
+    char path[96];
+    int clip = ++g_rec_index;
+    snprintf(path, sizeof(path), "%s/clip_%04d_%lld.jpg", SD_MOUNT_POINT, clip,
+             (long long)time(NULL));
+
+    FILE *fout = fopen(path, "wb");
+    if (!fout) {
+        ESP_LOGE(TAG, "cannot open %s for writing (SD full/unmounted?)", path);
+        g_rec_active = 0;
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "recording %s for %d ms", path, RECORD_MS);
+
+    /* Keep a small "last recording" preview: the first frame of the clip is
+     * mirrored to /sdcard/last.jpg so the web GUI's Devices page can show what
+     * was recorded with a cheap HTTP GET (<img src=http://<cam>/last.jpg>). */
+    {
+        camera_fb_t *fb0 = esp_camera_fb_get();
+        if (fb0) {
+            if (fb0->format == PIXFORMAT_JPEG && fb0->len) {
+                FILE *lp = fopen(SD_MOUNT_POINT "/last.jpg", "wb");
+                if (lp) {
+                    fwrite(fb0->buf, 1, fb0->len, lp);
+                    fclose(lp);
+                }
+            }
+            esp_camera_fb_return(fb0);
+        }
+    }
+
+    int64_t start = esp_timer_get_time();
+    uint32_t running = 0;
+    int nframes = 0;
+    while (esp_timer_get_time() - start < (int64_t)RECORD_MS * 1000) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+        if (fb->format == PIXFORMAT_JPEG && fb->len) {
+            fwrite(fb->buf, 1, fb->len, fout);
+            if (nframes < LAST_CLIP_MAX_FRAMES) {
+                g_last_offs[nframes] = running;
+                g_last_lens[nframes] = fb->len;
+                nframes++;
+            }
+            running += fb->len;
+        }
+        esp_camera_fb_return(fb);
+        vTaskDelay(pdMS_TO_TICKS(30));   /* ~33 fps, throttle writes */
+    }
+    fclose(fout);
+    g_last_clip_frames = nframes;
+    snprintf(g_last_clip_path, sizeof(g_last_clip_path), "%s", path);
+    ESP_LOGI(TAG, "recording finished: %s (%d frames/%lu B)", path, nframes, (unsigned long)running);
+    g_rec_active = 0;
+
+    /* after the clip publish a status so the GUI knows recording ended */
+    char t[64], msg[192];
+    snprintf(t, sizeof(t), "tsn/status/%s", g_device_id);
+    snprintf(msg, sizeof(msg), "{\"id\":\"%s\",\"rec\":\"%s\",\"saved\":1}", g_device_id, path);
+    if (g_mqtt) esp_mqtt_client_publish(g_mqtt, t, msg, 0, 0, 0);
+
+    /* Send the current list of saved clips so the web GUI can show "what it
+     * recorded" without polling. Payload: {"id":...,"recordings":["/sdcard/a.jpg",...]}
+     * (names only; fetching the bytes off the CAM SD is out of scope). */
+    {
+        char lib[2048];
+        int n = snprintf(lib, sizeof(lib), "{\"id\":\"%s\",\"recordings\":[", g_device_id);
+        bool first = true;
+        DIR *d = opendir(SD_MOUNT_POINT);
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL) {
+                size_t l = strlen(e->d_name);
+                if (l < 4 || strcmp(e->d_name + l - 4, ".jpg") != 0) continue;
+                n += snprintf(lib + n, sizeof(lib) - (size_t)n, "%s\"/sdcard/%s\"",
+                              first ? "" : ",", e->d_name);
+                first = false;
+            }
+            closedir(d);
+        }
+        snprintf(lib + n, sizeof(lib) - (size_t)n, "]}");
+        if (g_mqtt) esp_mqtt_client_publish(g_mqtt, "tsn/cam/recordings", lib, 0, 0, 0);
+    }
+
+    vTaskDelete(NULL);
+}
+
+void cam_motion_trigger(void) {
+    if (!g_sd_mounted) { ESP_LOGW(TAG, "motion but SD not mounted -> skipped"); return; }
+    if (g_rec_active)  return;   /* already recording: debounce */
+    g_motion_seen = 0;
+    xTaskCreatePinnedToCore(record_task, "cam_rec", 8192, NULL, 6, NULL, 1);
 }
 
 /* ---------------- MJPEG stream ---------------- */
@@ -170,37 +413,115 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     return res;
 }
 
-/* ---------------- MQTT ---------------- */
+/* Serve the "last recording" still: /sdcard/last.jpg (updated at the start of
+ * every clip). Returns a single JPEG for the Devices page thumbnail. */
+static esp_err_t last_handler(httpd_req_t *req) {
+    if (!g_sd_mounted) {
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_send(req, "no sd", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    FILE *f = fopen(SD_MOUNT_POINT "/last.jpg", "rb");
+    if (!f) {
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_send(req, "no last frame yet", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    char buf[1024];
+    size_t rd;
+    while ((rd = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (httpd_resp_send_chunk(req, buf, (ssize_t)rd) != ESP_OK) break;
+    }
+    fclose(f);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/* Replay the last recorded clip as an MJPEG stream. Uses the in-RAM offset/length
+ * table built while the clip was captured so we never need to parse the JPEG
+ * stream - just seek and stream each frame back, then end the multipart stream.
+ * If no clip has been recorded yet this session, fall back to the live camera. */
+static esp_err_t replay_handler(httpd_req_t *req) {
+    char content_type[128];
+    snprintf(content_type, sizeof(content_type), "multipart/x-mixed-replace; boundary=%s", _STREAM_BOUNDARY);
+    httpd_resp_set_type(req, content_type);
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+    FILE *f = NULL;
+    if (g_sd_mounted && g_last_clip_frames > 0 && g_last_clip_path[0]) {
+        f = fopen(g_last_clip_path, "rb");
+        if (!f) f = NULL;
+    }
+    if (!f) {
+        ESP_LOGW(TAG, "replay: no saved clip; falling back to live camera");
+        httpd_resp_set_status(req, "200 OK");
+        return stream_handler(req);   /* no clip this session -> just live */
+    }
+
+    ESP_LOGI(TAG, "replay: %s (%d frames)", g_last_clip_path, g_last_clip_frames);
+    char part_line[160];
+    char buf[4096];
+    for (int i = 0; i < g_last_clip_frames; i++) {
+        /* leave a gap roughly matching real-time (~33 fps) */
+        vTaskDelay(pdMS_TO_TICKS(28));
+        if (fseek(f, (long)g_last_offs[i], SEEK_SET) != 0) break;
+        int pl = snprintf(part_line, sizeof(part_line),
+            "\r\n--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
+            _STREAM_BOUNDARY, (unsigned long)g_last_lens[i]);
+        if (httpd_resp_send_chunk(req, part_line, (ssize_t)pl) != ESP_OK) break;
+        uint32_t left = g_last_lens[i];
+        while (left > 0) {
+            size_t want = left < sizeof(buf) ? left : sizeof(buf);
+            size_t rd = fread(buf, 1, want, f);
+            if (rd == 0) break;
+            left -= (uint32_t)rd;
+            if (httpd_resp_send_chunk(req, buf, (ssize_t)rd) != ESP_OK) break;
+        }
+    }
+    fclose(f);
+    /* terminating chunk ends the multipart stream */
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
 
 static void ota_go(const char *url);
 
 static void mqtt_data(void *arg, esp_mqtt_event_handle_t e) {
     (void)arg;
-    /* The CAM only acts on its own OTA command: {"url":"http://<host>/fw/x.bin"} */
-    if (e->topic_len >= 9 && strncmp(e->topic, "tsn/cmd/", 8) == 0) {
-        char topic[64] = {0};
-        int tl = e->topic_len < (int)sizeof(topic) - 1 ? e->topic_len : (int)sizeof(topic) - 1;
-        memcpy(topic, e->topic, (size_t)tl);
-        if (strcmp(topic + tl - 3, "/ota") == 0) {
-            char *p = (char *)e->data;
-            const char *u = strstr(p, "\"url\"");
+    /* The CAM acts on:
+     *  - its own OTA command: {"url":"http://<host>/fw/x.bin"}  on tsn/cmd/<id>/ota
+     *  - shared FX motion feed  tsn/fx/data  +  tsn/sensors/event
+     *    (esp32-01 publishes motion from PIR and WiFiVision) -> record 30 s. */
+    char topic[64] = {0};
+    int tl = e->topic_len < (int)sizeof(topic) - 1 ? e->topic_len : (int)sizeof(topic) - 1;
+    memcpy(topic, e->topic, (size_t)tl);
+    if (tl > 3 && strcmp(topic + tl - 4, "/ota") == 0) {
+        char *p = (char *)e->data;
+        const char *u = strstr(p, "\"url\"");
+        if (u) {
+            u = strchr(u + 5, ':');
             if (u) {
-                u = strchr(u + 5, ':');
+                u = strchr(u + 1, '"');
                 if (u) {
-                    u = strchr(u + 1, '"');
-                    if (u) {
-                        const char *v = u + 1;
-                        char url[256] = {0};
-                        size_t i = 0;
-                        for (; v[i] && v[i] != '"' && i < sizeof(url) - 1; i++) {
-                            url[i] = v[i];
-                        }
-                        url[i] = '\0';
-                        ota_go(url);
+                    const char *v = u + 1;
+                    char url[256] = {0};
+                    size_t i = 0;
+                    for (; v[i] && v[i] != '"' && i < sizeof(url) - 1; i++) {
+                        url[i] = v[i];
                     }
+                    url[i] = '\0';
+                    ota_go(url);
                 }
             }
         }
+        return;
+    }
+    if (strcmp(topic, "tsn/fx/data") == 0 || strcmp(topic, "tsn/sensors/event") == 0) {
+        mqtt_motion_event(topic, (char *)e->data);
     }
 }
 
@@ -221,6 +542,9 @@ static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_
         char t[64];
         snprintf(t, sizeof(t), "tsn/cmd/%s/ota", g_device_id);
         esp_mqtt_client_subscribe(g_mqtt, t, 0);
+        /* motion-driven recording: listen to the sensor node's shared feeds */
+        esp_mqtt_client_subscribe(g_mqtt, "tsn/fx/data", 0);
+        esp_mqtt_client_subscribe(g_mqtt, "tsn/sensors/event", 0);
         esp_mqtt_client_register_event(g_mqtt, MQTT_EVENT_DATA, mqtt_data, NULL);
         char buf[192];
         snprintf(buf, sizeof(buf),
@@ -230,9 +554,36 @@ static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_
     }
 }
 
+/* Resolve a possible ".local" MQTT broker hostname into an IP string (mirrors
+ * esp32-agent: lwIP getaddrinfo() cannot answer .local here, so query mDNS
+ * explicitly; if that fails fall back to the well-known provisioning PC IP so
+ * the CAM still reaches the broker on this LAN). */
+static void resolve_mqtt_host(char *host, size_t host_sz) {
+    if (!host || !host[0]) return;
+    bool is_local = (strstr(host, ".local") != NULL);
+    if (!is_local) return;
+    char q[64];
+    snprintf(q, sizeof(q), "%s", host);
+    size_t ql = strlen(q);
+    if (ql > 6 && strcmp(q + ql - 6, ".local") == 0) q[ql - 6] = '\0';
+    esp_ip4_addr_t addr = {0};
+    esp_err_t err = mdns_query_a(q, 2000, &addr);
+    if (err == ESP_OK && addr.addr != 0) {
+        snprintf(host, host_sz, IPSTR, IP2STR(&addr));
+        ESP_LOGI(TAG, "mDNS resolved %s -> %s", q, host);
+        return;
+    }
+    ESP_LOGW(TAG, "mDNS query for %s failed (%d) - keeping '%s'", q, err, host);
+    if (strstr(host, ".local") != NULL) {
+        snprintf(host, host_sz, "192.168.0.149");
+        ESP_LOGW(TAG, "using fallback broker IP %s", host);
+    }
+}
+
 static esp_err_t mqtt_start(void) {
     char host[64] = {0}; nvs_str_get("mqtt_host", host, sizeof(host));
     if (!host[0]) snprintf(host, sizeof(host), "wtsn-broker.local");
+    resolve_mqtt_host(host, sizeof(host));
     /* LWT: broker marks the CAM offline (retained) if it vanishes unexpectedly. */
     char will_topic[48];
     snprintf(will_topic, sizeof(will_topic), "tsn/lwt/%s", g_device_id);
@@ -316,6 +667,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
                     .handler = stream_handler, .user_ctx = NULL,
                 };
                 httpd_register_uri_handler(g_stream_server, &stream_uri);
+                static httpd_uri_t last_uri = {
+                    .uri = "/last.jpg", .method = HTTP_GET,
+                    .handler = last_handler, .user_ctx = NULL,
+                };
+                httpd_register_uri_handler(g_stream_server, &last_uri);
+                static httpd_uri_t replay_uri = {
+                    .uri = "/replay.mjpeg", .method = HTTP_GET,
+                    .handler = replay_handler, .user_ctx = NULL,
+                };
+                httpd_register_uri_handler(g_stream_server, &replay_uri);
                 ESP_LOGI(TAG, "http://" IPSTR "/stream", IP2STR(&e->ip_info.ip));
             }
         }
@@ -355,15 +716,30 @@ void app_main(void) {
     }
 
     camera_init();
+    sd_init();
+
+    xTaskCreatePinnedToCore(rec_led_task, "cam_recled", 2048, NULL, 4, NULL, 1);
 
     esp_netif_init();
     esp_event_loop_create_default();
     esp_netif_create_default_wifi_sta();
+    /* mDNS resolver so a ".local" broker (wtsn-broker.local) can be resolved;
+     * must run after the STA netif exists so multicast goes out over WiFi. */
+    mdns_init();
+    mdns_hostname_set(g_device_id);
     wifi_init_config_t wc = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&wc);
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, &g_ctx, NULL);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, &g_ctx, NULL);
     wifi_start(wifi_ssid, wifi_pass);
 
-    while (1) vTaskDelay(pdMS_TO_TICKS(5000));
+    /* main loop: debounce FX motion and fire a 30 s recording when triggered */
+    while (1) {
+        if (g_motion_seen) {
+            /* start a clip if we are not already recording */
+            if (!g_rec_active) cam_motion_trigger();
+            else g_motion_seen = 0;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 }

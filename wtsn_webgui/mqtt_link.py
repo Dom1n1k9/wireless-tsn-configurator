@@ -81,6 +81,17 @@ def parse_listener_msg(con, topic, payload):
     kind = j.get("kind")
     rssi = j.get("rssi")
     try:
+        if "/cam/recordings" in topic and did:
+            recs = j.get("recordings", [])
+            if recs:
+                now = int(time.time())
+                for rp in recs:
+                    con.execute(
+                        "INSERT OR REPLACE INTO recordings(device_id,path,recorded_at) "
+                        "VALUES(?,?,?)", (did, str(rp), now))
+                con.commit()
+            add_event("mqtt", did, "camera saved %d recording(s)" % len(recs))
+            return
         if "/status" in topic and did:
             sets = ["status=0", "last_seen=strftime('%s','now')",
                     "firmware=COALESCE(?,firmware)", "ip=COALESCE(?,ip)"]
@@ -248,6 +259,7 @@ def mqtt_listener_loop():
             brk.subscribe("tsn/fx/#")
             brk.subscribe("tsn/ptp")
             brk.subscribe("tsn/sensors/#")
+            brk.subscribe("tsn/cam/recordings")
             if cons is None:
                 cons = sqlite3.connect(wanted_db, timeout=3)
                 cons.row_factory = sqlite3.Row
