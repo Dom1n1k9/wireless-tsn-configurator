@@ -126,7 +126,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["sonar","Sonar"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -156,6 +156,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
    else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
    else if(p==="sensors")m.innerHTML=sensors();
+   else if(p==="sonar"){m.innerHTML=sonar();sonarGo();}
    else if(p==="architecture"){m.innerHTML=architecture();archGo();}
    else if(p==="help")m.innerHTML=help();
    else if(p==="settings")m.innerHTML=settings();}
@@ -467,7 +468,60 @@ function sensorsLive(){
   });
 }
 function fmtAxis(v){if(Math.abs(v)>=1000)return (Math.round(v)).toLocaleString();if(v===Math.round(v))return String(v);return v.toFixed(1)}
-/* ================= Architecture / Node-RED-style topology diagram ================= */
+/* ================= Sonar / radar map ================= */
+function sonar(){
+ const sweeps=(D.sonar_sweeps||[]);
+ const last=sweeps.slice(-1)[0];
+ let src="";
+ try{src=last?JSON.parse(last.sweep):[]}catch(e){src=[]}
+ const n=src.length;
+ let html="<h2>Sonar — radar map</h2>"+
+  "<div class='muted' style='margin-bottom:8px'>Panning HC-SR04 on a DC motor (esp32-02) sweeps 0–179° after a motion event; range in cm is drawn as a polar map. A new sweep is stored on <code>tsn/sonar</code> each time motion is detected.</div>"+
+  "<div id='sonarWrap' class='card' style='text-align:center'>"+
+  "<svg id='sonarSvg' width='520' height='520' viewBox='0 0 520 520' style='max-width:100%'></svg>"+
+  "<div id='sonarInfo' class='muted' style='margin-top:6px'></div></div>";
+ return html;
+}
+function sonarGo(){sonarDraw()}
+function sonarDraw(){
+ const svg=$("sonarSvg");if(!svg)return;
+ const sweeps=(D.sonar_sweeps||[]);
+ const row=sweeps.length?sweeps[sweeps.length-1]:null;
+ let data=[];
+ try{data=row?JSON.parse(row.sweep):[]}catch(e){}
+ const cx=260,cy=260,R=200;
+ const maxR=400; /* cm */
+ let s="";
+ // rings (25..400 cm)
+ for(const rcm of [50,100,150,200,300,400]){
+  const r=R*rcm/maxR;
+  s+="<circle cx='"+cx+"' cy='"+cy+"' r='"+r+"' fill='none' stroke='#223' stroke-width='1'/>";
+  s+="<text x='"+(cx+r+3)+"' y='"+cy+"' fill='#556' font-size='10'>"+rcm+"cm</text>";
+ }
+ // crosshair
+ s+="<line x1='"+cx+"' y1='"+(cy-R)+"' x2='"+cx+"' y2='"+(cy+R)+"' stroke='#223'/>";
+ s+="<line x1='"+(cx-R)+"' y1='"+cy+"' x2='"+(cx+R)+"' y2='"+cy+"' stroke='#223'/>";
+ // sweep points (angle deg -> polar; 0 = up)
+ const pts=[];
+ for(let i=0;i<data.length;i++){
+  const cm=data[i];
+  if(cm<0||cm>maxR)continue;
+  const a=(-i)*Math.PI/180; /* i=0 is up (north), clockwise */
+  const r=R*(cm/maxR);
+  const x=cx+r*Math.sin(a),y=cy-r*Math.cos(a);
+  pts.push(x+","+y);
+  s+="<circle cx='"+x.toFixed(1)+"' cy='"+y.toFixed(1)+"' r='2.5' fill='#31C96B'/>";
+ }
+ if(pts.length>1){
+  s+="<polygon points='"+pts.join(" ")+"' fill='rgba(49,201,107,.18)' stroke='#31C96B' stroke-width='1.5' fill-rule='evenodd'/>";
+ }
+ // device at centre
+ s+="<circle cx='"+cx+"' cy='"+cy+"' r='6' fill='#2f9ee6'/>";
+ svg.innerHTML=s;
+ const info=row?"last sweep #"+row.sweep_id+" at "+new Date((row.ts||0)*1000).toLocaleTimeString()+" · "+data.length+" angles":"no sweep yet (trigger motion)";
+ $("sonarInfo").textContent=info;
+}
+
 const ARCH={nodes:[],edges:[],meta:null,hot:{}};
 const ARCH_LBL={
  "mqtt":{"t":"MQTT / FXMQTT","c":"#2f9ee6"},
@@ -567,19 +621,19 @@ function archLayout(){
  x=Math.max(30,(cw-devTotal)/2);
  devs.forEach(d=>{d.x=x;d.y=devY;d.w=boxW;d.h=64;x+=boxW+devGap});
  // ---- ROW 3: sensors directly UNDER each device, single vertical column ----
- const byP={};plugs.forEach(p=>{(byP[p.parent]=byP[p.parent]||[]).push(p)});
- const plugW=150,plugH=30;
- const perDev={};
- devs.forEach(d=>{perDev[d.id]=d});
- Object.keys(byP).forEach(pid=>{
-   const dev=perDev[pid];if(!dev)return;
-   const list=byP[pid];
-   list.forEach((p,i)=>{
-     p.w=plugW;p.h=plugH;
-     p.x=dev.x+dev.w/2-plugW/2;            // centered under the device
-     p.y=dev.y+dev.h+16+i*(plugH+2);        // stacked straight down
-   });
- });
+  const byP={};plugs.forEach(p=>{(byP[p.parent]=byP[p.parent]||[]).push(p)});
+  const plugW=170,plugH=34,plugGap=16;
+  const perDev={};
+  devs.forEach(d=>{perDev[d.id]=d});
+  Object.keys(byP).forEach(pid=>{
+    const dev=perDev[pid];if(!dev)return;
+    const list=byP[pid];
+    list.forEach((p,i)=>{
+      p.w=plugW;p.h=plugH;
+      p.x=dev.x+dev.w/2-plugW/2;            // centered under the device
+      p.y=dev.y+dev.h+16+i*(plugH+plugGap);  // stacked straight down (wider gap)
+    });
+  });
  // ---- canvas size from real content + margins ----
  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
  ARCH.nodes.forEach(n=>{
@@ -919,13 +973,15 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  if((added.length||removed||statusChanged)&&cur==="devices"){D.devices=dj.devices;if($("main"))devices_render()}
   if($("mon") && MON_RUNNING){const f=($("mon_filter")?$("mon_filter").value:"").trim().toLowerCase();let list=(dj.events||[]).slice(0,120);if(f){list=list.filter(e=>((e.source||"")+(e.dest||"")+(e.proto||"")+(e.msg||"")+(e.ts||"")).toLowerCase().indexOf(f)>=0)}const ev=list.map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}
  D.events=dj.events;D.devices=dj.devices;
+ if(JSON.stringify(D.sonar_sweeps)!==JSON.stringify(dj.sonar_sweeps)){D.sonar_sweeps=dj.sonar_sweeps;if(cur==="sonar"&&$("main"))sonarDraw()}
   // refresh sensor values live so the Sensors page updates in real time
   if(JSON.stringify(D.sensors)!==JSON.stringify(dj.sensors)){D.sensors=dj.sensors;if(cur==="sensors"&&$("main")){sensorsLive();document.querySelectorAll("[data-big]").forEach(b=>{const d=b.getAttribute("data-big");if(d)loadBigSensorCharts(d)})}}
  // live refresh of configuration tables without losing in-progress form input
  const dataChanged=JSON.stringify(D.qos_configs)!==JSON.stringify(dj.qos_configs)||JSON.stringify(D.vlan_groups)!==JSON.stringify(dj.vlan_groups)||JSON.stringify(D.tas_schedules)!==JSON.stringify(dj.tas_schedules)||JSON.stringify(D.preemption_configs)!==JSON.stringify(dj.preemption_configs)||JSON.stringify(D.tsn_streams)!==JSON.stringify(dj.tsn_streams)||JSON.stringify(D.gcl_entries)!==JSON.stringify(dj.gcl_entries);
  D.qos_configs=dj.qos_configs;D.vlan_groups=dj.vlan_groups;D.tas_schedules=dj.tas_schedules;D.preemption_configs=dj.preemption_configs;D.tsn_streams=dj.tsn_streams;D.tsn_stream_members=dj.tsn_stream_members;D.gcl_entries=dj.gcl_entries;
  if(dataChanged){if(cur==="qos"&&$("main"))$("main").innerHTML=qos();else if(cur==="vlan"&&$("main"))$("main").innerHTML=vlan();else if(cur==="tas"&&$("main"))$("main").innerHTML=tas();else if(cur==="preemption"&&$("main"))$("main").innerHTML=preemption();else if(cur==="streams"&&$("main"))$("main").innerHTML=streams();}
- if(cur==="architecture")archTick();}
+ if(cur==="architecture")archTick();
+ if(cur==="sonar")sonarDraw();}
 let pollTimer=null,wsConn=null;
 function startPolling(){if(!pollTimer)pollTimer=setInterval(pollEvents,2000)}
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}

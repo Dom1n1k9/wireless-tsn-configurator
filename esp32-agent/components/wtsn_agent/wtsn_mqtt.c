@@ -67,6 +67,8 @@ static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     esp_mqtt_client_subscribe(m->c, t, 0);
     snprintf(t, sizeof(t), "tsn/cmd/%s/actor", m->device_id[0] ? m->device_id : "+");
     esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/servo", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
     snprintf(t, sizeof(t), "tsn/cmd/%s/identify", m->device_id[0] ? m->device_id : "+");
     esp_mqtt_client_subscribe(m->c, t, 0);
     snprintf(t, sizeof(t), "tsn/cmd/%s/ping", m->device_id[0] ? m->device_id : "+");

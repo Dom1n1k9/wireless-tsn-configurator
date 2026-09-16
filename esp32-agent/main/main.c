@@ -20,6 +20,7 @@
 #include "wtsn_prov.h"
 #include "wtsn_sensor.h"
 #include "wtsn_uart.h"
+#include "wtsn_sonar.h"
 #include "wtsn_version.h"
 #include "wtsn_ota.h"
 
@@ -149,6 +150,17 @@ static void apply_snapshot(const char *payload) {
 static void on_command(const char *topic, const char *payload, void *ud) {
     (void)ud;
     ESP_LOGI(TAG, "cmd %s <- %s", topic, payload);
+
+    /* Motion events (PIR + WiFiVision) from esp32-01 arrive on these shared
+     * FX feeds. esp32-02 uses them to trigger the panning sonar sweep. */
+    if (strcmp(topic, "tsn/fx/data") == 0 || strcmp(topic, "tsn/sensors/event") == 0) {
+        if (strstr(payload, "\"motion\":1") || strstr(payload, "\"wifi_motion\":1")) {
+            ESP_LOGI(TAG, "motion event -> sonar sweep"); 
+            wtsn_sonar_trigger();
+        }
+        return;
+    }
+
     if (strstr(topic, "/apply")) { apply_snapshot(payload); return; }
 
     char *slash = strrchr(topic, '/');
@@ -238,6 +250,19 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         char topic[40];
         snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
         wtsn_mqtt_publish(g_mqtt, topic, buf);
+        return;
+    } else if (strcmp(cmd, "servo") == 0) {
+        /* manual servo test: {"deg":90} -> move SG90 to 90 deg */
+        int deg = 90;
+        wtsn_json_get_int(payload, "deg", &deg);
+        if (deg < 0) deg = 0;
+        if (deg > 180) deg = 180;
+        wtsn_sonar_set_angle(deg);
+        char ack[96];
+        snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true,\"deg\":%d}", g_device_id, deg);
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        wtsn_mqtt_publish(g_mqtt, topic, ack);
         return;
     } else if (strcmp(cmd, "ping") == 0) {
         /* reply with the device IP so the CNC can show src(PC)->dst(ESP) in the monitor,
@@ -459,6 +484,12 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             wtsn_ptp_setup(g_device_id, g_mqtt);
             wtsn_ptp_start();
             wtsn_sensor_init(g_device_id, g_mqtt);
+            /* esp32-02 is the actor/relay board: it owns the panning sonar
+             * (HC-SR04 on a DC motor) which triggers on motion from esp32-01. */
+            if (!g_has_sensors) {
+                wtsn_sonar_init(g_device_id, g_mqtt);
+                wtsn_sensor_actor_set_pin();
+            }
             wtsn_uart_init(g_mqtt, g_device_id);
             wtsn_uart_start();
             ESP_LOGI(TAG, "agent %s broker %s:%d", g_device_id, mqtt_host, ctx->port);

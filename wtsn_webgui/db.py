@@ -44,6 +44,8 @@ SCHEMA = (
     "device_id TEXT,ts INTEGER,latency_ms REAL);"
     "CREATE TABLE IF NOT EXISTS recordings(device_id TEXT,path TEXT,recorded_at INTEGER,"
     "PRIMARY KEY(device_id,path));"
+    "CREATE TABLE IF NOT EXISTS sonar_sweeps(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "device_id TEXT,ts INTEGER,sweep_id INTEGER,sweep TEXT);"
 )
 
 

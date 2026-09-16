@@ -95,6 +95,14 @@ SENSOR_BOARD = {
         "sensor_ids": ("gpio1",),
         "icons": {"gpio1": ""},
     },
+    "sonar": {
+        "label": "Sonar HC-SR04 + servo",
+        "sub": "TRIG=GPIO13, ECHO=GPIO12 · SG90 servo=GPIO18",
+        "power": "5V",
+        "bus": "GPIO",
+        "sensor_ids": (),
+        "icons": {},
+    },
 }
 
 CAM_PINS = \
@@ -140,6 +148,21 @@ def _dev_kind(dev):
     return "host"
 
 
+# Per-board wiring of this project's actual setup:
+#   esp32-01 = sensor add-on board    → BME280 + light + PIR + buzzer (PIR alarm)
+#                                      + WiFi Vision; NO relay/switch, NO micro:bit
+#   esp32-02 = display/sync board     → micro:bit panel + piezo buzzer only;
+#                                      NO sensors, NO relay/switch
+# Any other ESP keeps the full component set.
+BOARD_WIRING = {
+    "esp32-01": ("bme280", "light", "pir", "buzzer", "wifi_motion"),
+    "esp32-02": ("buzzer", "microbit", "sonar"),
+}
+
+_FULL_ESP_ORDER = ("bme280", "imu", "light", "pir", "buzzer", "relay",
+                   "wifi_motion", "microbit", "gpio")
+
+
 def _esp_components(con, dev):
     """Return the list of sensor/actor components wired to an ESP agent."""
     did = dev["id"]
@@ -147,8 +170,7 @@ def _esp_components(con, dev):
                        "WHERE device_id=?", (did,)).fetchall()
     present = {r["sensor_id"]: dict(r) for r in rows}
     comps = []
-    order = ("bme280", "imu", "light", "pir", "buzzer", "relay",
-             "wifi_motion", "microbit", "gpio")
+    order = BOARD_WIRING.get(did, _FULL_ESP_ORDER)
     for key in order:
         spec = SENSOR_BOARD[key]
         if not spec["sensor_ids"]:

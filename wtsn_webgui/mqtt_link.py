@@ -81,6 +81,18 @@ def parse_listener_msg(con, topic, payload):
     kind = j.get("kind")
     rssi = j.get("rssi")
     try:
+        if "/sonar" in topic and did:
+            son = j.get("sonar") or {}
+            sweep = son.get("sweep") or []
+            if sweep:
+                now = int(time.time())
+                con.execute("INSERT INTO sonar_sweeps(device_id,ts,sweep_id,sweep) "
+                            "VALUES(?,?,?,?)",
+                            (did, now, int(son.get("id", 0)), json.dumps(sweep)))
+                con.commit()
+            add_event("mqtt", did,
+                      "sonar sweep: %d angles" % len(sweep))
+            return
         if "/cam/recordings" in topic and did:
             recs = j.get("recordings", [])
             if recs:
@@ -260,6 +272,7 @@ def mqtt_listener_loop():
             brk.subscribe("tsn/ptp")
             brk.subscribe("tsn/sensors/#")
             brk.subscribe("tsn/cam/recordings")
+            brk.subscribe("tsn/sonar")
             if cons is None:
                 cons = sqlite3.connect(wanted_db, timeout=3)
                 cons.row_factory = sqlite3.Row
