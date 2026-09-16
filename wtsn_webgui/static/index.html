@@ -58,6 +58,64 @@ th,td{border-bottom:1px solid var(--border);padding:6px;text-align:left}th{color
 .badge.ok{color:#04190b;background:var(--ok)}.badge.warn{color:#241c00;background:var(--warn)}.badge.err{color:#fff;background:var(--err)}.badge.dim{color:var(--text);background:var(--border)}
 code{background:var(--surf2);padding:1px 5px;border-radius:4px;font-family:ui-monospace,monospace;font-size:12px;color:var(--sec)}
 ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
+/* ---- Architecture / Node-RED style diagram ---- */
+#archSvg{position:absolute;top:0;left:0;pointer-events:none;z-index:0}
+.arch-node{position:absolute;min-width:170px;max-width:220px;border:1px solid var(--border);border-radius:10px;background:var(--surf);padding:8px 10px;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:2;font-size:12px;transition:border-color .3s,box-shadow .3s}
+.arch-node:hover{border-color:var(--sec);box-shadow:0 0 0 1px var(--sec),0 4px 14px rgba(0,0,0,.5);z-index:5}
+.arch-node .ah{display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px}
+.arch-node .ah .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.arch-node .asub{color:var(--dim);font-size:11px;margin-top:2px;word-break:break-word}
+.arch-node .apwr{margin-top:4px;font-size:10px;color:var(--dim);letter-spacing:.02em}
+.arch-node .aval{margin-top:3px;font-size:11px;color:var(--ok)}
+.arch-node .atsn{margin-top:3px;display:flex;flex-wrap:wrap;gap:3px}
+.arch-node.plug .atsn,.arch-node.plug .aval{display:none;cursor:none}
+.arch-node.plug .ah{margin-bottom:4px}
+.arch-node .achip{font-size:9px;background:var(--surf2);border:1px solid var(--border);padding:1px 5px;border-radius:8px;color:var(--dim)}
+.arch-node.cnc{border-color:var(--pri)}.arch-node.broker{border-color:var(--sec)}
+.arch-node.radio{border-color:var(--warn)}.arch-node.esp{border-color:#5a5a7a}
+.arch-node.esp .ah{color:var(--ok)}.arch-node.cam .ah{color:var(--warn)}
+.arch-node.host .ah{color:var(--dim)}
+.arch-node.sensor{background:var(--surf2);min-width:150px;padding:7px 9px;border-style:dashed}
+.arch-node.sensor .ah{font-size:12px;font-weight:600;color:var(--sec)}
+.arch-node.offline{opacity:.55;filter:grayscale(.5)}
+.arch-link{stroke:var(--dim);stroke-width:1.4;fill:none}
+.arch-link.active{stroke:var(--ok);stroke-width:2}
+.arch-link.hot{stroke:var(--sec)}
+.arch-linkpts{fill:var(--dim)}
+.port{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--dim);border:1px solid var(--bg);z-index:3}
+.port.o{right:-5px;top:50%;margin-top:-4px;cursor:crosshair}
+.port.i{left:-5px;top:50%;margin-top:-4px}
+.pwr{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--warn);z-index:3;border:1px solid var(--bg)}
+.pwr.l{left:-4px;top:22%}.pwr.r{right:-4px;top:22%}
+.arch-flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px}
+.arch-flow .card{margin:0}
+.arch-flow ol{margin:0;padding-left:18px}
+.arch-flow li{font-size:12px;margin:3px 0;color:var(--text)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--dim);margin-bottom:6px}
+.legend .l{display:inline-flex;align-items:center;gap:5px}
+.legend .sw{width:18px;height:3px;border-radius:2px;display:inline-block}
+#archOv{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90}
+#archOv .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--surf);border:1px solid var(--sec);border-radius:10px;padding:16px;min-width:320px;max-width:560px;max-height:70vh;overflow:auto}
+#archOv .box h3{margin:0 0 8px;font-size:14px}
+#archOv .box .kv{display:flex;gap:6px;margin:3px 0;font-size:12px}
+#archOv .box .kv b{width:110px;color:var(--dim);font-weight:600}
+@keyframes dashmove{to{stroke-dashoffset:-18}}
+.arch-link.anim{stroke-dasharray:6 6;animation:dashmove .8s linear infinite}
+.arch-link.xmqtt{stroke:var(--sec)}.arch-link.xfx{stroke:var(--ok);stroke-width:2}
+.arch-link.xradio{stroke:var(--warn);stroke-dasharray:2 3}
+.arch-link.xptp{stroke:#b45cff}.arch-link.xstream{stroke:#ff9d5c;stroke-width:2.4}
+.arch-link.xbus{stroke:#8a8aa0;stroke-width:1}
+/* ---- pan/zoom viewport ---- */
+.arch-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+.arch-toolbar button{padding:3px 10px;font-size:14px}
+.arch-toolbar .spacer{flex:1}
+.arch-viewport{position:relative;overflow:hidden;height:600px;background:
+ radial-gradient(circle at 1px 1px, rgba(255,255,255,.04) 1px, transparent 0);
+ background-size:22px 22px;border:1px solid var(--border);border-radius:8px;cursor:grab;touch-action:none}
+.arch-viewport.grabbing{cursor:grabbing}
+.arch-canvas{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+.arch-canvas svg{position:absolute;top:0;left:0;pointer-events:none}
+#archNodes{position:absolute;top:0;left:0}
 </style></head><body>
 <header><span class="logo">WTSN Configurator</span><span class="sub">Wireless TSN control plane</span>
 <button class="execbtn" onclick="execAll()">Execute settings on controller</button>
@@ -68,13 +126,14 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 async function api(a,d){const r=await fetch("/api/actions/"+a,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d||{})});const j=await r.json();toast(j.msg,j.ok);return j}
 function toast(m,ok){const t=$("toast");t.style.display="block";t.style.borderColor=ok?"var(--sec)":"var(--err)";t.textContent=m;clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",2200)}
-async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go(cur||"devices")}
+async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go((location.hash||"").replace("#","")||cur||"devices")}
+window.addEventListener("hashchange",()=>{const p=(location.hash||"").replace("#","");if(p)go(p)});
 function renderNav(){const n=$("nav");n.innerHTML="";
  NAV.forEach(g=>{if(g[0]){const h=document.createElement("div");h.className="navgroup";n.appendChild(h);const t=document.createElement("div");t.className="navtitle";t.textContent=g[0];h.appendChild(t)}const cont=g[1];cont.forEach(pp=>{const b=document.createElement("button");b.textContent=pp[1];b.onclick=()=>go(pp[0]);b.id="nv_"+pp[0];(g[0]?n.lastElementChild:n).appendChild(b)})});
  $("md_real").className=D.mode==="real"?"on":"";$("md_sim").className=D.mode==="sim"?"on":""}
@@ -95,10 +154,12 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="streams")m.innerHTML=streams();
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
-  else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
-  else if(p==="sensors")m.innerHTML=sensors();
- else if(p==="help")m.innerHTML=help();
- else if(p==="settings")m.innerHTML=settings();}
+   else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
+   else if(p==="sensors")m.innerHTML=sensors();
+   else if(p==="architecture"){m.innerHTML=architecture();archGo();}
+   else if(p==="help")m.innerHTML=help();
+   else if(p==="settings")m.innerHTML=settings();}
+
 function execAll(){api("exec_all",{}).then(load)}
 function camCell(d){
   const isCam=(d.kind===5)||/cam/i.test(d.id||"");
@@ -118,15 +179,15 @@ function camCell(d){
   // that replays the stored clip (http://<cam>/replay.mjpeg).
   return "<div style='text-align:center;line-height:1.2'>"+
    "<div><img src='http://"+host+"/last.jpg' style='width:96px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' title='last recording' onerror=\"this.outerHTML='<span class=muted>no recording yet</span>'\"></div>"+
-   "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Prehrať</button></div>"+
+   "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play</button></div>"+
    "</div>"+s}
 function playReplay(host){
   const ov=document.createElement("div");
   ov.id="replayOv";
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px";
-  ov.innerHTML="<div style='color:var(--text);font-weight:600'>Posledná nahrávka</div>"+
+  ov.innerHTML="<div style='color:var(--text);font-weight:600'>Last recording</div>"+
    "<img src='http://"+host+"/replay.mjpeg' style='max-width:90vw;max-height:70vh;border-radius:8px;background:#000'>"+
-   "<button class='ghost' onclick='document.getElementById(\"replayOv\").remove()'>Zavrieť</button>";
+   "<button class='ghost' onclick='document.getElementById(\"replayOv\").remove()'>Close</button>";
   document.body.appendChild(ov);
 }
 function showRec(id){
@@ -406,6 +467,301 @@ function sensorsLive(){
   });
 }
 function fmtAxis(v){if(Math.abs(v)>=1000)return (Math.round(v)).toLocaleString();if(v===Math.round(v))return String(v);return v.toFixed(1)}
+/* ================= Architecture / Node-RED-style topology diagram ================= */
+const ARCH={nodes:[],edges:[],meta:null,hot:{}};
+const ARCH_LBL={
+ "mqtt":{"t":"MQTT / FXMQTT","c":"#2f9ee6"},
+ "fx":{"t":"OPC UA FX over MQTT","c":"#31C96B"},
+ "radio":{"t":"802.11 data plane","c":"#FFC94A"},
+ "ptp":{"t":"IEEE 802.1AS gPTP","c":"#b45cff"},
+ "tsn-stream":{"t":"IEEE 802.1Qcc stream","c":"#ff9d5c"},
+ "i2c":{"t":"I2C","c":"#8a8aa0"},
+ "adc":{"t":"ADC","c":"#8a8aa0"},
+ "gpio":{"t":"GPIO","c":"#8a8aa0"},
+ "uart":{"t":"UART","c":"#8a8aa0"},
+ "dvp":{"t":"DVP","c":"#8a8aa0"},
+ "rf":{"t":"RF","c":"#8a8aa0"},
+ "bus":{"t":"bus","c":"#8a8aa0"}
+};
+function adotcol(n){return n.status==="offline"?"var(--err)":({cnc:"var(--pri)",broker:"var(--sec)",radio:"var(--warn)",esp:"var(--ok)",cam:"var(--warn)",host:"var(--dim)",sensor:"var(--sec)"}[n.type]||"var(--dim)")}
+function asensorVals(n){
+ const un={"temp1":"°C","press1":"hPa","hum1":"%","light1":"lx","pir1":"","mb_temp":"°C","mb_sound":"","mb_light":"","wifi_motion":"","wifi_rssi":"dBm","actor_mode":"","imu1":"g","gpio1":"V"};
+ const v=n.values||{};
+ return Object.keys(v).map(k=>"<span class='achip'>"+esc(k)+" = "+esc(fmtAxis(v[k].value))+" "+(un[k]||v[k].unit||"")+"</span>").join("");
+}
+function archInfo(id){
+ const n=ARCH.nodes.find(x=>x.id===id);if(!n){toast("node not found",false);return}
+ const parent=ARCH.nodes.find(x=>x.id===n.parent);
+ const ills=ARCH.edges.filter(e=>e.from===id||e.to===id);
+ let html="<h3>"+esc(n.label)+" <span class='muted' style='font-size:12px'>("+esc(n.type)+")</span></h3>";
+ html+="<div class='kv'><b>id</b><span>"+esc(id)+"</span></div>";
+ if(parent)html+="<div class='kv'><b>wired to</b><span>"+esc(parent.label)+"</span></div>";
+ if(n.ip)html+="<div class='kv'><b>ip</b><span>"+esc(n.ip)+"</span></div>";
+ if(n.power&&n.power!=="-")html+="<div class='kv'><b>power</b><span>"+esc(n.power)+"</span></div>";
+ if(n.bus)html+="<div class='kv'><b>bus</b><span>"+esc(n.bus)+"</span></div>";
+ if(n.sub)html+="<div class='kv'><b>pins/wiring</b><span>"+esc(n.sub)+"</span></div>";
+ if((n.tsn||[]).length)html+="<div class='kv'><b>TSN features</b><span>"+esc((n.tsn||[]).join(", "))+"</span></div>";
+ const v=n.values||{};
+ if(Object.keys(v).length)html+="<div class='kv'><b>latest</b><span>"+Object.keys(v).map(k=>esc(k)+"="+esc(fmtAxis(v[k].value))+" "+(v[k].unit||"")).join(", ")+"</span></div>";
+ const rows=ills.map(e=>{
+   const L=ARCH_LBL[e.type]||{t:e.type,c:"var(--dim)"};
+   return "<span style='color:"+L.c+"'>◆</span> "+esc(e.from)+" → "+esc(e.to)+": "+esc(e.label||L.t);
+ }).join("<br>");
+ html+="<div class='kv'><b>links</b><span>"+(rows||"—")+"</span></div>";
+ const ov=document.createElement("div");ov.id="archOv";
+  ov.innerHTML="<div class='box'>"+html+"<button onclick='document.getElementById(\"archOv\").remove()' style='margin-top:10px'>Close</button></div>";
+
+ ov.addEventListener("click",e=>{if(e.target===ov)ov.remove()});
+ document.body.appendChild(ov);
+}
+function archSvgDraw(){
+ const svg=$("archSvg");if(!svg)return;
+ svg.setAttribute("width",ARCH.w);
+ svg.setAttribute("height",ARCH.h);
+ let path="",lbl="";const seen={};
+ ARCH.edges.forEach(e=>{
+   const a=ARCH.nodes.find(n=>n.id===e.from),b=ARCH.nodes.find(n=>n.id===e.to);
+   if(!a||!b)return;
+   const key=e.from+"|"+e.to+"|"+(e.type||"bus");
+   if(seen[key])return;seen[key]=1;
+   const type=e.type||"bus";
+   const col=(ARCH_LBL[type]||{c:"#8a8aa0"}).c;
+   const ax=a.x+a.w/2,ay=a.y+a.h/2,bx=b.x+b.w/2,by=b.y+b.h/2;
+   const hot=ARCH.hot[key]&&ARCH.hot[key]>Date.now();
+   // sensor plug -> parent device : straight vertical from bottom of plug to top of device
+   let mx,my,cx1,cy1,cx2,cy2;
+   if(a.parent===b.id){            // plug -> device (up)
+     cx1=ax;cy1=a.y+a.h;cx2=bx;cy2=b.y;
+     mx=(ax+bx)/2;my=(cy1+cy2)/2;
+   } else if(b.parent===a.id){     // device -> plug (down)
+     cx1=ax;cy1=a.y+a.h;cx2=bx;cy2=b.y;
+     mx=(ax+bx)/2;my=(cy1+cy2)/2;
+   } else {                          // general: gentle curve with slight offset per type
+     const dx=bx-ax,dy=by-ay,L=Math.max(1,Math.sqrt(dx*dx+dy*dy));
+     const off=((Object.keys(seen).length-1)*16)-16;
+     mx=(ax+bx)/2+(-dy/L)*off;my=(ay+by)/2+(dx/L)*off;
+     cx1=ax+(mx-ax)*0.4;cy1=ay+(my-ay)*0.4;
+     cx2=bx+(mx-bx)*0.4;cy2=by+(my-by)*0.4;
+     cx1=ax;cy1=ay;cx2=bx;cy2=by;     // straight-ish line between centres
+   }
+   const sw=hot?2.8:(type==="tsn-stream"?2.4:1.6);
+   path+="<path data-e='"+CSS.escape(key)+"' d='M"+ax+" "+ay+" C"+cx1+" "+cy1+" "+cx2+" "+cy2+" "+bx+" "+by+"' class='arch-link x"+(type)+(hot?" active anim":"")+"' style='stroke:"+col+";stroke-width:"+sw+";'/>";
+ });
+ svg.innerHTML=path;
+}
+function archLayout(){
+ const cw=Math.max(520,ARCH.w||980);
+ const core=ARCH.nodes.filter(n=>!n.parent&&(n.type==="cnc"||n.type==="broker"||n.type==="radio"));
+ const devs=ARCH.nodes.filter(n=>!n.parent&&!(n.type==="cnc"||n.type==="broker"||n.type==="radio"));
+ const plugs=ARCH.nodes.filter(n=>n.parent);
+ const boxW=190,boxH=48;
+ ARCH.nodes.forEach(n=>{delete n.x;delete n.y;delete n.w;delete n.h});
+ // ---- ROW 1: CNC, MQTT broker, WiFi AP (top, centered) ----
+ const coreGap=70;
+ const coreTotal=core.reduce((s,n)=>s+boxW+coreGap,0)-coreGap;
+ let x=Math.max(30,(cw-coreTotal)/2);
+ core.forEach(n=>{n.x=x;n.y=20;n.w=boxW;n.h=boxH;x+=boxW+coreGap});
+ // ---- ROW 2: devices (middle, centered, one per column) ----
+ const devGap=120,devY=120;
+ const devTotal=devs.reduce((s,d)=>s+boxW+devGap,0)-devGap;
+ x=Math.max(30,(cw-devTotal)/2);
+ devs.forEach(d=>{d.x=x;d.y=devY;d.w=boxW;d.h=64;x+=boxW+devGap});
+ // ---- ROW 3: sensors directly UNDER each device, single vertical column ----
+ const byP={};plugs.forEach(p=>{(byP[p.parent]=byP[p.parent]||[]).push(p)});
+ const plugW=150,plugH=30;
+ const perDev={};
+ devs.forEach(d=>{perDev[d.id]=d});
+ Object.keys(byP).forEach(pid=>{
+   const dev=perDev[pid];if(!dev)return;
+   const list=byP[pid];
+   list.forEach((p,i)=>{
+     p.w=plugW;p.h=plugH;
+     p.x=dev.x+dev.w/2-plugW/2;            // centered under the device
+     p.y=dev.y+dev.h+16+i*(plugH+2);        // stacked straight down
+   });
+ });
+ // ---- canvas size from real content + margins ----
+ let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+ ARCH.nodes.forEach(n=>{
+   minX=Math.min(minX,n.x);minY=Math.min(minY,n.y);
+   maxX=Math.max(maxX,n.x+n.w);maxY=Math.max(maxY,n.y+n.h);
+ });
+ if(!isFinite(minX)){minX=0;minY=0;maxX=1200;maxY=800}
+ ARCH.w=Math.max(900,maxX-minX+240);
+ ARCH.h=Math.max(620,maxY-minY+140);
+ const sx=minX<0? -minX+60 : 60;
+ const sy=minY<0? -minY+60 : 60;
+ ARCH.nodes.forEach(n=>{n.x=Math.round(n.x+sx);n.y=Math.round(n.y+sy)});
+ // centre horizontally on cw once
+ const bnd=ARCH.nodes.reduce((o,n)=>({minX:Math.min(o.minX,n.x),maxX:Math.max(o.maxX,n.x+n.w)}),{minX:Infinity,maxX:-Infinity});
+ const contentW=bnd.maxX-bnd.minX;
+ const shift=Math.max(0,(cw-contentW)/2-bnd.minX);
+ ARCH.nodes.forEach(n=>{n.x=Math.round(n.x+shift)});
+}
+function architecture(){
+ ARCH.nodes=[];ARCH.edges=[];ARCH.hot={};
+ ARCH.z=1;ARCH.px=0;ARCH.py=0;
+ return "<h2>Architecture</h2>"+
+  "<div class='muted' style='margin-bottom:6px'>Node-RED-style wiring diagram — sensors and actuators are connected to specific GPIOs / pins with their supply voltage shown; management runs over MQTT / FXMQTT (control plane), data rides WiFi / 802.11 (TSN data plane). A pulsing link = live traffic.</div>"+
+  "<div id='archLegend' style='display:flex;align-items:center;gap:10px'></div>"+
+  "<div id='archBrkStatus' style='margin-bottom:6px;font-size:11px'></div>"+
+  "<div class='arch-toolbar'><button onclick='archZoom(1.25)'>＋</button><button onclick='archZoom(0.8)'>−</button><button onclick='archZoomFit()'>Fit</button><button onclick='archPanHome()'>Reset</button><span class='muted' style='font-size:11px'>scroll = zoom · drag = move</span></div>"+
+  "<div class='arch-viewport' id='archViewport'><div class='arch-canvas' id='archCanvas'><svg id='archSvg' style='position:absolute;top:0;left:0'></svg><div id='archNodes' style='position:absolute;top:0;left:0'></div></div></div>"+
+  "<div class='muted' style='font-size:11px;margin-top:4px'>Click a node for details (GPIO, power, links, TSN). Green dot = online, red = offline.</div>"+
+  "<div id='archFlow'></div>";
+}
+function archBuild(){
+ const canvas=$("archCanvas"),box=$("archNodes");
+ if(!canvas||!box)return;
+ canvas.style.width=ARCH.w+"px";canvas.style.height=ARCH.h+"px";
+ let h="";
+ ARCH.nodes.forEach(n=>{
+   const tsn=(n.tsn||[]).slice(0,4).map(t=>"<span class='achip'>"+esc(t)+"</span>").join("");
+   const av=asensorVals(n);
+   const pwr=(n.power&&n.power!=="-")?"<div class='apwr'><span style='color:var(--warn)'>⏚ "+esc(n.power)+"</span>"+(n.bus?" · "+esc(n.bus):"")+"</div>":"";
+   h+="<div class='arch-node "+esc(n.type)+(n.status==="offline"?" offline":"")+(n.parent?" plug":"")+"' id='n_"+CSS.escape(n.id)+"' onclick='archInfo(\""+esc(n.id)+"\")' style='left:"+n.x+"px;top:"+n.y+"px;width:"+n.w+"px'>"+
+      "<div class='ah'><span class='dot' style='background:"+adotcol(n)+"'></span><span>"+esc(n.label)+"</span></div>"+
+      (n.sub?"<div class='asub'>"+esc(n.sub)+"</div>":"")+
+      (n.parent?"":(pwr+(tsn?"<div class='atsn'>"+tsn+"</div>":"")+av))+
+      "</div>";
+ });
+ box.innerHTML=h;
+ archSvgDraw();
+}
+
+function archFlowHtml(){
+ const flows=ARCH.meta&&ARCH.meta.flows||[];
+ if(!flows.length)return "";
+ return "<div class='arch-flow'>"+flows.map(f=>"<div class='card'><h3>"+esc(f.title)+"</h3><ol>"+f.steps.map(s=>"<li>"+esc(s)+"</li>").join("")+"</ol></div>").join("")+"</div>";
+}
+function archLoad(cb){
+ fetch("/api/actions/topology",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:D.mode})}).then(r=>r.json()).then(j=>{
+   if(!j.ok){toast(j.msg||"topology error",false);if(cb)cb();return}
+   ARCH.nodes=j.nodes||[];ARCH.edges=j.edges||[];ARCH.meta=j;
+   ARCH.nodes.forEach(n=>{n.values=n.values||{}});
+   if(cb)cb();
+ }).catch(()=>{toast("topology fetch failed",false);if(cb)cb()});
+}
+function archGo(){
+ archLoad(()=>{
+   const leg=$("archLegend");if(leg){
+     leg.innerHTML="<div class='legend'>"+Object.keys(ARCH_LBL).filter(k=>["mqtt","fx","radio","ptp","tsn-stream"].includes(k)).map(k=>"<span class='l'><span class='sw' style='background:"+ARCH_LBL[k].c+"'></span>"+ARCH_LBL[k].t+"</span>").join("")+"</div>";
+   }
+   const brkStatus=$("archBrkStatus");
+   if(brkStatus){
+     const ok=ARCH.meta&&ARCH.meta.broker_ok;
+     brkStatus.innerHTML="<span class='badge "+(ok?"ok":"err")+"' style='font-size:11px'>broker "+(ok?"reachable":"unreachable")+"</span> "+
+       "<span class='muted' style='font-size:11px'>"+(ARCH.meta&&ARCH.meta.broker||"")+"</span>";
+   }
+   archLayout();
+   if($("archNodes"))archBuild();
+   if($("archFlow"))$("archFlow").innerHTML=archFlowHtml();
+   archInitPanZoom();
+ });
+}
+function archZoom(f){
+ ARCH.z=Math.min(4,Math.max(0.15,ARCH.z*f));
+ archApplyTransform();
+}
+function archApplyTransform(){
+ const c=$("archCanvas");if(!c)return;
+ c.style.transform="translate("+ARCH.px+"px,"+ARCH.py+"px) scale("+ARCH.z+")";
+}
+function archPanHome(){
+ ARCH.px=0;ARCH.py=0;ARCH.z=1;
+ archApplyTransform();
+}
+function archZoomFit(){
+ const vp=$("archViewport");if(!vp)return;
+ const vw=vp.clientWidth||800,vh=vp.clientHeight||600;
+ ARCH.z=Math.min(1.5,Math.max(0.1,Math.min(vw/(ARCH.w||1200),vh/(ARCH.h||800))));
+ ARCH.px=Math.max(0,(vw-(ARCH.w||1200)*ARCH.z)/2);
+ ARCH.py=Math.max(0,(vh-(ARCH.h||800)*ARCH.z)/2);
+ archApplyTransform();
+}
+function archInitPanZoom(){
+ const vp=$("archViewport");if(!vp)return;
+ const c=$("archCanvas");if(!c)return;
+ vp._handlers=vp._handlers||{};
+ const add=(name,fn)=>{vp.removeEventListener(name,vp._handlers[name]);vp.addEventListener(name,vp._handlers[name]=fn)};
+ add("wheel",e=>{
+   e.preventDefault();
+   const f=e.deltaY<0?1.12:0.89;
+   ARCH.z=Math.min(4,Math.max(0.15,ARCH.z*f));
+   // zoom toward cursor
+   const r=vp.getBoundingClientRect();
+   const mx=e.clientX-r.left,my=e.clientY-r.top;
+   const wx=(mx-ARCH.px)/ (ARCH.z/f),wy=(my-ARCH.py)/(ARCH.z/f);
+   ARCH.px=mx-wx*ARCH.z;ARCH.py=my-wy*ARCH.z;
+   archApplyTransform();
+ },{passive:false});
+ add("mousedown",e=>{
+   if(e.button!==0)return;
+   vp.classList.add("grabbing");
+   vp._sx=e.clientX;vp._sy=e.clientY;vp._ox=ARCH.px;vp._oy=ARCH.py;
+ });
+ add("mousemove",e=>{
+   if(!vp.classList.contains("grabbing"))return;
+   ARCH.px=vp._ox+(e.clientX-vp._sx);
+   ARCH.py=vp._oy+(e.clientY-vp._sy);
+   archApplyTransform();
+ });
+ add("mouseup",e=>{vp.classList.remove("grabbing")});
+ add("mouseleave",e=>{vp.classList.remove("grabbing")});
+ archZoomFit();
+}
+function archKey(e){return e.from+"|"+e.to+"|"+(e.type||"bus")}
+function archFlashMatches(){
+ if(cur!=="architecture")return;
+ // look at recent events, map protocol/source/dest onto edges and pulse them
+ const ev=(D.events||[]).slice(0,40);
+ const now=Date.now();
+ ev.forEach(em=>{
+   if(!em||!em.proto)return;
+   const pr=(em.proto||"").toLowerCase();
+   let type=null;
+   if(pr.indexOf("mqtt")>=0)type="mqtt";
+   else if(pr.indexOf("fx")>=0)type="fx";
+   else if(pr.indexOf("802.1as")>=0||pr.indexOf("ptp")>=0)type="ptp";
+   else if(pr.indexOf("stream")>=0||pr.indexOf("qcc")>=0)type="tsn-stream";
+   else if(pr.indexOf("802.1q ")>-1||pr.indexOf("qbv")>-1||pr.indexOf("qbu")>-1)type="mqtt";
+   else if(pr.indexOf("motion")>=0||pr.indexOf("sensor")>-1)type="mqtt";
+   const sr=em.source,dst=em.dest||em.dest_ip;
+   // find edges involving source or dest device and matching type
+   ARCH.edges.forEach(e=>{
+     if(type===null)return;
+     if(e.type!==type)return;
+     if((sr&&sr!==e.from&&sr!==e.to))return;
+     if(dst&&dst!==e.from&&dst!==e.to&&dst!=="cnc"&&dst!=="broker")return;
+     ARCH.hot[archKey(e)]=now+(type==="fx"?900:600);
+   });
+ });
+ // prune stale
+ Object.keys(ARCH.hot).forEach(k=>{if(ARCH.hot[k]<now-2000)delete ARCH.hot[k]});
+}
+function archTick(){
+ if(cur!=="architecture")return;
+ // live: detect topology changes (new devices/sensors announced over MQTT) and
+ // redraw so freshly connected hardware appears automatically in the diagram.
+ fetch("/api/actions/topology",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:D.mode})}).then(r=>r.json()).then(j=>{
+   if(!j.ok)return;
+   const ids=(j.nodes||[]).map(n=>n.id).sort().join("|");
+   const curIds=ARCH.nodes.map(n=>n.id).sort().join("|");
+   const changed=(j.broker||"")!==(ARCH.meta&&ARCH.meta.broker||"")||ids!==curIds;
+   if(changed){
+     // preserve zoom/pan across the rebuild
+     const z=ARCH.z,px=ARCH.px,py=ARCH.py;
+     ARCH.nodes=j.nodes||[];ARCH.edges=j.edges||[];ARCH.meta=j;
+     ARCH.nodes.forEach(n=>{n.values=n.values||{}});
+     archLayout();
+     if($("archNodes"))archBuild();
+     if($("archFlow"))$("archFlow").innerHTML=archFlowHtml();
+     ARCH.z=z;ARCH.px=px;ARCH.py=py;archApplyTransform();
+   }
+   archFlashMatches();
+   archSvgDraw();
+ });
+}
 function loadBigSensorCharts(dev){
   fetch("/api/actions/get_history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({device_id:dev})}).then(r=>r.json()).then(j=>{
     if(!j.ok)return;
@@ -568,7 +924,8 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  // live refresh of configuration tables without losing in-progress form input
  const dataChanged=JSON.stringify(D.qos_configs)!==JSON.stringify(dj.qos_configs)||JSON.stringify(D.vlan_groups)!==JSON.stringify(dj.vlan_groups)||JSON.stringify(D.tas_schedules)!==JSON.stringify(dj.tas_schedules)||JSON.stringify(D.preemption_configs)!==JSON.stringify(dj.preemption_configs)||JSON.stringify(D.tsn_streams)!==JSON.stringify(dj.tsn_streams)||JSON.stringify(D.gcl_entries)!==JSON.stringify(dj.gcl_entries);
  D.qos_configs=dj.qos_configs;D.vlan_groups=dj.vlan_groups;D.tas_schedules=dj.tas_schedules;D.preemption_configs=dj.preemption_configs;D.tsn_streams=dj.tsn_streams;D.tsn_stream_members=dj.tsn_stream_members;D.gcl_entries=dj.gcl_entries;
- if(dataChanged){if(cur==="qos"&&$("main"))$("main").innerHTML=qos();else if(cur==="vlan"&&$("main"))$("main").innerHTML=vlan();else if(cur==="tas"&&$("main"))$("main").innerHTML=tas();else if(cur==="preemption"&&$("main"))$("main").innerHTML=preemption();else if(cur==="streams"&&$("main"))$("main").innerHTML=streams();}}
+ if(dataChanged){if(cur==="qos"&&$("main"))$("main").innerHTML=qos();else if(cur==="vlan"&&$("main"))$("main").innerHTML=vlan();else if(cur==="tas"&&$("main"))$("main").innerHTML=tas();else if(cur==="preemption"&&$("main"))$("main").innerHTML=preemption();else if(cur==="streams"&&$("main"))$("main").innerHTML=streams();}
+ if(cur==="architecture")archTick();}
 let pollTimer=null,wsConn=null;
 function startPolling(){if(!pollTimer)pollTimer=setInterval(pollEvents,2000)}
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}

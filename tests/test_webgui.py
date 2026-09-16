@@ -225,6 +225,39 @@ class WebGuiActionTest(unittest.TestCase):
         finally:
             con.close()
 
+    def test_topology_action(self):
+        # create an ESP32 device + a sensor so the wiring diagram has content
+        self.act("save_devices", {"device": {"id": "esp32-01", "name": "gw",
+                                             "ip": "192.168.1.10", "kind": 0}})
+        con = connect()
+        try:
+            con.execute("INSERT OR REPLACE INTO sensors(device_id,sensor_id,type,"
+                        "name,value,unit,healthy,last_update) "
+                        "VALUES('esp32-01','pir1',4,'pir1',1,'',1,0)")
+            con.commit()
+        finally:
+            con.close()
+        r = self.act("topology", {"mode": "sim"})
+        self.assertTrue(r["ok"])
+        # core infra always present
+        ids = {n["id"] for n in r["nodes"]}
+        self.assertTrue({"pc", "broker", "ap"}.issubset(ids))
+        self.assertIn("esp32-01", ids)
+        # the ESP32 carries its board components with power + bus info
+        esp = next(n for n in r["nodes"] if n["id"] == "esp32-01")
+        self.assertEqual(esp["type"], "esp")
+        plugs = [n for n in r["nodes"] if n.get("parent") == "esp32-01"]
+        self.assertTrue(plugs)
+        pir = next((n for n in plugs if "pir" in n["id"]), None)
+        self.assertIsNotNone(pir)
+        self.assertIn("power", pir)
+        # edges: control-plane MQTT link between broker and device
+        self.assertTrue(any(e["from"] == "broker" and e["to"] == "esp32-01"
+                            and e["type"] == "mqtt" for e in r["edges"]))
+        self.assertTrue(any(e["type"] == "gpio" for e in r["edges"]))
+        # flow narratives
+        self.assertEqual(len(r["flows"]), 3)
+
 
 class MockBroker:
     """A stand-in for mqtt_broker.MqttBroker that records what was published."""
@@ -356,6 +389,8 @@ class WebGuiHttpTest(unittest.TestCase):
         status, body = self.get("/")
         self.assertEqual(status, 200)
         self.assertIn(b"WTSN Configurator", body)
+        self.assertIn(b"architecture", body)
+        self.assertIn(b"/api/actions/topology", body)
 
     def test_api_data(self):
         status, body = self.get("/api/data")
@@ -363,6 +398,13 @@ class WebGuiHttpTest(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(data["mode"], "sim")
         self.assertIn("devices", data)
+
+    def test_topology_http(self):
+        status, res = self.post("/api/actions/topology", {})
+        self.assertEqual(status, 200)
+        self.assertIn("nodes", res)
+        self.assertIn("edges", res)
+        self.assertIn("flows", res)
 
     def test_api_events(self):
         status, body = self.get("/api/events")

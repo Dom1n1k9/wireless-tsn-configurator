@@ -6,11 +6,13 @@ fxmqtt, misc) each expose `HANDLERS = {name: fn(con, body)}`. This package
 action, and always closes it. `run_action` is importable here for
 backwards-compatibility with callers of the old single-file module.
 """
-from . import devices, domain, fxmqtt, misc, qos, streams, tas, timesync, vlan
+from . import (devices, domain, fxmqtt, misc, qos, streams, tas, timesync,
+               topology, vlan)
 from ..db import connect
 from ..mqtt_link import get_real_mqtt  # noqa: F401  (re-exported for callers)
 
-_MODULES = (devices, domain, fxmqtt, misc, qos, streams, tas, timesync, vlan)
+_MODULES = (devices, domain, fxmqtt, misc, qos, streams, tas, timesync,
+            topology, vlan)
 
 _REGISTRY = {}
 for _mod in _MODULES:

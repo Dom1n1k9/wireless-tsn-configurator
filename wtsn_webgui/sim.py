@@ -101,11 +101,24 @@ def sim_tick():
                     con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",
                                 (did, f))
         # Sensor values drift; append one history sample per sensor for sparklines.
+        # ESP32 boards (kind 0) carry the full sensor add-on board so the Sensors
+        # page and Architecture wiring diagram show every component in Simulation.
         for sd in stable:
             did = sd["id"]
-            for sid, typ, unit, basev in (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
-                                           ("imu1", 2, "g", 0.3), ("gpio1", 4, "V", 1.0)):
+            # Sensor board only exists on the ESP32 agent ("esp32-*"), matching
+            # the Architecture diagram's device classification; other nodes get
+            # the generic temp/press/imu/gpio telemetry.
+            is_esp = str(did).startswith("esp32")
+            board = (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
+                     ("hum1", 0, "%", 42.0), ("light1", 4, "lx", 300.0),
+                     ("pir1", 4, "", 0.0), ("actor_mode", 4, "", 0.0),
+                     ("wifi_motion", 4, "", 0.0), ("gpio1", 4, "V", 1.0))
+            generic = (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
+                       ("imu1", 2, "g", 0.3), ("gpio1", 4, "V", 1.0))
+            for sid, typ, unit, basev in (board if is_esp else generic):
                 val = round(basev + random.uniform(-1.5, 1.5), 1)
+                if sid == "pir1":
+                    val = random.choice([0, 0, 0, 1])
                 con.execute("INSERT OR REPLACE INTO sensors(device_id,sensor_id,type,name,"
                             "value,unit,healthy,last_update) VALUES(?,?,?,?,?,?,1,strftime('%s','now'))",
                             (did, sid, typ, sid, val, unit))
