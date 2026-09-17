@@ -126,7 +126,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["sonar","Sonar"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -156,7 +156,6 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
    else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
    else if(p==="sensors")m.innerHTML=sensors();
-   else if(p==="sonar"){m.innerHTML=sonar();sonarGo();}
    else if(p==="architecture"){m.innerHTML=architecture();archGo();}
    else if(p==="help")m.innerHTML=help();
    else if(p==="settings")m.innerHTML=settings();}
@@ -388,18 +387,29 @@ function sensors(){
    ["temp1","hum1","press1","light1","mb_temp","mb_light","mb_sound"].forEach(n=>{if(g[n])chips.push(info(n))});
    if(g.pir1)chips.push("<span class='chip "+(g.pir1.value?"det":"")+"' data-sen='pir1' data-val='"+(g.pir1.value?"1":"0")+"'>Motion: <b>"+(g.pir1.value?"detected":"no motion")+"</b></span>");
    if(g.wifi_motion)chips.push("<span class='chip "+(g.wifi_motion.value?"det":"")+"' data-sen='wifi_motion' data-val='"+(g.wifi_motion.value?"1":"0")+"' title='RSSI-jitter/CSI based WiFi motion (WiFiVision)'>WiFi: <b>"+(g.wifi_motion.value?"detected":"no motion")+"</b></span>");
-   const anyLatest=[t,h,p,g.light1,g.pir1,g.wifi_motion,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
+   if(g.ai_detect)chips.push("<span class='chip "+(g.ai_person.value?"det":"")+"' data-sen='ai_detect' data-val='"+g.ai_detect.value+"' title='AI object detection (YOLOv4-tiny on RPi)'>AI: <b>"+(g.ai_detect.value?(g.ai_person.value?"person detected":g.ai_detect.value+" objects"):"clear")+"</b></span>");
+   const anyLatest=[t,h,p,g.light1,g.pir1,g.wifi_motion,g.ai_detect,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
    if(!chips.length)continue;
-   r+="<div class='card' data-did='"+esc(dev)+"'><div class='row'><img style='width:0;height:0'>"+
-      "<div style='font-size:16px;font-weight:700'>"+esc(dev)+"</div>"+
+   const mapsWrap=(dev==="esp32-01")
+     ?"<div data-map='wifi' data-mapdev='"+esc(dev)+"'></div>"
+     :((dev==="esp32-02")?"<div data-map='sonar' data-mapdev='"+esc(dev)+"'></div>":"");
+   r+="<div class='card' data-did='"+esc(dev)+"'><div class='row'><div style='font-size:16px;font-weight:700'>"+esc(dev)+"</div>"+
       "<span class='muted' style='font-size:12px' data-age='"+esc(dev)+"'>"+age(anyLatest)+"</span>"+
       "<span class='spacer'></span>"+chips.join(" ")+
-      "</div><div style='margin-top:8px' data-big='" + esc(dev) + "'></div></div>";
+      "</div>"+mapsWrap+"<div style='margin-top:8px' data-big='" + esc(dev) + "'></div></div>";
   }
   const devs=Object.keys(byDev);
   setTimeout(()=>devs.forEach(dev=>{const box=document.querySelector("[data-big='"+CSS.escape(dev)+"']");if(box)loadBigSensorCharts(dev) }),0);
+  setTimeout(updateMaps,0);
    return "<h2>Sensors ("+(D.mode==="real"?"real":"simulated")+")</h2>"+
    (r || "<div class='card'>"+(D.mode==="real"?"Connect real sensors — none identified yet.":"Waiting for simulation sensors...")+"</div>")}
+function updateMaps(){
+  document.querySelectorAll("[data-map]").forEach(el=>{
+    const kind=el.getAttribute("data-map"),dev=el.getAttribute("data-mapdev");
+    if(kind==="wifi")el.innerHTML=wifiVisionMap(dev);
+    else if(kind==="sonar")el.innerHTML=sonarMap(dev);
+  });
+}
 function bigSensorChart(sid, pts, hist, color, unit){
   const W=860,H=200,AX=34,AY=12;
   const lastVal=(hist[sid]&&hist[sid].length)?parseFloat(hist[sid][hist[sid].length-1][1]):NaN;
@@ -438,7 +448,46 @@ function bigSensorChart(sid, pts, hist, color, unit){
    "</svg></div>"
 }
 function sensorLabel(sid){
-  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","wifi_motion":"WiFi Motion","wifi_rssi":"WiFi RSSI jitter","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
+  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","wifi_motion":"WiFi Motion","wifi_rssi":"WiFi RSSI jitter","ai_detect":"AI Detect","ai_person":"AI Person","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
+}
+/* ---- radar/coverage mini-maps shown inside the Sensors cards ---- */
+function sweepOf(dev){
+  const rows=(D.sonar_sweeps||[]).filter(r=>r.device_id===dev);
+  const row=rows[rows.length-1];let data=[];
+  try{data=row?JSON.parse(row.sweep):[]}catch(e){}
+  return {row:row,data:data};
+}
+function polarMapSVG(data,dev,cols){
+  const cx=110,cy=110,R=95;
+  let s="<svg width='230' height='230' viewBox='0 0 220 220' style='max-width:100%;background:var(--surf2);border-radius:6px'>";
+  for(const rr of [0.25,0.5,0.75,1])s+="<circle cx='"+cx+"' cy='"+cy+"' r='"+(R*rr)+"' fill='none' stroke='var(--border)' stroke-width='1'/>";
+  s+="<line x1='"+cx+"' y1='"+cy+"' x2='"+cx+"' y2='"+cy+"' stroke='var(--border)'/>"; /* top reference */
+  const pts=[];let hit=0;
+  data.forEach((v,i)=>{
+    if(!isFinite(v))return;
+    const a=(-i)*Math.PI/180;const r=R*(v/cols.max);
+    const x=cx+r*Math.sin(a),y=cy-r*Math.cos(a);
+    pts.push(x+","+y);if(v>cols.thr)hit++;
+    s+="<circle cx='"+x.toFixed(1)+"' cy='"+y.toFixed(1)+"' r='2.5' fill='"+(v>cols.thr?cols.on:cols.off)+"'/>";
+  });
+  if(pts.length>1)s+="<polygon points='"+pts.join(" ")+"' fill='"+(cols.fill||"rgba(140,170,255,.12)")+"' stroke='"+(cols.stroke||cols.on)+"' stroke-width='1'/>";
+  s+="<circle cx='"+cx+"' cy='"+cy+"' r='4' fill='var(--sec)'/>";
+  s+="</svg>";
+  return {svg:s,hit:hit,n:data.length};
+}
+function wifiVisionMap(dev){
+  const w=sweepOf(dev);if(!w.data.length)return "";
+  const m=polarMapSVG(w.data,dev,{max:20,thr:3,on:"var(--warn)",off:"var(--dim)",stroke:"#FFC94A",fill:"rgba(255,201,74,.10)"});
+  return "<div class='sensor-big'><h4>WiFiVision — RSSI jitter map <span class='muted'>(" + (m.hit) + " zones)</span></h4>"+
+   "<div style='text-align:center'>"+m.svg+"</div>"+
+   "<div class='muted' style='font-size:11px;text-align:center'>RSSI-jitter/CSI variance around "+esc(dev)+"; outward = stronger change. WiFiVision detects motion without a camera.</div></div>";
+}
+function sonarMap(dev){
+  const w=sweepOf(dev);if(!w.data.length)return "";
+  const m=polarMapSVG(w.data,dev,{max:400,thr:120,on:"var(--ok)",off:"var(--dim)",stroke:"#31C96B",fill:"rgba(49,201,107,.12)"});
+  return "<div class='sensor-big'><h4>Sonar — radar coverage <span class='muted'>("+esc(dev)+")</span></h4>"+
+   "<div style='text-align:center'>"+m.svg+"</div>"+
+   "<div class='muted' style='font-size:11px;text-align:center'>Panning HC-SR04 sweep 0–179°; radius = range (cm). Green = within 120 cm.</div></div>";
 }
 // Live-update the Sensors cards WITHOUT re-rendering (keeps scroll position).
 function sensorsLive(){
@@ -458,70 +507,17 @@ function sensorsLive(){
     ch.dataset.val=""+(fmtAxis(s.value));
     if(sid==="pir1"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
     if(sid==="wifi_motion"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
+    if(sid==="ai_detect"){const p=byDev[did]&&byDev[did].ai_person;ch.className="chip "+(p&&p.value?"det":"");if(b)b.textContent=s.value?(p&&p.value?"person detected":s.value+" objects"):"clear"}
     if(sid==="wifi_rssi"){if(b)b.textContent=s.value+" (jitter)"}
   });
   // update "updated x ago"
   document.querySelectorAll("[data-age]").forEach(el=>{
     const did=el.dataset.age,dev=byDev[did];if(!dev)return;
-    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.wifi_motion||dev.mb_temp||dev.mb_light||dev.mb_sound;
+    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.wifi_motion||dev.ai_detect||dev.mb_temp||dev.mb_light||dev.mb_sound;
     if(t&&t.last_update){let a=now-(t.last_update>1000000000000?t.last_update/1000:t.last_update);el.textContent=a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
   });
 }
 function fmtAxis(v){if(Math.abs(v)>=1000)return (Math.round(v)).toLocaleString();if(v===Math.round(v))return String(v);return v.toFixed(1)}
-/* ================= Sonar / radar map ================= */
-function sonar(){
- const sweeps=(D.sonar_sweeps||[]);
- const last=sweeps.slice(-1)[0];
- let src="";
- try{src=last?JSON.parse(last.sweep):[]}catch(e){src=[]}
- const n=src.length;
- let html="<h2>Sonar — radar map</h2>"+
-  "<div class='muted' style='margin-bottom:8px'>Panning HC-SR04 on a DC motor (esp32-02) sweeps 0–179° after a motion event; range in cm is drawn as a polar map. A new sweep is stored on <code>tsn/sonar</code> each time motion is detected.</div>"+
-  "<div id='sonarWrap' class='card' style='text-align:center'>"+
-  "<svg id='sonarSvg' width='520' height='520' viewBox='0 0 520 520' style='max-width:100%'></svg>"+
-  "<div id='sonarInfo' class='muted' style='margin-top:6px'></div></div>";
- return html;
-}
-function sonarGo(){sonarDraw()}
-function sonarDraw(){
- const svg=$("sonarSvg");if(!svg)return;
- const sweeps=(D.sonar_sweeps||[]);
- const row=sweeps.length?sweeps[sweeps.length-1]:null;
- let data=[];
- try{data=row?JSON.parse(row.sweep):[]}catch(e){}
- const cx=260,cy=260,R=200;
- const maxR=400; /* cm */
- let s="";
- // rings (25..400 cm)
- for(const rcm of [50,100,150,200,300,400]){
-  const r=R*rcm/maxR;
-  s+="<circle cx='"+cx+"' cy='"+cy+"' r='"+r+"' fill='none' stroke='#223' stroke-width='1'/>";
-  s+="<text x='"+(cx+r+3)+"' y='"+cy+"' fill='#556' font-size='10'>"+rcm+"cm</text>";
- }
- // crosshair
- s+="<line x1='"+cx+"' y1='"+(cy-R)+"' x2='"+cx+"' y2='"+(cy+R)+"' stroke='#223'/>";
- s+="<line x1='"+(cx-R)+"' y1='"+cy+"' x2='"+(cx+R)+"' y2='"+cy+"' stroke='#223'/>";
- // sweep points (angle deg -> polar; 0 = up)
- const pts=[];
- for(let i=0;i<data.length;i++){
-  const cm=data[i];
-  if(cm<0||cm>maxR)continue;
-  const a=(-i)*Math.PI/180; /* i=0 is up (north), clockwise */
-  const r=R*(cm/maxR);
-  const x=cx+r*Math.sin(a),y=cy-r*Math.cos(a);
-  pts.push(x+","+y);
-  s+="<circle cx='"+x.toFixed(1)+"' cy='"+y.toFixed(1)+"' r='2.5' fill='#31C96B'/>";
- }
- if(pts.length>1){
-  s+="<polygon points='"+pts.join(" ")+"' fill='rgba(49,201,107,.18)' stroke='#31C96B' stroke-width='1.5' fill-rule='evenodd'/>";
- }
- // device at centre
- s+="<circle cx='"+cx+"' cy='"+cy+"' r='6' fill='#2f9ee6'/>";
- svg.innerHTML=s;
- const info=row?"last sweep #"+row.sweep_id+" at "+new Date((row.ts||0)*1000).toLocaleTimeString()+" · "+data.length+" angles":"no sweep yet (trigger motion)";
- $("sonarInfo").textContent=info;
-}
-
 const ARCH={nodes:[],edges:[],meta:null,hot:{}};
 const ARCH_LBL={
  "mqtt":{"t":"MQTT / FXMQTT","c":"#2f9ee6"},
@@ -973,15 +969,17 @@ async function pollEvents(){const r=await fetch("/api/events");const j=await r.j
  if((added.length||removed||statusChanged)&&cur==="devices"){D.devices=dj.devices;if($("main"))devices_render()}
   if($("mon") && MON_RUNNING){const f=($("mon_filter")?$("mon_filter").value:"").trim().toLowerCase();let list=(dj.events||[]).slice(0,120);if(f){list=list.filter(e=>((e.source||"")+(e.dest||"")+(e.proto||"")+(e.msg||"")+(e.ts||"")).toLowerCase().indexOf(f)>=0)}const ev=list.map(e=>"<div class='monrow'><span class='t'>"+esc(e.ts)+"</span><span class='s'>"+esc(e.source)+"</span><span class='ip'>"+esc(e.src_ip||"-")+"</span><span class='s'>"+esc(e.dest||"-")+"</span><span class='ip'>"+esc(e.dst_ip||"-")+"</span><span class='pro'>"+esc(e.proto||"-")+"</span><span>"+esc(e.msg||e.data||"")+"</span></div>").join("");$("mon").innerHTML=ev||""}
  D.events=dj.events;D.devices=dj.devices;
- if(JSON.stringify(D.sonar_sweeps)!==JSON.stringify(dj.sonar_sweeps)){D.sonar_sweeps=dj.sonar_sweeps;if(cur==="sonar"&&$("main"))sonarDraw()}
+ if(JSON.stringify(D.sonar_sweeps)!==JSON.stringify(dj.sonar_sweeps)){D.sonar_sweeps=dj.sonar_sweeps;if(cur==="sensors"&&$("main"))updateMaps()}
   // refresh sensor values live so the Sensors page updates in real time
   if(JSON.stringify(D.sensors)!==JSON.stringify(dj.sensors)){D.sensors=dj.sensors;if(cur==="sensors"&&$("main")){sensorsLive();document.querySelectorAll("[data-big]").forEach(b=>{const d=b.getAttribute("data-big");if(d)loadBigSensorCharts(d)})}}
+  if(JSON.stringify(D.sonar_sweeps)!==JSON.stringify(dj.sonar_sweeps)&&cur==="sensors"&&$("main"))updateMaps();
+  D.sonar_sweeps=dj.sonar_sweeps;
  // live refresh of configuration tables without losing in-progress form input
  const dataChanged=JSON.stringify(D.qos_configs)!==JSON.stringify(dj.qos_configs)||JSON.stringify(D.vlan_groups)!==JSON.stringify(dj.vlan_groups)||JSON.stringify(D.tas_schedules)!==JSON.stringify(dj.tas_schedules)||JSON.stringify(D.preemption_configs)!==JSON.stringify(dj.preemption_configs)||JSON.stringify(D.tsn_streams)!==JSON.stringify(dj.tsn_streams)||JSON.stringify(D.gcl_entries)!==JSON.stringify(dj.gcl_entries);
  D.qos_configs=dj.qos_configs;D.vlan_groups=dj.vlan_groups;D.tas_schedules=dj.tas_schedules;D.preemption_configs=dj.preemption_configs;D.tsn_streams=dj.tsn_streams;D.tsn_stream_members=dj.tsn_stream_members;D.gcl_entries=dj.gcl_entries;
  if(dataChanged){if(cur==="qos"&&$("main"))$("main").innerHTML=qos();else if(cur==="vlan"&&$("main"))$("main").innerHTML=vlan();else if(cur==="tas"&&$("main"))$("main").innerHTML=tas();else if(cur==="preemption"&&$("main"))$("main").innerHTML=preemption();else if(cur==="streams"&&$("main"))$("main").innerHTML=streams();}
  if(cur==="architecture")archTick();
- if(cur==="sonar")sonarDraw();}
+}
 let pollTimer=null,wsConn=null;
 function startPolling(){if(!pollTimer)pollTimer=setInterval(pollEvents,2000)}
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}

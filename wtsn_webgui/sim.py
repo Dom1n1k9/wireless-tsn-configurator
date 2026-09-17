@@ -1,4 +1,5 @@
 """Simulation engine: fabricates devices, sensors and a realistic frame flow."""
+import json
 import random
 import threading
 import time
@@ -21,11 +22,31 @@ SIM_STABLE_LOCK = threading.Lock()
 
 def _gen_stable_devices():
     """Generate a fixed simulated device set once. Reused every tick so the device
-    list stays constant while sensor values / status continue to drift."""
+    list stays constant while sensor values / status continue to drift.
+
+    esp32-01 and esp32-02 are always present: the first carries the sensor
+    add-on board (BME280 + light + PIR + WiFiVision), the second the micro:bit
+    display/sync board plus the panning sonar. The rest are picked at random.
+    """
     devs = []
-    n = random.randint(3, 6)
+    n = random.randint(3, 5)
     per = {}
-    for i in range(1, n + 1):
+    fixed = [
+        {"id": "esp32-01", "name": "ESP32 Sensor", "ip": "192.168.1.10",
+         "mac": "AA:BB:CC:00:01", "kind": 0,
+         "firmware": "2.0.0", "rssi": -55},
+        {"id": "esp32-02", "name": "ESP32 Sonar", "ip": "192.168.1.11",
+         "mac": "AA:BB:CC:00:02", "kind": 0,
+         "firmware": "2.0.0", "rssi": -61},
+        {"id": "esp32-cam", "name": "ESP32-CAM", "ip": "192.168.1.60",
+         "mac": "AA:BB:CC:00:06", "kind": 5,
+         "firmware": "2.0.0", "rssi": -58},
+    ]
+    for d in fixed:
+        d["tsn"] = random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS)))
+        devs.append(d)
+    per = {"esp32": 2}
+    for i in range(n):
         kind, base, ip, name = random.choice(PROFILES)
         per.setdefault(base, 0)
         per[base] += 1
@@ -121,22 +142,52 @@ def sim_tick():
                               ("dist1", 3, "cm", 120.0), ("sonar_angle", 4, "deg", 90.0))
             generic = (("temp1", 0, "C", 25.0), ("press1", 1, "hPa", 1005.0),
                        ("imu1", 2, "g", 0.3), ("gpio1", 4, "V", 1.0))
+            ai_board = (("ai_detect", 4, "", 0.0), ("ai_person", 4, "", 0.0),
+                        ("rssi", 0, "dBm", -58.0))
             if did == "esp32-01":
                 board = sensor_board
             elif did == "esp32-02":
                 board = microbit_board
+            elif did == "esp32-cam":
+                board = ai_board
             else:
                 board = (sensor_board if is_esp else generic)
+            ai_person = 0
             for sid, typ, unit, basev in board:
                 val = round(basev + random.uniform(-1.5, 1.5), 1)
                 if sid == "pir1":
                     val = random.choice([0, 0, 0, 1])
+                if sid == "ai_person":
+                    val = 1 if random.random() < 0.25 else 0
+                    ai_person = val
+                if sid == "ai_detect":
+                    val = random.choice([1, 2, 3]) if ai_person else 0
                 con.execute("INSERT OR REPLACE INTO sensors(device_id,sensor_id,type,name,"
                             "value,unit,healthy,last_update) VALUES(?,?,?,?,?,?,1,strftime('%s','now'))",
                             (did, sid, typ, sid, val, unit))
                 con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
                             "VALUES(?,?,strftime('%s','now'),?)", (did, sid, val))
         con.execute("DELETE FROM sensor_history WHERE ts < strftime('%s','now','-1 hours')")
+        # Simulated sonar sweeps (esp32-02) and WiFiVision RSSI sweeps (esp32-01)
+        # so the Sensors page can render the radar + WiFiVision maps even in
+        # Simulation mode. A "sweep" drifts through 0..179° anti-clockwise.
+        now_ss = int(time.time())
+        for sd in stable:
+            if sd["id"] == "esp32-02" and random.random() < 0.5:
+                sweep = [round(random.uniform(20, 180), 1) for _ in range(36)]
+                con.execute("INSERT INTO sonar_sweeps(device_id,ts,sweep_id,sweep) "
+                            "VALUES(?,?,?,?)",
+                            (sd["id"], now_ss, (now_ss % 100000),
+                             json.dumps(sweep)))
+                add_event("mqtt", sd["id"],
+                          "sonar sweep: %d angles" % len(sweep))
+            if sd["id"] == "esp32-01" and random.random() < 0.5:
+                rippled = [round(max(0.0, 10.0 + random.gauss(0, 2.5)), 2)
+                           for _ in range(36)]
+                con.execute("INSERT INTO sonar_sweeps(device_id,ts,sweep_id,sweep) "
+                            "VALUES(?,?,?,?)",
+                            (sd["id"], now_ss, (now_ss % 100000),
+                             json.dumps(rippled)))
         gm = devs[0] if devs else "esp32-01"
         if saved_ts and saved_ts["grandmaster"]:
             gm = saved_ts["grandmaster"]
