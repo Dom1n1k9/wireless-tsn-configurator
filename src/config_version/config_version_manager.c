@@ -41,9 +41,10 @@ static int collect_vlan(const wtsn_vlan_group *g, void *ud) {
     return 0;
 }
 
-static void collect_vlan_member(const wtsn_vlan_member *m, void *ud) {
+static int collect_vlan_member(const wtsn_vlan_member *m, void *ud) {
     char *buf = (char *)ud;
     append_field(buf, CFG_PAYLOAD_MAX, "vmem:%s:%s ", m->group_id, m->device_id);
+    return 0;
 }
 
 static void collect_device(const wtsn_device *d, void *ud) {

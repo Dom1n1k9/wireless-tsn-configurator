@@ -1,5 +1,7 @@
 #include "qos/qos.h"
 
+#include <string.h>
+
 #include "common/log.h"
 
 wtsn_error wtsn_qos_validate(const wtsn_qos_config_model *cfg) {

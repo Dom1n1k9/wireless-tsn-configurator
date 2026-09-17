@@ -1,5 +1,6 @@
 #include "vlan/vlan.h"
 
+#include <string.h>
 #include <stdio.h>
 
 wtsn_error wtsn_vlan_validate_group(const wtsn_vlan_group_model *g) {

@@ -14,7 +14,7 @@ struct wtsn_plugin {
     void *handle;
     void *userdata;
     wtsn_error (*probe)(wtsn_plugin *self, const char *discovery_data);
-    wtsn_error (*discover)(wtsn_plugin *self, wtsn_device **out, int max, int *count);
+    wtsn_error (*discover)(wtsn_plugin *self, wtsn_device *out, int max, int *count);
     wtsn_error (*shutdown)(wtsn_plugin *self);
 };
 
