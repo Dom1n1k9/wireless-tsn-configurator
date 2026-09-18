@@ -22,6 +22,7 @@ Config file JSON, default /home/wtsn/wtsn-ai/policy.json (all keys optional):
    "r3": {"latency_ms": 50, "min_samples": 3, "cooldown_s": 300,
           "vlan_id": 100, "priority": 5}}
 """
+import base64
 import json
 import os
 import time
@@ -61,9 +62,16 @@ def load_cfg():
     return BASE
 
 
+GUI_USER = os.environ.get("WTSN_WEB_USER", "")
+GUI_PASS = os.environ.get("WTSN_WEB_PASS", "")
+
+
 def http_json(url, body=None):
     data = None
     headers = {"Accept": "application/json"}
+    if GUI_USER:
+        headers["Authorization"] = "Basic " + base64.b64encode(
+            ("%s:%s" % (GUI_USER, GUI_PASS)).encode()).decode()
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"

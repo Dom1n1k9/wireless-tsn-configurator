@@ -296,6 +296,10 @@ def main():
     host, _, port = broker.partition(":")
     cli = paho.Client(paho.CallbackAPIVersion.VERSION2, "wtsn-ai-%d" % os.getpid())
     mqtt_cli = cli
+    u = os.environ.get("WTSN_USER", "")
+    p = os.environ.get("WTSN_PASS", "")
+    if u:
+        cli.username_pw_set(u, p)
     cli.connect(host, int(port or 1883), 60)
     cli.loop_start()
     log("connected to broker %s" % broker)

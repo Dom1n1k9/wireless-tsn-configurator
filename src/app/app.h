@@ -25,6 +25,8 @@ typedef struct {
     char plugin_dir[WTSN_MAX_STR];
     char mqtt_host[128];
     int mqtt_port;
+    char mqtt_user[128];
+    char mqtt_pass[128];
     bool headless;
 } wtsn_app_config;
 

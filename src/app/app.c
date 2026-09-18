@@ -95,7 +95,9 @@ wtsn_error wtsn_app_init(wtsn_app *app, const wtsn_app_config *cfg) {
     if (strlen(cfg->mqtt_host) > 0) {
         app->mqtt = wtsn_mqtt_client_create(app->bus);
         wtsn_mqtt_client_connect(app->mqtt, cfg->mqtt_host, cfg->mqtt_port,
-                                 "wtsn-configurator", NULL, NULL);
+                                 "wtsn-configurator",
+                                 cfg->mqtt_user[0] ? cfg->mqtt_user : NULL,
+                                 cfg->mqtt_pass[0] ? cfg->mqtt_pass : NULL);
         wtsn_mqtt_client_loop_start(app->mqtt);
         wtsn_tsn_manager_set_mqtt(app->tsn, app->mqtt);
         app->telemetry = wtsn_telemetry_create(app->devices, app->timesync, app->trace);
