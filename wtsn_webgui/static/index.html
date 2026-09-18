@@ -433,7 +433,7 @@ function decisions(){
 let LLM_HIST=[];
 function assistant(){
   return "<h2>AI Assistant <span class='badge' style='font-size:12px'>local LLM</span></h2>"+
-   "<div class='muted' style='margin-bottom:10px'>Ask in any language — the local LLM (Raspberry Pi) proposes a TSN action, it is validated against an allowlist and executed with provenance <b>⚡ LLM</b> (see AI Decisions). Examples: <i>„zvyš priority kamery na 6“</i>, <i>„otvor TAS gate 4 ms pre esp32-cam“</i>, <i>„presuň grandmastera na rpi-01“</i>.</div>"+
+    "<div class='muted' style='margin-bottom:10px'>Ask in any language — the local LLM (Raspberry Pi) proposes a TSN action, it is validated against an allowlist and executed with provenance <b>⚡ LLM</b> (see AI Decisions). Examples: <i>raise the camera priority to 6</i>, <i>open a 4 ms TAS gate for esp32-cam</i>, <i>move the grandmaster to rpi-01</i>.</div>"+
    "<div class='card' style='height:420px;overflow-y:auto;padding:10px' id='llm_msgs'></div>"+
    "<div class='row' style='margin-top:8px'>"+
    "<input id='llm_in' style='flex:1;padding:8px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;color:var(--text)' placeholder='What should the network do?' onkeydown='if(event.key==\"Enter\")llmSend()'>"+
