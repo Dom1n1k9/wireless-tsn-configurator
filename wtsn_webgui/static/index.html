@@ -439,19 +439,22 @@ function assistant(){
     "<div class='muted' style='margin-bottom:8px'>Audit trail: every configuration change with provenance. <b>AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
     decisionsTable();
 }
-function llmLoad(){$("llm_msgs").innerHTML=(LLM_HIST.length?"":"<div class='muted' style='padding:4px'>No messages yet.</div>")+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("")}
+function llmMsgHTML(h){
+  return "<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content).replace(/\n/g,"<br>")+"</span></div>";
+}
+function llmLoad(){$("llm_msgs").innerHTML=(LLM_HIST.length?"":"<div class='muted' style='padding:4px'>No messages yet.</div>")+LLM_HIST.map(llmMsgHTML).join("")}
 function llmSend(){
   const inp=$("llm_in");const msg=inp.value.trim();
   if(!msg)return;
   inp.value="";
   LLM_HIST.push({role:"user",content:msg});
-  $("llm_msgs").innerHTML="<div class='muted' style='padding:4px'>…thinking (local LLM, may take a few seconds)</div>"+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("");
+  $("llm_msgs").innerHTML="<div class='muted' style='padding:4px'>…thinking (local LLM, may take a few seconds)</div>"+LLM_HIST.map(llmMsgHTML).join("");
   $("llm_btn").disabled=true;
   api("llm_chat",{message:msg,history:LLM_HIST.slice(0,-1)}).then(j=>{
     const txt=(j.ok?j.reply:(j.msg||"error"))+(j.executed&&j.executed.length?"\n\nExecuted:\n"+j.executed.map(e=>e.action+(e.ok?" ✓":" ✗ "+e.msg)).join("\n"):"");
     LLM_HIST.push({role:"assistant",content:txt});
     const m=$("llm_msgs");
-    m.innerHTML=LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content).replace(/\n/g,"<br>")+"</span></div>").join("");
+    m.innerHTML=LLM_HIST.map(llmMsgHTML).join("");
     m.scrollTop=m.scrollHeight;
     $("llm_btn").disabled=false;
     load();
