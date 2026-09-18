@@ -126,7 +126,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["decisions","AI Decisions"],["assistant","AI Assistant"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["assistant","AI Assistant"],["architecture","Architecture"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -155,12 +155,11 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
  else if(p==="fxmqtt")m.innerHTML=fxmqtt();
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
    else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
-   else if(p==="sensors")m.innerHTML=sensors();
-   else if(p==="decisions")m.innerHTML=decisions();
-   else if(p==="assistant"){m.innerHTML=assistant();llmLoad()}
-   else if(p==="architecture"){m.innerHTML=architecture();archGo();}
-   else if(p==="help")m.innerHTML=help();
-   else if(p==="settings")m.innerHTML=settings();}
+    else if(p==="sensors")m.innerHTML=sensors();
+    else if(p==="decisions"||p==="help")go("assistant");
+    else if(p==="assistant"){m.innerHTML=assistant();llmLoad()}
+    else if(p==="architecture"){m.innerHTML=architecture();archGo();}
+    else if(p==="settings")m.innerHTML=settings();}
 
 function execAll(){api("exec_all",{}).then(load)}
 function aiClipUrl(id,path){
@@ -407,9 +406,8 @@ function loadSpark(dev){
    document.querySelectorAll("[data-spark]").forEach(td=>{
     const key=td.dataset.spark.split(":")[1];
     if(hist[key])td.innerHTML=spark(hist[key])})})}
-function decisions(){
+ function decisionsTable(){
   const rows=(D.ai_decisions||[]).slice().reverse();
-  const now=Math.floor(Date.now()/1000);
   const badge=s=>s==="ai"?"<span class='chip' style='color:var(--warn)'>⚡ AI</span>":(s==="llm"?"<span class='chip' style='color:var(--pri)'>⚡ LLM</span>":"<span class='chip'>user</span>");
   const tr=rows.map(r=>{
     let p="";
@@ -421,23 +419,25 @@ function decisions(){
       "<td class='muted' style='font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis' title='"+esc(p)+"'>"+esc(p)+"</td>"+
       "<td>"+(r.status==="ok"?"<span style='color:var(--ok)'>ok</span>":"<span style='color:var(--err)' title='"+esc(r.status)+"'>err</span>")+"</td></tr>";
   }).join("");
-  const aiCount=(D.ai_decisions||[]).filter(r=>r.source!=="user"&&now-r.ts<3600).length;
-  return "<h2>AI Decisions <span class='badge' style='font-size:12px'>"+aiCount+" last 1 h</span></h2>"+
-   "<div class='muted' style='margin-bottom:10px'>Audit trail: every configuration change with provenance. <b>⚡ AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
-   "<div class='card' style='overflow:auto'><table style='width:100%;border-collapse:collapse'>"+
-   "<thead><tr style='text-align:left;color:var(--dim);font-size:11px'><th style='padding:4px'>Time</th><th>Device</th><th>Action</th><th>Source</th><th>Reason</th><th>Params</th><th>Status</th></tr></thead>"+
-   "<tbody style='font-size:13px'>"+(tr||"<tr><td colspan='7' class='muted'>no decisions recorded yet</td></tr>")+"</tbody></table></div>"+
-   "<button class='ghost' onclick='api(\"clear_decisions\",{}).then(load)'>Clear decisions</button>";
-}
+  return "<div class='card' style='overflow:auto'><table style='width:100%;border-collapse:collapse'>"+
+    "<thead><tr style='text-align:left;color:var(--dim);font-size:11px'><th style='padding:4px'>Time</th><th>Device</th><th>Action</th><th>Source</th><th>Reason</th><th>Params</th><th>Status</th></tr></thead>"+
+    "<tbody style='font-size:13px'>"+(tr||"<tr><td colspan='7' class='muted'>no decisions recorded yet</td></tr>")+"</tbody></table></div>"+
+    "<button class='ghost' onclick='api(\"clear_decisions\",{}).then(load)'>Clear decisions</button>";
+ }
 /* ================= AI Assistant (local LLM) ================= */
 let LLM_HIST=[];
 function assistant(){
+  const now=Math.floor(Date.now()/1000);
+  const aiCount=(D.ai_decisions||[]).filter(r=>r.source!=="user"&&now-r.ts<3600).length;
   return "<h2>AI Assistant <span class='badge' style='font-size:12px'>local LLM</span></h2>"+
-    "<div class='muted' style='margin-bottom:10px'>Ask in any language — the local LLM (Raspberry Pi) proposes a TSN action, it is validated against an allowlist and executed with provenance <b>⚡ LLM</b> (see AI Decisions). Examples: <i>raise the camera priority to 6</i>, <i>open a 4 ms TAS gate for esp32-cam</i>, <i>move the grandmaster to rpi-01</i>.</div>"+
-   "<div class='card' style='height:420px;overflow-y:auto;padding:10px' id='llm_msgs'></div>"+
-   "<div class='row' style='margin-top:8px'>"+
-   "<input id='llm_in' style='flex:1;padding:8px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;color:var(--text)' placeholder='What should the network do?' onkeydown='if(event.key==\"Enter\")llmSend()'>"+
-   "<button id='llm_btn' onclick='llmSend()'>Send</button></div>";
+    "<div class='muted' style='margin-bottom:10px'>The local LLM (Raspberry Pi) either <b>does it for you</b> — proposes a TSN action, validated against an allowlist and executed with provenance <b>⚡ LLM</b> — or <b>guides you step by step</b> through the whole configuration (it replaces the old Help page). Examples: <i>raise the camera priority to 6</i>, <i>open a 4 ms TAS gate for esp32-cam</i>, <i>how do I configure this network from scratch?</i></div>"+
+    "<div class='card' style='height:420px;overflow-y:auto;padding:10px' id='llm_msgs'></div>"+
+    "<div class='row' style='margin-top:8px'>"+
+    "<input id='llm_in' style='flex:1;padding:8px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;color:var(--text)' placeholder='What should the network do? Or ask how to configure it…' onkeydown='if(event.key==\"Enter\")llmSend()'>"+
+    "<button id='llm_btn' onclick='llmSend()'>Send</button></div>"+
+    "<h3 style='margin-top:18px'>AI Decisions <span class='badge' style='font-size:12px'>"+aiCount+" last 1 h</span></h3>"+
+    "<div class='muted' style='margin-bottom:8px'>Audit trail: every configuration change with provenance. <b>⚡ AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
+    decisionsTable();
 }
 function llmLoad(){$("llm_msgs").innerHTML=(LLM_HIST.length?"":"<div class='muted' style='padding:4px'>No messages yet.</div>")+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("")}
 function llmSend(){
@@ -1000,35 +1000,6 @@ function saveStream(){const lsn=[].slice.call(document.querySelectorAll("#s_lsn 
   vlan_id:parseInt($("s_vlan")?$("s_vlan").value:0)||0,max_latency_ns:parseInt($("s_lat")?$("s_lat").value:1000000)||1000000,
   max_interval_ns:parseInt($("s_itv")?$("s_itv").value:100000)||100000,
   priority:parseInt($("s_prio")?$("s_prio").value:5)||5,data_frame_prio:parseInt($("s_prio")?$("s_prio").value:5)||5}).then(load)}
-function step(i,t){return "<div class='card'><h3>Step "+i+". "+t+"</h3>"}
-function help(){
- return "<h2>Help — How to configure this W-TSN network</h2>"+
-  "<div class='card'><h3>Quick summary</h3><p>Click through in this order: <b>Devices → QoS → VLAN → TAS → (Preemption / TimeSync / Streams) → then the blue <i>Execute settings on controller</i> button in the header.</b></p>"+
-  "<p>First, set your MQTT broker on the <b>FXMQTT Config</b> page (see step 3). It builds a JSON snapshot per device and publishes it on <code>tsn/cmd/&lt;id&gt;/apply</code> so every agent applies QoS / VLAN / TAS / TimeSync / streams. Watch the ACKs on the <b>Monitor</b> page.</p></div>"+
- step(1,"Start in Simulation mode")+"<p>The GUI starts in <b>Simulation</b> (top-right corner). This lets you try everything without hardware — nodes and sensors are simulated. Use it to learn the workflow. For real devices switch to <b>Real</b>.</p></div>"+
- step(2,"Set the MQTT broker / FXMQTT (one-time)")+"<p><b>OPC UA FX over MQTT → FXMQTT Config</b> (or Settings):</p>"+
- "<ul><li><b>Server</b> — is the Field Server the PC (configurator) or a node? Keep <b>PC (configurator)</b>.</li>"+
- "<li><b>Node</b> — only if a device acts as the server.</li>"+
- "<li><b>Broker</b> — host:port of your MQTT broker (e.g. <code>192.168.0.149:1883</code> or <code>wtsn-broker.local:1883</code>).</li></ul>"+
- "<p>Save / Deploy. FXMQTT is OPC UA FX / C2C Field Exchange carried over MQTT — this is the channel the configurator uses to talk to devices.</p></div>"+
- step(3,"Add your device")+"<p>Go to <b>Devices</b> and click the add form: enter an <b>id</b> (e.g. <code>esp32-01</code>) and a name. In Real mode the node itself provisions and announces over MQTT, so it usually appears automatically.</p>"+
- "<p>The <b>status badge</b> shows online / offline / error.</p>"+
- "<ul><li><b>Online</b> (green) — ready to configure.</li><li><b>Offline</b> (yellow) — device is not reporting; check WiFi / broker.</li><li><b>Error</b> (red) — something failed.</li></ul>"+
- "Use <b>Ping</b> to verify reachability.</div>"+
- step(4,"Set QoS priority")+"<p><b>IEEE 802.1Q → QoS Priority</b>: pick the device and the traffic priority (0–7). Higher priority = time-critical traffic like voice/control data. Set a latency budget in ms.</p>"+
- "<p>Save — then the priority appears in the table.</p></div>"+
- step(5,"Assign a VLAN")+"<p><b>IEEE 802.1Q → WVLAN ID</b>: create a group (name + VLAN ID 1–4094). Then, on that group card, select the member devices with Ctrl+click and press <b>Apply members</b>.</p>"+
- "<p>This tells which devices carry that VLAN tag.</p></div>"+
- step(6,"Schedule TAS / GCL")+"<p><b>IEEE 802.1Qbv → TAS / GCL</b>: enter a name, a cycle time in ns, the deploy target and a gate list such as <code>1:300000,3:200000,0:500000</code>.</p>"+
- "<p>The gate value is a bitmask of open queues (e.g. 1 = queue 0 only, 3 = queues 0+1, 0 = all closed). The next digit is the duration in ns. The visualization shows each gate window as a colored bar.</p>"+
- "<p>Save / Deploy.</p></div>"+
- step(7,"Optional: Preemption")+"<p><b>IEEE 802.1Qbu → Preemption</b>: to protect time-critical frames, turn preemption <b>on</b> for a device and define the express (eMAC) vs preemptable (pMAC) priority sets (e.g. eMAC <code>7,6,5</code>, pMAC <code>3,2,1,0</code>).</p></div>"+
- step(8,"Optional: Time sync")+"<p><b>IEEE 802.1AS → Synchronization</b>: choose the grandmaster and the slave nodes that follow it, then <b>Save 802.1AS Sync</b>.</p></div>"+
- step(9,"(Optional) TSN Streams")+"<p><b>IEEE 802.1Qcc → TSN Streams</b>: reserve a stream from a talker to listeners on a VLAN. Pick the talker, listeners (Ctrl+click), VLAN and Save.</p>"+
- "<p>Deploy it (or Deploy All) to push the reservation out.</p></div>"+
- step(10,"Apply everything — Execute settings on controller")+"<p>Once your devices and policies are set, click the blue <b>Execute settings on controller</b> button in the header.</p>"+
- "<p>This builds one JSON snapshot per device and publishes it on <code>tsn/cmd/&lt;id&gt;/apply</code> so every agent applies QoS / VLAN / TAS / TimeSync / streams. Watch the ACKs on the <b>Monitor</b> page.</p>"+
-  "<ul><li>If MQTT broker is unreachable you will get an error toast.</li><li>Simulation just records the flow.</li></ul></div>"}
 function settings(){
  const brk=(D.settings||[]).find(s=>s.key==="broker")||{};
  return "<h2>Settings</h2><div class='card'><div class='row'><label>mode</label><span>"+D.mode+"</span></div>"+
