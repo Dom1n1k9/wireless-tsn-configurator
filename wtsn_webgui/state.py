@@ -15,7 +15,8 @@ PORT = int(os.environ.get("WTSN_PORT", "8000"))
 TABLES = ["devices", "device_tsn_features", "qos_configs", "vlan_groups",
           "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
           "sensors", "preemption_configs", "tsn_streams", "tsn_stream_members",
-          "settings", "domains", "config_versions", "recordings", "sonar_sweeps"]
+          "settings", "domains", "config_versions", "recordings", "sonar_sweeps",
+          "ai_decisions"]
 
 MODE = {"mode": "sim"}
 EVENTS = deque(maxlen=400)

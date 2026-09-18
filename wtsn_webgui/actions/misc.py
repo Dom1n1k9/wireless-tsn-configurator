@@ -394,6 +394,13 @@ def _restore_backup(con, body):
     return {"ok": True, "msg": "configuration restored"}
 
 
+def _clear_decisions(con, body):
+    n = con.execute("DELETE FROM ai_decisions").rowcount
+    con.commit()
+    add_event("config", "cnc", "AI decisions cleared (%d rows)" % n)
+    return {"ok": True, "msg": "cleared %d decisions" % n}
+
+
 HANDLERS = {
     "set_mode": _set_mode,
     "exec_all": _exec_all,
@@ -401,6 +408,7 @@ HANDLERS = {
     "get_history": _get_history,
     "metrics": _metrics,
     "clear_metrics": _clear_metrics,
+    "clear_decisions": _clear_decisions,
     "create_version": _create_version,
     "list_versions": _list_versions,
     "diff_versions": _diff_versions,

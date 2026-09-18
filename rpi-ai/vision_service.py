@@ -20,12 +20,9 @@ Config file (JSON), default /home/wtsn/wtsn-ai/config.json:
   }
 Override with env WTSN_AI_CONFIG.
 """
-import base64
 import json
 import os
-import shutil
 import socket
-import struct
 import sys
 import threading
 import time

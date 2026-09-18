@@ -126,7 +126,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["decisions","AI Decisions"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -156,6 +156,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
   else if(p==="monitor"){m.innerHTML=monitor();refreshMon();}
    else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
    else if(p==="sensors")m.innerHTML=sensors();
+   else if(p==="decisions")m.innerHTML=decisions();
    else if(p==="architecture"){m.innerHTML=architecture();archGo();}
    else if(p==="help")m.innerHTML=help();
    else if(p==="settings")m.innerHTML=settings();}
@@ -199,9 +200,11 @@ function showRec(id){
 }
 function devRow(d){
   const eid=esc(d.id);
+  const now=Math.floor(Date.now()/1000);
+  const aiActive=(D.ai_decisions||[]).some(r=>r.device_id===d.id&&r.source!=="user"&&now-r.ts<600);
   const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+eid+"\")'>OTA</button> ":"";
   const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
-  return "<tr><td>"+esc(d.id)+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
+  return "<tr><td>"+esc(d.id)+(aiActive?" <span title='AI is actively configuring this device'>⚡</span>":"")+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
 function avReset(id){if(!confirm("Reset device "+id+"? Clears its WiFi + TSN config and reboots it."))return;api("save_devices",{reset:[id]}).then(load)}
 function otaDev(id){api("start_ota",{id:id})}
 function devices(){
@@ -375,6 +378,28 @@ function loadSpark(dev){
    document.querySelectorAll("[data-spark]").forEach(td=>{
     const key=td.dataset.spark.split(":")[1];
     if(hist[key])td.innerHTML=spark(hist[key])})})}
+function decisions(){
+  const rows=(D.ai_decisions||[]).slice().reverse();
+  const now=Math.floor(Date.now()/1000);
+  const badge=s=>s==="ai"?"<span class='chip' style='color:var(--warn)'>⚡ AI</span>":(s==="llm"?"<span class='chip' style='color:var(--pri)'>⚡ LLM</span>":"<span class='chip'>user</span>");
+  const tr=rows.map(r=>{
+    let p="";
+    try{p=Object.entries(JSON.parse(r.params||"{}")).filter(([k])=>!["source","reason"].includes(k)).map(([k,v])=>k+"="+v).join(", ")}catch(e){p=r.params||""}
+    const t=new Date(r.ts*1000);
+    return "<tr><td>"+t.toLocaleTimeString()+"</td><td><b>"+esc(r.device_id||"-")+"</b></td>"+
+      "<td><code>"+esc(r.action)+"</code></td><td>"+badge(r.source)+"</td>"+
+      "<td class='muted' style='font-size:12px'>"+esc(r.reason||"")+"</td>"+
+      "<td class='muted' style='font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis' title='"+esc(p)+"'>"+esc(p)+"</td>"+
+      "<td>"+(r.status==="ok"?"<span style='color:var(--ok)'>ok</span>":"<span style='color:var(--err)' title='"+esc(r.status)+"'>err</span>")+"</td></tr>";
+  }).join("");
+  const aiCount=(D.ai_decisions||[]).filter(r=>r.source!=="user"&&now-r.ts<3600).length;
+  return "<h2>AI Decisions <span class='badge' style='font-size:12px'>"+aiCount+" last 1 h</span></h2>"+
+   "<div class='muted' style='margin-bottom:10px'>Audit trail: every configuration change with provenance. <b>⚡ AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
+   "<div class='card' style='overflow:auto'><table style='width:100%;border-collapse:collapse'>"+
+   "<thead><tr style='text-align:left;color:var(--dim);font-size:11px'><th style='padding:4px'>Time</th><th>Device</th><th>Action</th><th>Source</th><th>Reason</th><th>Params</th><th>Status</th></tr></thead>"+
+   "<tbody style='font-size:13px'>"+(tr||"<tr><td colspan='7' class='muted'>no decisions recorded yet</td></tr>")+"</tbody></table></div>"+
+   "<button class='ghost' onclick='api(\"clear_decisions\",{}).then(load)'>Clear decisions</button>";
+}
 function sensors(){
   const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
   const now=Math.floor(Date.now()/1000);

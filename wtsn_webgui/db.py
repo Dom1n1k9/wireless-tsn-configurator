@@ -46,6 +46,9 @@ SCHEMA = (
     "PRIMARY KEY(device_id,path));"
     "CREATE TABLE IF NOT EXISTS sonar_sweeps(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "device_id TEXT,ts INTEGER,sweep_id INTEGER,sweep TEXT);"
+    "CREATE TABLE IF NOT EXISTS ai_decisions(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "ts INTEGER,device_id TEXT,action TEXT,params TEXT,reason TEXT,source TEXT,"
+    "status TEXT);"
 )
 
 
