@@ -146,6 +146,7 @@ Recommended setup order for a new network: 1) FXMQTT broker, 2) add devices, 3) 
 
 Reply with ONLY a strict JSON object, no markdown, no extra text:
 {{"action": "<name>", "params": {{...}}, "reason": "<short reason>", "reply": "<answer in English>"}}
+The "reply" value may be several lines (a step-by-step guide is fine) — but keep it ONE JSON string: write line breaks as \\n, never as a raw newline, and do not put unescaped double-quotes inside it.
 
 Allowed actions and their params:
 - save_qos: device_id, priority(0-7), traffic_class(0-3), bandwidth_kbps, latency_ms, preemption(0-2)
@@ -166,6 +167,83 @@ If the request is informational (guidance) or you cannot map it to an allowed ac
 """
 
 
+def _repair_json(s):
+    """Escape raw newlines/tabs/CR that appear INSIDE JSON string values —
+    the most common small-model mistake when it writes a multi-line reply."""
+    out = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                out.append(ch)
+                esc = False
+            elif ch == "\\":
+                out.append(ch)
+                esc = True
+            elif ch == '"':
+                out.append(ch)
+                in_str = False
+            elif ch == "\n":
+                out.append("\\n")
+            elif ch == "\t":
+                out.append("\\t")
+            elif ch == "\r":
+                out.append("\\r")
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+    return "".join(out)
+
+
+def parse_llm_reply(text):
+    """Turn the model's raw reply into {action, params, reason, reply}.
+
+    The model writes its OWN answer; we only need to read it reliably. So:
+      1. strict JSON parse,
+      2. repaired JSON parse (unescaped newlines inside strings),
+      3. best-effort extraction of the reply body,
+      4. otherwise the model's full text as-is.
+    It never raises and never discards the model's words.
+    """
+    prop = {"action": "none", "params": {}, "reason": "", "reply": (text or "").strip()}
+    if not text or not text.strip():
+        return prop
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t).strip()
+    start, end = t.find("{"), t.rfind("}")
+    if start >= 0 and end > start:
+        for attempt in (t[start:end + 1], _repair_json(t[start:end + 1])):
+            try:
+                obj = json.loads(attempt)
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(obj, dict):
+                continue
+            for k in ("action", "reason", "reply"):
+                if isinstance(obj.get(k), str) and obj[k].strip():
+                    prop[k] = obj[k].strip()
+            if isinstance(obj.get("params"), dict):
+                prop["params"] = obj["params"]
+            return prop
+    m = re.search(r'"reply"\s*:\s*"', t)
+    if m:
+        body = t[m.end():].strip()
+        if body.endswith("}"):
+            body = body[:-1].strip()
+        if body.endswith('"'):
+            body = body[:-1].strip()
+        if body:
+            prop["reply"] = body
+    prop["reply"] = prop["reply"].replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
+    return prop
+
+
 def llm_chat(message, devices, history=None):
     prompt = SYSTEM_PROMPT.format(devices=", ".join(devices) or "(none)")
     msgs = [{"role": "system", "content": prompt}]
@@ -183,10 +261,10 @@ def llm_chat(message, devices, history=None):
         out = json.loads(r.read().decode())
     log("llm answered in %.1fs" % (time.time() - t0))
     text = out.get("message", {}).get("content", "")
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return {"ok": True, "reply": text.strip() or "(empty)", "action": "none"}
-    return json.loads(m.group(0))
+    prop = parse_llm_reply(text)
+    if not prop["reply"]:
+        prop["reply"] = "(empty)"
+    return prop
 
 
 def handle_chat(body):
