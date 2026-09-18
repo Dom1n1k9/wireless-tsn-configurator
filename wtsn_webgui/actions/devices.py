@@ -31,12 +31,23 @@ def _save_devices(con, body):
             add_event("config", "cnc", "reset (simulation) -> %s" % i)
     dev = body.get("device") or {}
     if dev.get("id"):
-        con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                    "last_seen,domain) VALUES(?,?,?,?,?,?,?,strftime('%s','now'),?)",
-                    (dev["id"], dev.get("name", ""), dev.get("ip", ""),
-                     dev.get("mac", ""), clamp(dev.get("kind", 0), 0, 3),
-                     dev.get("firmware", ""), clamp(dev.get("status", 0), 0, 2),
-                     dev.get("domain", "default")))
+        fields = ["name", "ip", "mac", "kind", "firmware", "status", "domain", "usb"]
+        vals = [dev.get("name", ""), dev.get("ip", ""), dev.get("mac", ""),
+                clamp(dev.get("kind", 0), 0, 3), dev.get("firmware", ""),
+                clamp(dev.get("status", 0), 0, 2), dev.get("domain", "default"),
+                dev.get("usb", "")]
+        existing = con.execute("SELECT id,usb FROM devices WHERE id=?",
+                               (dev["id"],)).fetchone()
+        if existing:
+            if not dev.get("usb") and existing[1]:
+                vals[7] = existing[1]  # keep the serial port when not re-sent
+            sets = ",".join("%s=?" % f for f in fields)
+            con.execute("UPDATE devices SET %s,last_seen=strftime('%%s','now') WHERE id=?" % sets,
+                        vals + [dev["id"]])
+        else:
+            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,"
+                        "last_seen,domain,usb) VALUES(?,?,?,?,?,?,?,strftime('%s','now'),?,?)",
+                        [dev["id"]] + vals)
         con.execute("DELETE FROM device_tsn_features WHERE device_id=?", (dev["id"],))
         for f in dev.get("tsn") or []:
             con.execute("INSERT INTO device_tsn_features(device_id,feature) VALUES(?,?)",

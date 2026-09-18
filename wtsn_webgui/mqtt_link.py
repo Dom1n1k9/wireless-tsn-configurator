@@ -80,6 +80,7 @@ def parse_listener_msg(con, topic, payload):
     ip = j.get("ip")
     kind = j.get("kind")
     rssi = j.get("rssi")
+    usb = j.get("usb") or j.get("serial")
     try:
         if "/sonar" in topic and did:
             son = j.get("sonar") or {}
@@ -123,14 +124,16 @@ def parse_listener_msg(con, topic, payload):
             # upsert without clobbering user-set columns (domain, heartbeat, ...)
             kind_v = 5 if kind == "cam" else (0 if kind == "esp32" else None)
             rssi_sql = "rssi=COALESCE(?,rssi)," if rssi is not None else ""
-            params = [fw, ip] + ([rssi] if rssi is not None else []) + [kind_v, did]
+            usb_sql = "usb=COALESCE(?,usb)," if usb else ""
+            params = [fw, ip] + ([rssi] if rssi is not None else []) + \
+                ([usb] if usb else []) + [kind_v, did]
             cur = con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now'),"
                               "firmware=COALESCE(?,firmware),ip=COALESCE(?,ip)," + rssi_sql +
-                              "kind=COALESCE(?,kind) WHERE id=?", params)
+                              usb_sql + "kind=COALESCE(?,kind) WHERE id=?", params)
             if cur.rowcount == 0:
-                con.execute("INSERT INTO devices(id,name,status,last_seen,firmware,ip,kind,rssi) "
-                            "VALUES(?,?,0,strftime('%s','now'),?,?,?,COALESCE(?,0))",
-                            (did, did, fw, ip, kind_v, rssi))
+                con.execute("INSERT INTO devices(id,name,status,last_seen,firmware,ip,kind,"
+                            "rssi,usb) VALUES(?,?,0,strftime('%s','now'),?,?,?,COALESCE(?,0),?)",
+                            (did, did, fw, ip, kind_v, rssi, usb or ""))
         elif "/ack" in topic:
             ok = j.get("ok", False)
             with state.ACK_LOCK:

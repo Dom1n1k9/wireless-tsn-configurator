@@ -34,13 +34,13 @@ def _gen_stable_devices():
     fixed = [
         {"id": "esp32-01", "name": "ESP32 Sensor", "ip": "192.168.1.10",
          "mac": "AA:BB:CC:00:01", "kind": 0,
-         "firmware": "2.0.0", "rssi": -55},
+         "firmware": "2.0.0", "rssi": -55, "usb": "ttyUSB0"},
         {"id": "esp32-02", "name": "ESP32 Sonar", "ip": "192.168.1.11",
          "mac": "AA:BB:CC:00:02", "kind": 0,
-         "firmware": "2.0.0", "rssi": -61},
+         "firmware": "2.0.0", "rssi": -61, "usb": "ttyUSB1"},
         {"id": "esp32-cam", "name": "ESP32-CAM", "ip": "192.168.1.60",
          "mac": "AA:BB:CC:00:06", "kind": 5,
-         "firmware": "2.0.0", "rssi": -58},
+         "firmware": "2.0.0", "rssi": -58, "usb": "ttyACM0"},
     ]
     for d in fixed:
         d["tsn"] = random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS)))
@@ -56,6 +56,7 @@ def _gen_stable_devices():
             "kind": kind, "firmware": "%d.%d.%d" % (random.randint(1, 5),
                       random.randint(0, 9), random.randint(0, 9)),
             "rssi": random.randint(-75, -40),
+            "usb": "ttyUSB%d" % (i + 2),
             "tsn": random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS))),
         })
     return devs
@@ -103,18 +104,18 @@ def sim_tick():
         # Re-insert user-owned devices each tick so they are stable in the list too.
         for k, kv in kept.items():
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                        "last_seen,domain,rssi) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        "last_seen,domain,rssi,usb) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                         (k, kv.get("name", ""), kv.get("ip", ""), kv.get("mac", ""),
                          kv.get("kind", 0), kv.get("firmware", ""), kv.get("status", 0),
                          kv.get("last_seen", int(time.time())), kv.get("domain", "default"),
-                         kv.get("rssi", 0)))
+                         kv.get("rssi", 0), kv.get("usb", "") or ""))
         for sd in stable:
             did = sd["id"]
             con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                        "last_seen,domain,rssi) VALUES(?,?,?,?,?,?,0,strftime('%s','now'),"
-                        "'default',?)",
+                        "last_seen,domain,rssi,usb) VALUES(?,?,?,?,?,?,0,strftime('%s','now'),"
+                        "'default',?,?)",
                         (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
-                         sd["firmware"], sd.get("rssi", 0)))
+                         sd["firmware"], sd.get("rssi", 0), sd.get("usb", "") or ""))
             prev_feats = set(r[0] for r in con.execute(
                 "SELECT feature FROM device_tsn_features WHERE device_id=?", (did,)))
             for f in sd["tsn"]:

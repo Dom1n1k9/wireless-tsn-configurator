@@ -197,9 +197,14 @@ def _create_version(con, body):
 
 
 def _list_versions(con, body):
-    versions = [dict(r) for r in con.execute(
-        "SELECT id,name,device_id,created_at FROM config_versions ORDER BY id DESC LIMIT 20")]
-    return {"ok": True, "versions": versions}
+    dev = (body or {}).get("device_id", "")
+    if dev:
+        rows = con.execute("SELECT id,name,device_id,created_at FROM config_versions "
+                           "WHERE device_id=? ORDER BY id DESC LIMIT 20", (dev,)).fetchall()
+    else:
+        rows = con.execute("SELECT id,name,device_id,created_at FROM config_versions "
+                           "ORDER BY id DESC LIMIT 20").fetchall()
+    return {"ok": True, "versions": [dict(r) for r in rows]}
 
 
 def _diff_versions(con, body):
