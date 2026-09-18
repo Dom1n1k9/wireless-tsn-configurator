@@ -394,6 +394,27 @@ def _restore_backup(con, body):
     return {"ok": True, "msg": "configuration restored"}
 
 
+def _llm_chat(con, body):
+    """Proxy to the local LLM bridge (127.0.0.1:8081). The bridge validates
+    the LLM proposal against an allowlist and executes it with source='llm'."""
+    import os
+    import urllib.request
+    url = os.environ.get("WTSN_LLM_URL", "http://127.0.0.1:8081") + "/chat"
+    data = json.dumps({"message": body.get("message", ""),
+                       "history": body.get("history") or []}).encode()
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            res = json.loads(r.read().decode())
+        add_event("config", "llm",
+                  "LLM: %s -> %s" % (body.get("message", "")[:60],
+                                     res.get("action", "?")))
+        return res
+    except Exception as ex:  # noqa: BLE001
+        return {"ok": False, "msg": "LLM bridge unavailable: %s" % ex}
+
+
 def _clear_decisions(con, body):
     n = con.execute("DELETE FROM ai_decisions").rowcount
     con.commit()
@@ -409,6 +430,7 @@ HANDLERS = {
     "metrics": _metrics,
     "clear_metrics": _clear_metrics,
     "clear_decisions": _clear_decisions,
+    "llm_chat": _llm_chat,
     "create_version": _create_version,
     "list_versions": _list_versions,
     "diff_versions": _diff_versions,

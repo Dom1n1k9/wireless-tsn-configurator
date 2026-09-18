@@ -126,7 +126,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["decisions","AI Decisions"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["domains","Domains"],["versions","Config Versions"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["decisions","AI Decisions"],["assistant","AI Assistant"],["architecture","Architecture"],["help","Help"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -157,6 +157,7 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
    else if(p==="metrics"){m.innerHTML=metrics();mtLoad();}
    else if(p==="sensors")m.innerHTML=sensors();
    else if(p==="decisions")m.innerHTML=decisions();
+   else if(p==="assistant"){m.innerHTML=assistant();llmLoad()}
    else if(p==="architecture"){m.innerHTML=architecture();archGo();}
    else if(p==="help")m.innerHTML=help();
    else if(p==="settings")m.innerHTML=settings();}
@@ -399,6 +400,37 @@ function decisions(){
    "<thead><tr style='text-align:left;color:var(--dim);font-size:11px'><th style='padding:4px'>Time</th><th>Device</th><th>Action</th><th>Source</th><th>Reason</th><th>Params</th><th>Status</th></tr></thead>"+
    "<tbody style='font-size:13px'>"+(tr||"<tr><td colspan='7' class='muted'>no decisions recorded yet</td></tr>")+"</tbody></table></div>"+
    "<button class='ghost' onclick='api(\"clear_decisions\",{}).then(load)'>Clear decisions</button>";
+}
+/* ================= AI Assistant (local LLM) ================= */
+let LLM_HIST=[];
+function assistant(){
+  return "<h2>AI Assistant <span class='badge' style='font-size:12px'>local LLM</span></h2>"+
+   "<div class='muted' style='margin-bottom:10px'>Ask in any language — the local LLM (Raspberry Pi) proposes a TSN action, it is validated against an allowlist and executed with provenance <b>⚡ LLM</b> (see AI Decisions). Examples: <i>„zvyš priority kamery na 6“</i>, <i>„otvor TAS gate 4 ms pre esp32-cam“</i>, <i>„presuň grandmastera na rpi-01“</i>.</div>"+
+   "<div class='card' style='height:420px;overflow-y:auto;padding:10px' id='llm_msgs'></div>"+
+   "<div class='row' style='margin-top:8px'>"+
+   "<input id='llm_in' style='flex:1;padding:8px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;color:var(--text)' placeholder='What should the network do?' onkeydown='if(event.key==\"Enter\")llmSend()'>"+
+   "<button id='llm_btn' onclick='llmSend()'>Send</button></div>";
+}
+function llmLoad(){$("llm_msgs").innerHTML=(LLM_HIST.length?"":"<div class='muted' style='padding:4px'>No messages yet.</div>")+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("")}
+function llmSend(){
+  const inp=$("llm_in");const msg=inp.value.trim();
+  if(!msg)return;
+  inp.value="";
+  LLM_HIST.push({role:"user",content:msg});
+  $("llm_msgs").innerHTML="<div class='muted' style='padding:4px'>…thinking (local LLM, may take a few seconds)</div>"+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("");
+  $("llm_btn").disabled=true;
+  api("llm_chat",{message:msg,history:LLM_HIST.slice(0,-1)}).then(j=>{
+    const txt=(j.ok?j.reply:(j.msg||"error"))+(j.executed&&j.executed.length?"\n\nExecuted:\n"+j.executed.map(e=>e.action+(e.ok?" ✓":" ✗ "+e.msg)).join("\n"):"");
+    LLM_HIST.push({role:"assistant",content:txt});
+    const m=$("llm_msgs");
+    m.innerHTML=LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content).replace(/\n/g,"<br>")+"</span></div>").join("");
+    m.scrollTop=m.scrollHeight;
+    $("llm_btn").disabled=false;
+    load();
+  }).catch(e=>{
+    $("llm_btn").disabled=false;
+    toast("LLM error: "+e,false);
+  });
 }
 function sensors(){
   const byDev={};(D.sensors||[]).forEach(s=>{const g=(byDev[s.device_id]=byDev[s.device_id]||{});g[s.sensor_id]=s});
