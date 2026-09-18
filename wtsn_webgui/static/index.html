@@ -232,7 +232,7 @@ function devRow(d){
   const aiActive=(D.ai_decisions||[]).some(r=>r.device_id===d.id&&r.source!=="user"&&now-r.ts<600);
   const ota=(D.mode==="real"&&d.firmware)?"<button class='ghost' onclick='otaDev(\""+eid+"\")'>OTA</button> ":"";
   const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
-  return "<tr><td>"+esc(d.id)+(aiActive?" <span title='AI is actively configuring this device'>⚡</span>":"")+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
+  return "<tr><td>"+esc(d.id)+(aiActive?" <span class='chip' style='color:var(--warn)' title='AI is actively configuring this device'>AI</span>":"")+"</td><td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td><td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td>"+esc(tsnFor(d.id))+"</td><td>"+ota+"<button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td><td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
 function avReset(id){if(!confirm("Reset device "+id+"? Clears its WiFi + TSN config and reboots it."))return;api("save_devices",{reset:[id]}).then(load)}
 function otaDev(id){api("start_ota",{id:id})}
 function devices(){
@@ -408,7 +408,7 @@ function loadSpark(dev){
     if(hist[key])td.innerHTML=spark(hist[key])})})}
  function decisionsTable(){
   const rows=(D.ai_decisions||[]).slice().reverse();
-  const badge=s=>s==="ai"?"<span class='chip' style='color:var(--warn)'>⚡ AI</span>":(s==="llm"?"<span class='chip' style='color:var(--pri)'>⚡ LLM</span>":"<span class='chip'>user</span>");
+  const badge=s=>s==="ai"?"<span class='chip' style='color:var(--warn)'>AI</span>":(s==="llm"?"<span class='chip' style='color:var(--pri)'>LLM</span>":"<span class='chip'>user</span>");
   const tr=rows.map(r=>{
     let p="";
     try{p=Object.entries(JSON.parse(r.params||"{}")).filter(([k])=>!["source","reason"].includes(k)).map(([k,v])=>k+"="+v).join(", ")}catch(e){p=r.params||""}
@@ -430,13 +430,13 @@ function assistant(){
   const now=Math.floor(Date.now()/1000);
   const aiCount=(D.ai_decisions||[]).filter(r=>r.source!=="user"&&now-r.ts<3600).length;
   return "<h2>AI Assistant <span class='badge' style='font-size:12px'>local LLM</span></h2>"+
-    "<div class='muted' style='margin-bottom:10px'>The local LLM (Raspberry Pi) either <b>does it for you</b> — proposes a TSN action, validated against an allowlist and executed with provenance <b>⚡ LLM</b> — or <b>guides you step by step</b> through the whole configuration (it replaces the old Help page). Examples: <i>raise the camera priority to 6</i>, <i>open a 4 ms TAS gate for esp32-cam</i>, <i>how do I configure this network from scratch?</i></div>"+
+    "<div class='muted' style='margin-bottom:10px'>The local LLM (Raspberry Pi) either <b>does it for you</b> — proposes a TSN action, validated against an allowlist and executed with provenance <b>LLM</b> — or <b>guides you step by step</b> through the whole configuration (it replaces the old Help page). Examples: <i>raise the camera priority to 6</i>, <i>open a 4 ms TAS gate for esp32-cam</i>, <i>how do I configure this network from scratch?</i></div>"+
     "<div class='card' style='height:420px;overflow-y:auto;padding:10px' id='llm_msgs'></div>"+
     "<div class='row' style='margin-top:8px'>"+
     "<input id='llm_in' style='flex:1;padding:8px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;color:var(--text)' placeholder='What should the network do? Or ask how to configure it…' onkeydown='if(event.key==\"Enter\")llmSend()'>"+
     "<button id='llm_btn' onclick='llmSend()'>Send</button></div>"+
     "<h3 style='margin-top:18px'>AI Decisions <span class='badge' style='font-size:12px'>"+aiCount+" last 1 h</span></h3>"+
-    "<div class='muted' style='margin-bottom:8px'>Audit trail: every configuration change with provenance. <b>⚡ AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
+    "<div class='muted' style='margin-bottom:8px'>Audit trail: every configuration change with provenance. <b>AI</b> = decided by the policy engine on the RPi (person+PIR → QoS/TAS, gPTP offset → grandmaster swap, latency → stream reservation). Rollback: <b>Config Versions</b> page.</div>"+
     decisionsTable();
 }
 function llmLoad(){$("llm_msgs").innerHTML=(LLM_HIST.length?"":"<div class='muted' style='padding:4px'>No messages yet.</div>")+LLM_HIST.map(h=>"<div style='margin:4px 0;text-align:"+(h.role==="user"?"right":"left")+"'><span class='chip'>"+(h.role==="user"?"you":"AI")+"</span> <span style='font-size:13px'>"+esc(h.content)+"</span></div>").join("")}
