@@ -22,6 +22,9 @@ MAX_FW = 8 << 20
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 FW_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(bin|img|hex)")
+CLIP_DIR = os.environ.get("WTSN_CLIP_DIR",
+                          os.path.join(os.path.expanduser("~"), "wtsn-ai", "clips"))
+CLIP_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mjpeg|jpg|jpeg|png)$")
 
 
 class WSHub:
@@ -132,6 +135,8 @@ def make_handler():
                 self._send(json.dumps(get_events()).encode())
             elif p.startswith("/fw/"):
                 self._serve_fw(p[len("/fw/"):])
+            elif p.startswith("/clip/"):
+                self._serve_clip(p[len("/clip/"):])
             else:
                 self._send(_load_html(), "text/html; charset=utf-8")
 
@@ -212,6 +217,28 @@ def make_handler():
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+
+        def _serve_clip(self, rel):
+            rel = rel.replace("\\", "/")
+            parts = [seg for seg in rel.split("/") if seg not in ("", ".")]
+            if len(parts) != 2 or not CLIP_NAME_RE.match(parts[1]):
+                self.send_error(404)
+                return
+            base = os.path.realpath(CLIP_DIR)
+            path = os.path.realpath(os.path.join(base, *parts))
+            if os.path.commonpath([base, path]) != base or not os.path.isfile(path):
+                self.send_error(404)
+                return
+            ctype = "video/mjpeg" if parts[1].lower().endswith(".mjpeg") else \
+                    "image/jpeg"
+            size = os.path.getsize(path)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            with open(path, "rb") as f:
+                self.wfile.write(f.read())
 
         def do_POST(self):
             if not self._check_auth():

@@ -163,12 +163,36 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
    else if(p==="settings")m.innerHTML=settings();}
 
 function execAll(){api("exec_all",{}).then(load)}
+function aiClipUrl(id,path){
+  const f=String(path||"").replace(/^\/ai\//,"");
+  return "/clip/"+encodeURIComponent(id)+"/"+encodeURIComponent(f);
+}
+function playClip(id,path,title){
+  const old=document.getElementById("replayOv");
+  if(old)old.remove();
+  const ov=document.createElement("div");
+  ov.id="replayOv";
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px";
+  ov.innerHTML="<div style='color:var(--text);font-weight:600'>"+(title||"AI clip")+"</div>"+
+    "<img src='"+aiClipUrl(id,path)+"' style='max-width:90vw;max-height:70vh;border-radius:8px;background:#000'>"+
+    "<button class='ghost' onclick='document.getElementById(\"replayOv\").remove()'>Close</button>";
+  document.body.appendChild(ov);
+}
 function camCell(d){
   const isCam=(d.kind===5)||/cam/i.test(d.id||"");
   if(!isCam||!d.ip)return "<span class='muted'>-</span>";
   const rec=(D.recordings||[]).filter(r=>(r.device_id===d.id)).length;
   let s="";
   if(rec>0)s=" <span class='chip' data-dev='"+esc(d.id)+"' onclick='showRec(\""+esc(d.id)+"\")' style='cursor:pointer;color:var(--sec)'>"+rec+" clips</span>";
+  const aiRecs=(D.recordings||[]).filter(r=>r.device_id===d.id&&(r.path||"").startsWith("/ai/"))
+    .sort((a,b)=>(b.recorded_at||0)-(a.recorded_at||0));
+  if(aiRecs.length){
+    const last=aiRecs[0];
+    return "<div style='text-align:center;line-height:1.2'>"+
+     "<div><img src='/clip/"+esc(d.id)+"/last.jpg' style='width:96px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' title='last AI detection (recorded on the edge)' onerror=\"this.outerHTML='<span class=muted>no clip yet</span>'\"></div>"+
+     "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(d.id)+"\",\""+esc(last.path)+"\",\"AI clip · \"+new Date((\""+(last.recorded_at||0)+")*1000).toLocaleString()+\" · \"+\""+esc(last.path)+"\")'>▶ AI clip</button></div>"+
+     "</div>"+s;
+  }
   // Reject anything that is not a plausible IPv4 host as the camera address --
   // the ip field comes from MQTT announcements, so it must not be able to turn
   // into markup (URL is built from numeric verified parts only).
@@ -196,7 +220,11 @@ function showRec(id){
   const rows=(D.recordings||[]).filter(r=>r.device_id===id).sort((a,b)=>(b.recorded_at||0)-(a.recorded_at||0));
   if(!rows.length){toast("no recordings yet",false);return}
   $("main").innerHTML="<h2>Recordings: "+esc(id)+"</h2><div class='card'>"+
-   rows.map(r=>"<div class='row'><span>"+esc(r.path)+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+"</span></div>").join("")+
+   rows.map(r=>{
+     const isAi=(r.path||"").startsWith("/ai/");
+     const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>":"";
+     return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":"")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
+   }).join("")+
    "</div><button class='ghost' onclick='go(\"devices\")'>Back</button>"
 }
 function devRow(d){

@@ -186,6 +186,31 @@ def mjpeg_frames(url, timeout=8):
         resp.close()
 
 
+def synthetic_frames():
+    """Infinite BGR frames with a moving 'person' blob — a demo camera source
+    so the full detect -> record -> serve -> play pipeline can be exercised
+    without physical hardware. Yields (frame, box) tuples."""
+    W, H = 640, 480
+    x = 0
+    while True:
+        img = np.zeros((H, W, 3), np.uint8)
+        img[:] = (42, 38, 32)
+        cv2.line(img, (0, H - 80), (W, H - 80), (80, 78, 70), 2)
+        x = (x + 7) % (W + 140) - 70
+        bw, bh = 72, 150
+        y2 = H - 80
+        y1 = y2 - bh
+        x1 = x
+        cv2.circle(img, (x1 + bw // 2, y1 - 20), 22, (0, 190, 255), -1)
+        cv2.rectangle(img, (x1, y1), (x1 + bw, y2), (0, 190, 255), -1)
+        cv2.putText(img, time.strftime("%H:%M:%S"), (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (210, 210, 210), 1)
+        cv2.putText(img, "SYNTHETIC", (W - 110, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 120, 120), 1)
+        yield img, (max(0, x1), max(0, y1 - 42), min(W, x1 + bw), y2)
+        time.sleep(0.05)
+
+
 class Camera:
     def __init__(self, cfg):
         self.id = cfg["id"]
@@ -211,62 +236,97 @@ class Camera:
              "motion": 1 if self.triggered else 0, "classes": brief}))
         if self.triggered:
             log("%s: MOTION TRIGGER -> %s" % (self.id, brief))
-            self.relay.set()
+
+    def _frame_and_dets(self, yolo, conf):
+        """Read one frame (real MJPEG stream or synthetic) and detect objects."""
+        if self.url == "synthetic":
+            if getattr(self, "_syn", None) is None:
+                self._syn = synthetic_frames()
+            frame, box = next(self._syn)
+            dets = [("person", 0.9, *box)]
+            return frame, dets
+        frame = next(mjpeg_frames(self.url))
+        try:
+            dets = yolo.detect(frame)
+        except Exception as ex:  # noqa: BLE001
+            log("%s: detect error: %s" % (self.id, ex))
+            dets = []
+        return frame, dets
+
+    def record_clip(self, yolo, conf):
+        """Record a short annotated MJPEG clip and store it for the GUI."""
+        cdir = os.path.join(CLIP_DIR, self.id)
+        os.makedirs(cdir, exist_ok=True)
+        ts = int(time.time())
+        path = os.path.join(cdir, "clip_%d.mjpeg" % ts)
+        n = int(conf.get("clip_frames", 20))
+        delay = float(conf.get("clip_delay", 0.05))
+        boundary = b"----wtsnclip"
+        frames = []
+        last_draw = None
+        for _ in range(n):
+            try:
+                frame, dets = self._frame_and_dets(yolo, conf)
+            except Exception:  # noqa: BLE001
+                break
+            draw = frame.copy()
+            want = conf.get("detect", ["person"])
+            for nm, c, x1, y1, x2, y2 in dets:
+                col = (0, 0, 255) if nm in want else (255, 200, 0)
+                cv2.rectangle(draw, (x1, y1), (x2, y2), col, 2)
+                cv2.putText(draw, "%s %.2f" % (nm, c), (x1, max(12, y1 - 4)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+            last_draw = draw
+            ok, jpg = cv2.imencode(".jpg", draw, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ok:
+                frames.append(jpg.tobytes())
+            time.sleep(delay)
+        if not frames or last_draw is None:
+            return None
+        try:
+            with open(path, "wb") as f:
+                for fb in frames:
+                    f.write(b"\r\n" + boundary + b"\r\nContent-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n" + fb)
+                f.write(b"\r\n" + boundary + b"--\r\n")
+            cv2.imwrite(os.path.join(cdir, "last.jpg"), last_draw,
+                        [cv2.IMWRITE_JPEG_QUALITY, 80])
+            # keep the most recent 10 clips
+            clips = sorted(f for f in os.listdir(cdir) if f.endswith(".mjpeg"))
+            for old in clips[:-10]:
+                try:
+                    os.remove(os.path.join(cdir, old))
+                except OSError:
+                    pass
+            keep = [c for c in clips if os.path.exists(os.path.join(cdir, c))][-10:]
+            mqtt_cli.publish("tsn/cam/recordings", json.dumps(
+                {"id": self.id, "recordings": ["/ai/" + c for c in keep]}))
+            log("%s: recorded clip %s (%d frames)" % (self.id, os.path.basename(path), len(frames)))
+            return path
+        except Exception as ex:  # noqa: BLE001
+            log("%s: clip save error: %s" % (self.id, ex))
+            return None
 
     def work(self, yolo, conf):
         while not self.relay.is_set():
             self.triggered = False
-            frame = None
             try:
-                frame = next(mjpeg_frames(self.url))
+                frame, dets = self._frame_and_dets(yolo, conf)
             except Exception as ex:  # noqa: BLE001
                 log("%s: stream unavailable (%s) - retrying" % (self.id, ex.__class__.__name__))
                 time.sleep(conf.get("interval_s", 5))
                 continue
-            try:
-                dets = yolo.detect(frame)
-            except Exception as ex:  # noqa: BLE001
-                log("%s: detect error: %s" % (self.id, ex))
-                dets = []
             self.last_dets = dets
             self.last_person = 1 if any(n == "person" for n, *_ in dets) else 0
             want = conf.get("detect", ["person"])
             target = (want == ["all"] and dets) or \
                      any(n in want for n, *_ in dets)
             self.triggered = bool(target)
-            # annotate + save a thumbnail of the latest detection
-            if dets:
-                draw = frame.copy()
-                for n, c, x1, y1, x2, y2 in dets:
-                    col = (0, 0, 255) if n in want else (255, 200, 0)
-                    cv2.rectangle(draw, (x1, y1), (x2, y2), col, 2)
-                    cv2.putText(draw, "%s %.2f" % (n, c), (x1, max(12, y1 - 4)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
-                self.save_clip(draw, conf)
+            if target:
+                self.record_clip(yolo, conf)
             self.last_ok = time.time()
             self.publish(mqtt_cli, conf)
             time.sleep(conf.get("interval_s", 5))
-
-
-    def save_clip(self, draw, conf):
-        try:
-            cdir = os.path.join(CLIP_DIR, self.id)
-            os.makedirs(cdir, exist_ok=True)
-            ts = int(time.time())
-            thumb = os.path.join(cdir, "last_%d.jpg" % ts)
-            cv2.imwrite(thumb, draw, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            # keep only the most recent 30 thumbnails
-            for f in sorted(os.listdir(cdir))[:-30]:
-                try:
-                    os.remove(os.path.join(cdir, f))
-                except OSError:
-                    pass
-            # notify the web GUI recordings list so the device shows "clips"
-            mqtt_cli.publish("tsn/cam/recordings", json.dumps(
-                {"id": self.id, "recordings": ["/ai/%s" % f for f in
-                                                sorted(os.listdir(cdir))[-1:]]}))
-        except Exception as ex:  # noqa: BLE001
-            log("%s: clip save error: %s" % (self.id, ex))
 
 
 def load_config():
@@ -312,7 +372,7 @@ def main():
     threads = []
     for cc in conf.get("cameras", []):
         cam = Camera(cc)
-        if yolo:
+        if yolo or cc.get("url") == "synthetic":
             t = threading.Thread(target=cam.work, args=(yolo, conf), daemon=True)
         else:
             def idle(c=cam, cf=conf):
