@@ -168,6 +168,15 @@ class WebGuiActionTest(unittest.TestCase):
         finally:
             state.DB_SIM = saved
 
+    def test_sim_fleet_deterministic(self):
+        from wtsn_webgui import sim
+        a = [d["id"] for d in sim._gen_stable_devices()]
+        b = [d["id"] for d in sim._gen_stable_devices()]
+        self.assertEqual(a, b)
+        for needed in ("esp32-01", "esp32-02", "esp32-cam", "esp32-03", "stm32-01"):
+            self.assertIn(needed, a)
+        self.assertFalse(any(x.startswith("rpi") for x in a))
+
     def test_ping_sim_records_latency(self):
         self.act("save_devices", {"device": {"id": "p1"}})
         state.PING_OUT.clear()

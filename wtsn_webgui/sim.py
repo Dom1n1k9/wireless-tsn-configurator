@@ -1,4 +1,5 @@
 """Simulation engine: fabricates devices, sensors and a realistic frame flow."""
+import copy
 import json
 import random
 import threading
@@ -7,59 +8,55 @@ import time
 from . import state
 from .db import add_event, connect
 
-PROFILES = [(0, "esp32", "192.168.1.10", "ESP32 Gateway"),
-            (2, "rpi", "192.168.1.20", "Raspberry Pi"),
-            (0, "linux", "192.168.1.30", "Linux Node"),
-            (3, "stm32", "192.168.1.40", "STM32 Sensor"),
-            (0, "nxp", "192.168.1.50", "NXP Node"),
-            (5, "esp32-cam", "192.168.1.60", "ESP32-CAM")]
 TSN_FUNCS = ["802.1Q QoS", "802.1Q VLAN", "gPTP 802.1AS", "802.1Qbv TAS",
              "802.1Qbu Preemption", "OPC UA", "OPC UA PubSub", "FX Multicast"]
+
+# The simulated fleet is a fixed, explicit set. It is deterministic (no random
+# selection) so a webgui restart always shows the same network and every device
+# referenced by demo configuration (streams, VLANs, time sync) always exists.
+# The IDs are also stable across ticks so sensors/status drift in place. Note
+# there is deliberately no simulated "rpi" node: the Raspberry Pi is the CNC /
+# edge host itself, not a TSN endpoint, and a fake one would shadow it.
+_QOS, _VLAN, _GPTP, _TAS, _PRE, _OpcUa, _PubSub, _FX = TSN_FUNCS
+_SIM_FLEET = [
+    # kind 0 = TSN endpoint (sensor/gateway), 3 = STM32, 5 = camera
+    {"id": "esp32-01", "name": "ESP32 Sensor", "ip": "192.168.1.10",
+     "mac": "AA:BB:CC:00:01", "kind": 0, "firmware": "2.0.0", "rssi": -55,
+     "usb": "ttyUSB0", "tsn": [_QOS, _VLAN, _GPTP, _TAS, _PRE, _OpcUa]},
+    {"id": "esp32-02", "name": "ESP32 Sonar", "ip": "192.168.1.11",
+     "mac": "AA:BB:CC:00:02", "kind": 0, "firmware": "2.0.0", "rssi": -61,
+     "usb": "ttyUSB1", "tsn": [_QOS, _VLAN, _GPTP, _TAS, _FX]},
+    {"id": "esp32-cam", "name": "ESP32-CAM", "ip": "192.168.1.60",
+     "mac": "AA:BB:CC:00:06", "kind": 5, "firmware": "2.0.0", "rssi": -58,
+     "usb": "ttyACM0", "tsn": [_QOS, _VLAN, _OpcUa, _FX]},
+    {"id": "esp32-03", "name": "ESP32 Gateway", "ip": "192.168.1.12",
+     "mac": "AA:BB:CC:00:03", "kind": 0, "firmware": "1.8.3", "rssi": -63,
+     "usb": "ttyUSB2", "tsn": [_QOS, _VLAN, _GPTP, _PubSub, _FX]},
+    {"id": "stm32-01", "name": "STM32 Sensor", "ip": "192.168.1.40",
+     "mac": "AA:BB:CC:00:04", "kind": 3, "firmware": "1.4.0", "rssi": -66,
+     "usb": "ttyUSB3", "tsn": [_QOS, _GPTP, _TAS, _OpcUa]},
+    {"id": "nxp-01", "name": "NXP Node", "ip": "192.168.1.50",
+     "mac": "AA:BB:CC:00:05", "kind": 0, "firmware": "2.1.0", "rssi": -70,
+     "usb": "ttyUSB4", "tsn": [_QOS, _VLAN, _TAS, _PRE, _PubSub]},
+    {"id": "linux-01", "name": "Linux Node", "ip": "192.168.1.30",
+     "mac": "AA:BB:CC:00:07", "kind": 0, "firmware": "3.0.1", "rssi": -52,
+     "usb": "ttyUSB5", "tsn": [_QOS, _VLAN, _GPTP, _OpcUa, _PubSub]},
+]
 
 SIM_STABLE_DEVICES = None
 SIM_STABLE_LOCK = threading.Lock()
 
 
 def _gen_stable_devices():
-    """Generate a fixed simulated device set once. Reused every tick so the device
-    list stays constant while sensor values / status continue to drift.
+    """Return the fixed simulated device set (deep-copied so per-tick mutations
+    never leak into the template). Reused every tick so the device list stays
+    constant while sensor values / status continue to drift.
 
-    esp32-01 and esp32-02 are always present: the first carries the sensor
-    add-on board (BME280 + light + PIR + WiFiVision), the second the micro:bit
-    display/sync board plus the panning sonar. The rest are picked at random.
+    esp32-01 carries the sensor add-on board (BME280 + light + PIR +
+    WiFiVision), esp32-02 the micro:bit display/sync board plus the panning
+    sonar, esp32-cam the camera. The rest cover the supported endpoint kinds.
     """
-    devs = []
-    n = random.randint(3, 5)
-    per = {}
-    fixed = [
-        {"id": "esp32-01", "name": "ESP32 Sensor", "ip": "192.168.1.10",
-         "mac": "AA:BB:CC:00:01", "kind": 0,
-         "firmware": "2.0.0", "rssi": -55, "usb": "ttyUSB0"},
-        {"id": "esp32-02", "name": "ESP32 Sonar", "ip": "192.168.1.11",
-         "mac": "AA:BB:CC:00:02", "kind": 0,
-         "firmware": "2.0.0", "rssi": -61, "usb": "ttyUSB1"},
-        {"id": "esp32-cam", "name": "ESP32-CAM", "ip": "192.168.1.60",
-         "mac": "AA:BB:CC:00:06", "kind": 5,
-         "firmware": "2.0.0", "rssi": -58, "usb": "ttyACM0"},
-    ]
-    for d in fixed:
-        d["tsn"] = random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS)))
-        devs.append(d)
-    per = {"esp32": 2}
-    for i in range(n):
-        kind, base, ip, name = random.choice(PROFILES)
-        per.setdefault(base, 0)
-        per[base] += 1
-        did = "%s-%02d" % (base, per[base])
-        devs.append({
-            "id": did, "name": name, "ip": ip, "mac": "AA:BB:CC:%02d:%02d" % (i, kind),
-            "kind": kind, "firmware": "%d.%d.%d" % (random.randint(1, 5),
-                      random.randint(0, 9), random.randint(0, 9)),
-            "rssi": random.randint(-75, -40),
-            "usb": "ttyUSB%d" % (i + 2),
-            "tsn": random.sample(TSN_FUNCS, random.randint(4, len(TSN_FUNCS))),
-        })
-    return devs
+    return copy.deepcopy(_SIM_FLEET)
 
 
 def sim_tick():
