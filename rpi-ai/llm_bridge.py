@@ -142,7 +142,7 @@ You have TWO jobs, and you ALWAYS answer in English (even if the user writes in 
    GUIDE, never DO: "how do I ...", "how to ...", "what is ...", "what should I ...",
    "explain ...", "which page ...", "help", "from scratch", "walk me through",
    "a guide", "first steps". Explain step by step using the real GUI
-   pages/buttons below. Keep guidance short and practical (max ~120 words),
+   pages/buttons below. Keep guidance short and practical (max ~80 words),
    no marketing.
 
 RULE: a question is never an order. Even if you know exactly which action would
@@ -166,7 +166,14 @@ Recommended setup order for a new network: 1) FXMQTT broker, 2) add devices, 3) 
 
 Reply with ONLY a strict JSON object, no markdown, no extra text:
 {{"action": "<name>", "params": {{...}}, "reason": "<short reason>", "reply": "<answer in English>"}}
-The "reply" value may be several lines (a step-by-step guide is fine) — but keep it ONE JSON string: write line breaks as \\n, never as a raw newline, and do not put unescaped double-quotes inside it.
+Keep "reply" SHORT so the answer streams back quickly:
+- For an executed action: ONE short sentence confirming what was done (e.g.
+  "Done: set esp32-02 QoS priority to 5 and deployed it."). Do NOT re-explain
+  steps you already performed.
+- For a guide: a compact step-by-step list, max ~80 words total.
+The "reply" value may be several lines only for a guide — but keep it ONE JSON
+string: write line breaks as \\n, never as a raw newline, and do not put
+unescaped double-quotes inside it.
 
 Allowed actions and their params:
 - save_qos: device_id, priority(0-7), traffic_class(0-3), bandwidth_kbps, latency_ms, preemption(0-2)
@@ -280,7 +287,7 @@ def llm_chat(message, devices, history=None):
             msgs.append({"role": r, "content": str(h.get("content", ""))[:2000]})
     msgs.append({"role": "user", "content": str(message)[:2000]})
     payload = json.dumps({"model": MODEL, "messages": msgs, "stream": False,
-                          "options": {"temperature": 0.1, "num_predict": 700}}).encode()
+                          "options": {"temperature": 0.1, "num_predict": 400}}).encode()
     req = urllib.request.Request(OLLAMA_URL + "/api/chat", data=payload,
                                  headers={"Content-Type": "application/json"})
     t0 = time.time()
