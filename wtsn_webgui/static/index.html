@@ -1024,23 +1024,30 @@ function metrics(){
    "<span class='muted'>Summary window</span>"+
    "<select id=mt_win2 onchange='mtLoad()'><option value=3600>1 h totals</option><option value=86400 selected>24 h totals</option><option value=604800>7 d totals</option></select>"+
    "<span class='spacer'></span><button class='ghost' onclick='api(\"clear_metrics\",{}).then(load)'>Clear history</button></div><div id=mt_body><div class='muted'>loading...</div></div></div>"}
-function mtLoad(){fetch("/api/actions/metrics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({window:parseInt($("mt_win").value)||300,window2:parseInt($("mt_win2").value)||86400})}).then(r=>r.json()).then(j=>{
-  const b=$("mt_body");if(!b)return;
-  if(!j.ok){b.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}
-  const L=j.latency||{};const T=j.timesync||{};
-  const latSum=(L.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtMs(s.avg)+"</td><td>"+fmtMs(s.mn)+"</td><td>"+fmtMs(s.mx)+"</td><td>"+s.n+"</td></tr>").join("");
-  const synSum=(T.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtNs(s.avg)+"</td><td>"+fmtNs(s.mn)+"</td><td>"+fmtNs(s.mx)+"</td><td>"+fmtNs(s.jitter)+"</td><td>"+s.n+"</td></tr>").join("");
-  const latAll=(L.points||[]).length;
-  const synAll=(T.points||[]).length;
-  b.innerHTML=
-   "<h3>End-to-end latency (control plane ping RTT)</h3>"+
-   "<div class='row'><span class='muted'>summary (1 h window)</span></div>"+
-   "<table><tr><th>device</th><th>avg</th><th>min</th><th>max</th><th>samples</th></tr>"+(latSum||"<tr><td colspan=5 class='muted'>no latency samples</td></tr>")+"</table>"+
-   "<div style='margin-top:10px'>"+metricChart(L.points,{unit:"ms",color:"var(--sec)"})+"</div>"+
-   "<h3 style='margin-top:22px'>gPTP clock offset / jitter</h3>"+
-   "<div class='row'><span class='muted'>summary (1 h window)</span></div>"+
-   "<table><tr><th>device</th><th>avg offset</th><th>min</th><th>max</th><th>avg jitter</th><th>reports</th></tr>"+(synSum||"<tr><td colspan=6 class='muted'>no sync reports</td></tr>")+"</table>"+
-   "<div style='margin-top:10px'>"+metricChart(T.points,{unit:"ns",color:"var(--warn)"})+"</div>"+
+function mtLoad(){
+ const w1=parseInt($("mt_win").value)||300,w2=parseInt($("mt_win2").value)||86400;
+ fetch("/api/actions/metrics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({window:w1,window2:w2})}).then(r=>r.json()).then(j=>{
+   const b=$("mt_body");if(!b)return;
+   if(!j.ok){b.innerHTML="<div class='muted'>"+esc(j.msg)+"</div>";return}
+   const L=j.latency||{};const T=j.timesync||{};
+   const wpx=Math.max(360,Math.min(1240,(b.clientWidth||760)-8));
+   const wlab=s=>s===300?"5 min":s===900?"15 min":s===3600?"1 h":s===7200?"2 h":"custom";
+   const wlab2=s=>s===3600?"1 h":s===86400?"24 h":s===604800?"7 d":"custom";
+   const latSum=(L.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtMs(s.avg)+"</td><td>"+fmtMs(s.mn)+"</td><td>"+fmtMs(s.mx)+"</td><td>"+s.n+"</td></tr>").join("");
+   const synSum=(T.summary||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td>"+fmtNs(s.avg)+"</td><td>"+fmtNs(s.mn)+"</td><td>"+fmtNs(s.mx)+"</td><td>"+fmtNs(s.jitter)+"</td><td>"+s.n+"</td></tr>").join("");
+   const latAll=(L.points||[]).length;
+   const synAll=(T.points||[]).length;
+   b.innerHTML=
+    "<h3>End-to-end latency (control plane ping RTT)</h3>"+
+    "<div class='row'><span class='muted'>Per-device summary — last "+wlab2(w2)+". avg/min/max of all Ping RTTs in that window; 'pings' = sample count.</span></div>"+
+    "<table><tr><th>device</th><th>avg (ms)</th><th>min (ms)</th><th>max (ms)</th><th>pings</th></tr>"+(latSum||"<tr><td colspan=5 class='muted'>no latency samples</td></tr>")+"</table>"+
+    "<div class='row' style='margin-top:10px'><span class='muted'>Samples — last "+wlab(w1)+". One line per device; the legend below the chart shows which color is which device.</span></div>"+
+    "<div style='margin-top:4px'>"+metricChart(L.points,{w:wpx,unit:"ms"})+"</div>"+
+    "<h3 style='margin-top:22px'>gPTP clock offset / jitter</h3>"+
+    "<div class='row'><span class='muted'>Per-device summary — last "+wlab2(w2)+". avg/min/max clock offset vs grandmaster and mean jitter; 'reports' = gPTP report count.</span></div>"+
+    "<table><tr><th>device</th><th>avg offset (ns)</th><th>min (ns)</th><th>max (ns)</th><th>avg jitter (ns)</th><th>reports</th></tr>"+(synSum||"<tr><td colspan=6 class='muted'>no sync reports</td></tr>")+"</table>"+
+    "<div class='row' style='margin-top:10px'><span class='muted'>Samples — last "+wlab(w1)+". One line per device; the legend below the chart shows which color is which device.</span></div>"+
+    "<div style='margin-top:4px'>"+metricChart(T.points,{w:wpx,unit:"ns"})+"</div>"+
    "<h3 style='margin-top:22px'>Sync status</h3>"+
    "<table><tr><th>device</th><th>status</th><th>reports</th></tr>"+((T.status||[]).map(s=>"<tr><td>"+esc(s.device_id)+"</td><td><span class='badge "+syncBadge(s.status)+"'>"+esc(s.status)+"</span></td><td>"+s.n+"</td></tr>").join("")||"<tr><td colspan=3 class='muted'>no reports</td></tr>")+"</table>"+
    "<div class='muted' style='margin-top:8px'>"+fmtTime(j.now)+" — points shown: "+latAll+" latency · "+synAll+" sync</div>"})
