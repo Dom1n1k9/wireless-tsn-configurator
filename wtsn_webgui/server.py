@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import struct
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -129,6 +130,7 @@ def make_handler():
             elif p == "/api/data":
                 d = load_all()
                 d["mode"] = state.MODE["mode"]
+                d["host"] = socket.gethostname()
                 with state.EVENT_LOCK:
                     d["events"] = list(state.EVENTS)[:300]
                 self._send(json.dumps(d).encode())

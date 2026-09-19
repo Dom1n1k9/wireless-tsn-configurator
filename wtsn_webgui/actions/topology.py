@@ -15,6 +15,7 @@ The front-end consumes this JSON and renders it as an animated flow diagram.
 """
 
 import re
+import socket
 
 # ---------------------------------------------------------------------------
 # Firmware pin map (must mirror esp32-agent/components/wtsn_agent/wtsn_sensor.c
@@ -218,7 +219,9 @@ def _topology(con, body):
     flows = []
 
     # ---- core infrastructure ------------------------------------------
-    nodes.append({"id": "pc", "type": "cnc", "label": "PC / CNC",
+    host = socket.gethostname()
+    nodes.append({"id": "pc", "type": "cnc",
+                  "label": host + " / CNC",
                   "sub": "configurator + web GUI", "power": "-",
                   "status": "online"})
     nodes.append({"id": "broker", "type": "broker", "label": "MQTT broker",
@@ -394,7 +397,8 @@ def _topology(con, body):
                       "telemetry (tsn/sensors, tsn/ptp) flows back to the GUI" ]})
     flows.append({"id": "fx", "title": "OPC UA FX / C2C field exchange",
                   "steps": [
-                      "field server (PC or selected node) publishes on tsn/fx/data",
+                      "field server (%s or selected node) publishes on tsn/fx/data"
+                      % socket.gethostname(),
                       "participants exchange values via the broker",
                       "stream reservations go out on tsn/fx/cmd/<talker>" ]})
     flows.append({"id": "tsn", "title": "TSN data plane over WiFi",
@@ -404,7 +408,8 @@ def _topology(con, body):
                       "(AC_VO/VI/BE/BK) by the radio layer",
                       "802.1Qbv TAS / GCL gates time-critical traffic",
                       "802.1Qcc reserved stream is delivered to the listener(s)",
-                      "gPTP 802.1AS keeps device clocks synchronized (PC or ESP = GM)" ]})
+                      "gPTP 802.1AS keeps device clocks synchronized "
+                      "(%s or ESP = GM)" % socket.gethostname() ]})
 
     return {"ok": True, "mode": mode or "",
             "broker": broker, "broker_ok": brok_ok,
