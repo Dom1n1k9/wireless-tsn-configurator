@@ -1,0 +1,13 @@
+[Unit]
+Description=WTSN daily backup (DB + configs)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=wtsn
+WorkingDirectory=/home/wtsn/wtsn-ai
+ExecStart=/home/wtsn/wtsn-ai/backup.sh
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

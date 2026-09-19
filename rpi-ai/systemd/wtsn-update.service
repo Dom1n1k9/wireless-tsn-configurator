@@ -1,0 +1,12 @@
+[Unit]
+Description=WTSN auto-update (git pull + rebuild + restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wtsn
+EnvironmentFile=/etc/wtsn/env
+WorkingDirectory=/home/wtsn/wtsn-ai
+ExecStart=/home/wtsn/wtsn-ai/update.sh
+TimeoutStartSec=10min

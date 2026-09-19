@@ -94,20 +94,58 @@ status / ack / FX on:
 | `tsn/cmd/<id>/vlan`         | in: `<vlan_id>`                        |
 | `tsn/cmd/<id>/timesync`     | in: `<mode>` (0-3)                    |
 | `tsn/cmd/<id>/tas`          | in: `<cycle_ns>`                       |
+| `tsn/cmd/<id>/stream`       | in: 802.1Qcc stream JSON (role talker/listener) |
 | `tsn/cmd/<id>/preemption`   | in: `<mode>,<emac>,<pmac>`            |
 | `tsn/cmd/<id>/status`       | in: empty -> replies on `tsn/status`    |
-| `tsn/cmd/<id>/ota`          | in: `{"url":"http://<host>/fw/x.bin"}` |
+| `tsn/cmd/<id>/wifi`         | in: `{"ssid":...,"pass":...}` (pass optional -> keeps stored) |
+| `tsn/cmd/<id>/ota`          | in: `{"url":"http://<host>/fw/x.bin"[,"size":N][,"crc32":"<hex>"]}` |
 | `tsn/cmd/<id>/ping`         | in: `1` -> ACK with `ip` + LED blink   |
-| `tsn/ack/<id>`              | out: `{"id","ok"}`                     |
+| `tsn/cmd/<id>/identify`     | in: blink LED + ACK (find-me)          |
+| `tsn/cmd/<id>/actor`        | in: relay/actor command (motion actuation) |
+| `tsn/cmd/<id>/reset`        | in: clear persisted TSN + WiFi state (de-provision) |
+| `tsn/cmd/<id>/reboot`       | in: reboot                              |
+| `tsn/cmd/<id>/factory`      | in: factory reset                       |
+| `tsn/ack/<id>`              | out: `{"id","ok"[,"ip"]}`              |
 | `tsn/status`               | out: JSON status (rssi, fw, ip)         |
-| `tsn/discover`             | out: on connect                        |
+| `tsn/discover`             | out: on connect (ip, fw, kind)          |
 | `tsn/fx/cmd/#`             | in: FX / C2C commands (e.g. stream)     |
-| `tsn/fx/data`              | in/out: shared FX data feed (motion)    |
+| `tsn/fx/data`              | in/out: shared FX data feed (motion, field samples) |
 | `tsn/fx/<id>`              | out: per-device field exchange          |
-| `tsn/sensors` / `tsn/sensors/<id>/{temp,press,hum,light,pir}` | out: telemetry |
-| `tsn/sensors/event`        | out: PIR motion events                 |
+| `tsn/sensors` / `tsn/sensors/<id>/{temp,press,hum,light,pir,...}` | out: telemetry |
+| `tsn/sensors/event`        | out: PIR / WiFiVision motion events     |
 | `tsn/lwt/<id>`             | retained "offline" last will           |
 | `tsn/ptp`                  | out: gPTP reports                      |
+
+## OTA with CRC verification
+
+`tsn/cmd/<id>/ota` accepts an optional `crc32` (unsigned hex, as computed by the web
+GUI firmware manager at upload time):
+
+- The image is downloaded to the **inactive A/B partition** (`esp_https_ota`).
+- Before rebooting, the agent **re-reads the target partition and verifies its CRC32**
+  against the expected value (`shared/wtsn_ota`, `wtsn_ota_start_checked()`).
+- **Mismatch** → the new partition is marked invalid, the previous app stays active,
+  no reboot. **Match** → reboot; if the new app still fails to validate on boot, the
+  bootloader rolls back automatically.
+
+## Sensors & WiFiVision
+
+On-board / wired sensors: **BME280** (bit-bang I2C: temp/press/hum), **TEMT6000** light,
+**HC-S501 PIR** motion, **ultrasonic sonar** distance — published on `tsn/sensors`
+(1 s cadence) with per-sensor history.
+
+**WiFiVision** (`wtsn_wifimotion`) is a device-free coarse motion detector that uses the
+ordinary WiFi link — no extra camera or PIR hardware:
+
+- **RSSI noise** — the short-term spread of RX RSSI across data packets grows markedly
+  when a person moves (moving reflector) above the static-room floor.
+- **CSI channel variance** (with `CONFIG_ESP_WIFI_CSI_ENABLED`) — human motion breaks
+  the quasi-static channel, raising per-sub-carrier magnitude variance.
+
+No raw CSI is ever streamed: each frame is reduced to a few scalars, threshold crossings
+are detected locally, and only motion/no-motion events are emitted on the **same sink as
+the wired PIR** (`tsn/sensors/event` + `tsn/fx/data`) — so it plugs straight into the
+existing FX / relay-actor / policy path.
 
 ## micro:bit display panel (wired UART)
 

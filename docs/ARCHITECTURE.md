@@ -18,28 +18,35 @@ The project is a two-part system:
 > queues and flags features (e.g. 802.1Qbu preemption) that have no radio meaning.
 
 ```
-                     ┌────────────────────────────────────────────┐
-                     │        Web GUI (Python wtsn_webgui)        │
-                     │  Devices | QoS | VLAN | TAS | Streams |     │
-                     │  FXMQTT | Monitor | Sensors | Settings      │
-                     │  sim    real  (MQTT link)  actions/ HTTP    │
-                     └──────────────────┬──────────────────────────┘
-                                        │  HTTP/WS + MQTT topics
-                     ┌──────────────────▼──────────────────────────┐
-                     │        C11 control-plane core (src/)        │
-                     │  app (composition root)                     │
-                     │  └─ managers: device, qos, vlan, timesync,  │
-                     │     tas, stream, sensors, domain,           │
-                     │     config_version, radio                   │
-                     │  └─ mvc: model + event bus                  │
-                     │  └─ db: SQLite schema + repositories        │
-                     └──────────────────┬──────────────────────────┘
-                                        │  MQTT (mosquitto)
-        ┌───────────────────────────────┼───────────────────────────────────┐
-        ▼                               ▼                                   ▼
-  tsn-node-agent                  tsn-node-simulator                eSP32 agent / CAM
-  host (Linux/RPi)                virtual nodes                     (ESP-IDF firmware)
-  iproute2 + tc                   profiles/*.ini                    zero-touch provisioning
+ ┌───────────────────────────── RPi edge node ─────────────────────────────┐
+ │  ┌──────────────────────────────────────────────────────────────────┐   │
+ │  │              Web GUI (Python wtsn_webgui, :8000)                 │   │
+ │  │ Devices | Monitor | Metrics | Sensors | AI | Architecture |      │   │
+ │  │ FXMQTT | Timesync | QoS | VLAN | TAS | Preemption | Streams      │   │
+ │  │ sim (virtual fleet + ACKs + FX data)   real (MQTT link)  actions │   │
+ │  └───────────────┬───────────────────────────────┬──────────────────┘   │
+ │                  │ HTTP/WS + MQTT topics         │ llm_chat (HTTP :8081)│
+ │  ┌───────────────▼───────────────┐   ┌───────────▼─────────────────┐    │
+ │  │  C11 control-plane core       │   │  Edge AI (rpi-ai/)          │    │
+ │  │  app (composition root)       │   │  vision_service.py          │    │
+ │  │  └─ managers: device, qos,    │   │    YOLOv4 on CAM stream     │    │
+ │  │    vlan, timesync, tas,       │   │  policy_engine.py           │    │
+ │  │    stream, sensors, domain,   │   │    autonomous rules R1..R3  │    │
+ │  │    config_version, radio      │   │  llm_bridge.py              │    │
+ │  │  └─ mvc: model + event bus    │   │    Ollama -> allowlist ->   │    │
+ │  │  └─ db: SQLite + repos        │   │    GUI action API           │    │
+ │  └───────────────┬───────────────┘   └───────────┬─────────────────┘    │
+ │  ┌───────────────▼───────────────┐   ┌───────────▼─────────────────┐    │
+ │  │  mosquitto (MQTT broker)      │   │  Ollama (qwen2.5:1.5b)      │    │
+ │  └───────────────┬───────────────┘   └─────────────────────────────┘    │
+ └──────────────────┼──────────────────────────────────────────────────────┘
+                    │  MQTT
+      ┌─────────────┼───────────────────────────────┐
+      ▼             ▼                               ▼
+  tsn-node-agent  tsn-node-simulator           ESP32 agent / CAM
+  host (Linux/RPi) virtual nodes               (ESP-IDF firmware,
+  iproute2 + tc    profiles/*.ini              zero-touch provisioning,
+                                               gPTP, sensors, OTA A/B)
 ```
 
 ## Layers (C core)
@@ -101,6 +108,12 @@ stores each snapshot's payload (up to 64 KB) in `config_versions`.
 - Discoverer → DeviceManager → DB (persisted, restored on startup)
 - Heartbeat → DeviceManager → online/offline state machine → DB + event bus
 - Sync report → TimesyncManager → `timesync_reports` DB + event bus
+- Vision: CAM MJPEG → YOLOv4 detection → `tsn/sensors/event` + ai_* sensors →
+  policy engine (R1) / GUI Sensors page
+- Policy engine: telemetry + DB state → rule (cooldown-checked) → GUI action API
+  (`source="ai"`) → same path as a human change → AI Decisions audit row
+- LLM chat: GUI `llm_chat` → bridge → Ollama → JSON proposal → allowlist/clamp
+  validation → GUI action API (`source="llm"`) → AI Decisions audit row
 
 ## Plugin Architecture
 
@@ -133,14 +146,34 @@ Decomposed package (originally a single 1,700-line file) with clear separation:
 
 | Module | Responsibility |
 |--------|----------------|
-| `state.py` | shared mutable state + locks (events, acks, mode, MQTT client lock) |
-| `db.py` | SQLite schema, migrations, event trace, loaders, history |
+| `state.py` | shared mutable state + locks (events, acks, mode, DB paths, MQTT client lock) |
+| `db.py` | SQLite schema, versioned migrations, event trace, loaders, history |
 | `mqtt_broker.py` | paho wrapper: synchronous, thread-safe broker surface (with optional TLS via `WTSN_TLS_*`) |
 | `mqtt_link.py` | real-mode broker cache + background listener loop (status/ack/discover/LWT/sensors) |
-| `sim.py` | simulation engine (stable virtual devices, sensors, frames) |
-| `actions/` | per-domain action handlers (devices, qos, vlan, tas, timesync, streams, domain, fxmqtt, misc) behind a thin dispatcher |
-| `server.py` | HTTP server, JSON API, hand-rolled WebSocket, basic auth, firmware serving |
+| `sim.py` | simulation engine — stable virtual fleet, drifting sensors, FX data, stream-status transitions, and simulated per-device deploy ACKs (timers) |
+| `actions/` | per-domain action handlers (devices, qos, vlan, tas, timesync, streams, fxmqtt, misc incl. versions/backup/`llm_chat`) behind a thin dispatcher |
+| `server.py` | HTTP server, JSON API, hand-rolled WebSocket, basic auth, firmware serving + upload (CRC32), `llm_chat` proxy to the bridge |
 | `static/index.html` | single-file SPA (plain JS, no framework/build step) |
+
+**Simulation model.** In *sim* mode no MQTT is used at all: `sim.py` owns a stable
+virtual fleet (ESP32 sensor/relay boards, ESP32-CAM, STM32, Linux) and, each tick,
+writes device rows (upsert, so per-device columns like `last_deploy_at`/`last_deploy_ok`
+survive), sensor samples, FX field-exchange rows (`fx_data`) and metrics. *Execute
+settings on controller* in sim mode reuses the exact same per-device snapshot builder as
+real mode, marks every device "deploy pending" and then fires a `threading.Timer` per
+device (150–600 ms) that lands a realistic ACK (DB + `RECENT_ACKS` + event + WebSocket);
+a short wait + one retry pass covers stragglers. This makes the whole deploy/ACK/
+retry/status flow exercisable end-to-end without hardware.
+
+**Firmware & OTA.** `server.py` serves `build/fw/` over HTTP and an upload endpoint that
+validates the file type, computes the **CRC32**, derives a version from the filename and
+records it in the `firmware` table (with device kind). The OTA action publishes
+`{"url","size","crc32"}` on `tsn/cmd/<id>/ota`; the ESP32 verifies the CRC device-side
+before rebooting (see `shared/wtsn_ota`).
+
+**LLM proxy.** The `llm_chat` action forwards the chat to the local LLM bridge
+(`WTSN_LLM_URL`, default `127.0.0.1:8081`) and renders the (allowlist-validated) executed
+actions inline. The GUI holds no model weights — it is a thin client of the bridge.
 
 **Threading model.** The web GUI uses `ThreadingHTTPServer` (one thread per request) plus
 daemon threads for the simulator, the MQTT listener and the WebSocket broadcaster. The
@@ -149,14 +182,42 @@ reconnects only on real disconnects (not on idle timeouts). The C core runs a he
 ops loop in the main thread with worker threads for discovery/MQTT; cross-thread
 communication goes through the event bus.
 
+## Edge AI (`rpi-ai/`)
+
+Three standalone Python services that run next to the GUI on the Pi and share its MQTT
+broker + SQLite DB. They deliberately have **no direct network authority**: they act by
+calling the GUI's own action API (which applies the same validation and persists the same
+state as a human operator would), and they tag each change with a provenance.
+
+| Service | Entry point | Loopback HTTP | Behaviour |
+|---------|-------------|---------------|-----------|
+| `wtsn-ai` | `vision_service.py` | — | Pulls the ESP32-CAM MJPEG stream, runs **YOLOv4-tiny** (OpenCV DNN, 80 COCO classes). On a target (default `person`): publishes a motion event on `tsn/sensors/event` (the CAM firmware records its own microSD clip), publishes `ai_detect`/`ai_person` counters as sensors, keeps a rolling thumbnail + short clip |
+| `wtsn-policy` | `policy_engine.py` | — | Polls DB/MQTT state and applies cooldowned rules through the GUI API: **R1** person+PIR → raise QoS + open TAS gate; **R2** grandmaster gPTP offset too high → switch grandmaster to the best-offset node; **R3** E2E latency too high → reserve an 802.1Qcc stream. Config: `policy.json` |
+| `wtsn-llm` | `llm_bridge.py` | `127.0.0.1:8081` | Front-end for **Ollama** (default `qwen2.5:1.5b`). Chat → strict-JSON proposal → **allowlist + clamp + known-device validation** → GUI action API with `source="llm"` → result back to chat. The model can only propose from a fixed list (`save_qos`, `save_vlan`, `save_stream`, `deploy_stream`, `ping_device`, `exec_all`, …) |
+
+**Provenance & audit.** Every configuration change carries a `source` (`user`, `ai`,
+`llm`). The **AI Decisions** table records time, source, device, action, params and
+reason; the Devices page flags devices being configured by AI. Any AI/LLM change is
+reversible via **Config Versions**.
+
+**Safety boundaries.**
+- The LLM has no socket access of its own — it is a *proposal* engine; the bridge is the
+  only thing with a GUI credential, and it enforces the allowlist.
+- Policy rules are rate-limited by per-rule cooldowns and fully logged.
+- Vision is perception-only: it emits events/counters; it never reconfigures by itself
+  (that is the policy engine's job).
+- All three are loopback/localhost-bound; Ollama and the LLM bridge are not exposed.
+
 ## Conversation / topic flow (subscriber map)
 
 | Topic | Publisher | Consumer |
 |-------|-----------|----------|
 | `tsn/cmd/<id>/*` | web GUI / any CNC | firmware agent |
-| `tsn/ack/<id>`, `tsn/status` | firmware agent | web GUI (`,` later any CNC) |
+| `tsn/ack/<id>`, `tsn/status` | firmware agent | web GUI (later any CNC) |
 | `tsn/discover` | firmware agent | web GUI + plugin |
 | `tsn/lwt/<id>` | firmware agent (retained will) | web GUI |
-| `tsn/sensors`, `tsn/sensors/<id>/...` | firmware agent | web GUI |
-| `tsn/ptp` | firmware agent (gPTP) | web GUI |
+| `tsn/sensors`, `tsn/sensors/<id>/...` | firmware agent, **vision service** (ai_* counters) | web GUI, **policy engine** |
+| `tsn/sensors/event` | firmware agent (PIR / WiFiVision), **vision service** (clip trigger) | web GUI, **policy engine**, ESP32-CAM (records clip) |
+| `tsn/ptp` | firmware agent (gPTP) | web GUI, **policy engine** (R2) |
 | `tsn/fx/cmd/<id>`, `tsn/fx/data` | web GUI / node | firmware agent / nodes |
+| GUI action API (`/api/actions/*`) | **policy engine**, **LLM bridge** (as `ai`/`llm`) | web GUI (applies with provenance) |

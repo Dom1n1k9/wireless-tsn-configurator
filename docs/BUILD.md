@@ -73,6 +73,10 @@ Security notes:
   (nginx/caddy) for HTTPS.
 - Real-mode MQTT commands are only published when the GUI is switched to **Real** mode.
 
+For the full **Raspberry Pi service deployment** (systemd units in
+`rpi-ai/systemd/`, `/etc/wtsn/env` secret store, Ollama, auto-update timer, daily
+backup, Tailscale, multi-WiFi), see [EDGE.md](EDGE.md).
+
 ## Packaging
 
 ```bash

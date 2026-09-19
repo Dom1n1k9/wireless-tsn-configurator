@@ -1,0 +1,16 @@
+[Unit]
+Description=WTSN LLM Bridge (local Ollama -> validated TSN actions)
+After=network-online.target ollama.service wtsn-webgui.service
+Wants=network-online.target ollama.service wtsn-webgui.service
+
+[Service]
+Type=simple
+User=wtsn
+EnvironmentFile=/etc/wtsn/env
+WorkingDirectory=/home/wtsn/wtsn-ai
+ExecStart=/usr/bin/python3 /home/wtsn/wtsn-ai/llm_bridge.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
