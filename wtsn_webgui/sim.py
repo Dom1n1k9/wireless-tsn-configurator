@@ -101,19 +101,30 @@ def sim_tick():
                 con.execute("DELETE FROM devices WHERE id=?", (rid,))
                 con.execute("DELETE FROM device_tsn_features WHERE device_id=?", (rid,))
                 con.execute("DELETE FROM sensors WHERE device_id=?", (rid,))
-        # Re-insert user-owned devices each tick so they are stable in the list too.
+        # Re-upsert devices each tick so they stay in the list. ON CONFLICT
+        # DO UPDATE (not INSERT OR REPLACE) so columns managed elsewhere
+        # (last_deploy_at/ok, heartbeat_at, ...) survive the tick.
         for k, kv in kept.items():
-            con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
-                        "last_seen,domain,rssi,usb) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,"
+                        "last_seen,domain,rssi,usb) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+                        " ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
+                        "ip=excluded.ip,mac=excluded.mac,kind=excluded.kind,"
+                        "firmware=excluded.firmware,status=excluded.status,"
+                        "last_seen=excluded.last_seen,domain=excluded.domain,"
+                        "rssi=excluded.rssi,usb=excluded.usb",
                         (k, kv.get("name", ""), kv.get("ip", ""), kv.get("mac", ""),
                          kv.get("kind", 0), kv.get("firmware", ""), kv.get("status", 0),
                          kv.get("last_seen", int(time.time())), kv.get("domain", "default"),
                          kv.get("rssi", 0), kv.get("usb", "") or ""))
         for sd in stable:
             did = sd["id"]
-            con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
+            con.execute("INSERT INTO devices(id,name,ip,mac,kind,firmware,status,"
                         "last_seen,domain,rssi,usb) VALUES(?,?,?,?,?,?,0,strftime('%s','now'),"
-                        "'default',?,?)",
+                        "'default',?,?)"
+                        " ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
+                        "ip=excluded.ip,mac=excluded.mac,kind=excluded.kind,"
+                        "firmware=excluded.firmware,status=0,last_seen=excluded.last_seen,"
+                        "rssi=excluded.rssi,usb=excluded.usb",
                         (did, sd["name"], sd["ip"], sd["mac"], sd["kind"],
                          sd["firmware"], sd.get("rssi", 0), sd.get("usb", "") or ""))
             prev_feats = set(r[0] for r in con.execute(
