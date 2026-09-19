@@ -1,7 +1,10 @@
 """SQLite helpers and the in-memory event trace."""
+import os
+import re
 import socket
 import sqlite3
 import time
+import zlib
 
 from . import state
 
@@ -9,6 +12,8 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
     "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER,domain TEXT DEFAULT 'default',"
     "heartbeat_at INTEGER DEFAULT 0,rssi INTEGER DEFAULT 0,usb TEXT DEFAULT '');"
+    "CREATE TABLE IF NOT EXISTS firmware(file TEXT PRIMARY KEY,version TEXT,size INTEGER,"
+    "crc32 TEXT,kind INTEGER DEFAULT -1,uploaded_at INTEGER);"
     "CREATE TABLE IF NOT EXISTS domains(id TEXT PRIMARY KEY,name TEXT,description TEXT);"
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
     "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
@@ -52,6 +57,15 @@ SCHEMA = (
 )
 
 
+def fw_version_from_name(name):
+    m = re.search(r"v?(\d+\.\d+\.\d+)", name or "")
+    return m.group(1) if m else ""
+
+
+def crc32_hex(data):
+    return "%08x" % (zlib.crc32(data) & 0xFFFFFFFF)
+
+
 def ensure_schema(con):
     con.executescript(SCHEMA)
     con.commit()
@@ -65,6 +79,25 @@ def ensure_schema(con):
         except Exception:
             pass
     con.commit()
+    try:
+        # Register firmware images already on disk (uploaded before the
+        # firmware table existed) so the GUI can list and flash them.
+        have = {r[0] for r in con.execute("SELECT file FROM firmware")}
+        for f in os.listdir(state.FW_DIR):
+            if f in have or not f.endswith((".bin", ".img", ".hex")):
+                continue
+            p = os.path.join(state.FW_DIR, f)
+            if not os.path.isfile(p):
+                continue
+            with open(p, "rb") as fh:
+                data = fh.read()
+            con.execute("INSERT INTO firmware(file,version,size,crc32,kind,uploaded_at)"
+                        " VALUES(?,?,?,?,?,?)",
+                        (f, fw_version_from_name(f), len(data),
+                         crc32_hex(data), -1, int(os.path.getmtime(p))))
+        con.commit()
+    except Exception:
+        pass
     try:
         # Older DBs created 'sensors' without a primary key, so INSERT OR REPLACE
         # appended duplicate rows. Rebuild a deduplicated table if needed.

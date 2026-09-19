@@ -7,12 +7,13 @@ import re
 import secrets
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 from . import state
 from .actions import run_action
-from .db import get_events, load_all
+from .db import connect, crc32_hex, fw_version_from_name, get_events, load_all
 
 WEB_HOST = os.environ.get("WTSN_HOST", "127.0.0.1")
 WEB_USER = os.environ.get("WTSN_WEB_USER") or None
@@ -133,6 +134,8 @@ def make_handler():
                 self._send(json.dumps(d).encode())
             elif p == "/api/events":
                 self._send(json.dumps(get_events()).encode())
+            elif p == "/api/firmware":
+                self._list_fw()
             elif p.startswith("/fw/"):
                 self._serve_fw(p[len("/fw/"):])
             elif p.startswith("/clip/"):
@@ -193,12 +196,39 @@ def make_handler():
             raw = self.rfile.read(n)
             name = os.path.basename(self.headers.get("X-Filename", ""))
             if not FW_NAME_RE.match(name):
-                name = "firmware-%d.bin" % secrets.randbelow(10 ** 8)
+                msg = ("unsupported file type: need .bin, .img or .hex (got %s)"
+                       % (name or "no name"))
+                self._send(json.dumps({"ok": False, "msg": msg}).encode())
+                return
+            kind = -1
+            dev = self.headers.get("X-Device", "")
+            if dev:
+                con = connect()
+                row = con.execute("SELECT kind FROM devices WHERE id=?", (dev,)).fetchone()
+                if row:
+                    kind = int(row[0] or 0)
+                con.close()
+            crc = crc32_hex(raw)
             path = os.path.join(state.FW_DIR, name)
             with open(path, "wb") as f:
                 f.write(raw)
-            self._send(json.dumps({"ok": True, "file": name, "size": n,
-                                    "url": "/fw/" + name}).encode())
+            con = connect()
+            con.execute("INSERT OR REPLACE INTO firmware(file,version,size,crc32,kind,uploaded_at)"
+                        " VALUES(?,?,?,?,?,?)",
+                        (name, fw_version_from_name(name), n, crc, kind, int(time.time())))
+            con.commit()
+            con.close()
+            self._send(json.dumps({"ok": True, "file": name, "size": n, "crc32": crc,
+                                   "kind": kind, "version": fw_version_from_name(name),
+                                   "url": "/fw/" + name}).encode())
+
+        def _list_fw(self):
+            con = connect()
+            rows = con.execute("SELECT file,version,size,crc32,kind,uploaded_at"
+                               " FROM firmware ORDER BY uploaded_at DESC, file DESC").fetchall()
+            con.close()
+            self._send(json.dumps({"ok": True,
+                                   "firmware": [dict(r) for r in rows]}).encode())
 
         def _serve_fw(self, name):
             name = os.path.basename(name)

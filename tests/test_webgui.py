@@ -8,6 +8,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import zlib
 
 from wtsn_webgui import state
 from wtsn_webgui.actions import run_action
@@ -432,6 +433,137 @@ class WebGuiHttpTest(unittest.TestCase):
     def test_unknown_path_404(self):
         status, _ = self.post("/api/other", {})
         self.assertEqual(status, 404)
+
+
+class WebGuiFirmwareTest(unittest.TestCase):
+    """Firmware manager: upload (type/CRC/kind), list, serve, OTA flash."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="wtsn_fw_")
+        cls._old_sim = state.DB_SIM
+        cls._old_fw = state.FW_DIR
+        state.DB_SIM = os.path.join(cls.tmp, "sim.db")
+        state.FW_DIR = os.path.join(cls.tmp, "fw")
+        os.makedirs(state.FW_DIR, exist_ok=True)
+        state.MODE["mode"] = "sim"
+        cls.srv = WTSNServer(("127.0.0.1", 0), make_handler())
+        cls.port = cls.srv.server_address[1]
+        cls.thread = threading.Thread(target=cls.srv.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        state.DB_SIM = cls._old_sim
+        state.FW_DIR = cls._old_fw
+        state.MODE["mode"] = "sim"
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def url(self, path):
+        return "http://127.0.0.1:%d%s" % (self.port, path)
+
+    def post_fw(self, name, data, dev=None):
+        headers = {"X-Filename": name}
+        if dev:
+            headers["X-Device"] = dev
+        req = urllib.request.Request(self.url("/api/firmware"), data=data,
+                                     headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    def act(self, name, payload):
+        req = urllib.request.Request(self.url("/api/actions/" + name),
+                                     data=json.dumps(payload).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    def get_json(self, path):
+        with urllib.request.urlopen(self.url(path), timeout=5) as r:
+            return json.loads(r.read())
+
+    def seed_device(self, did, kind, fw="1.0.0"):
+        con = connect()
+        con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,"
+                    "status,last_seen) VALUES(?,?,?,?,?,?,0,0)",
+                    (did, did, "10.0.0.1", "AA:BB:CC:00:09", kind, fw))
+        con.commit()
+        con.close()
+
+    def test_upload_validates_and_stores(self):
+        self.seed_device("esp-a", 0)
+        img = b"\x00\x11\x22" * 100
+        r = self.post_fw("fw-v3.1.4.bin", img, dev="esp-a")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["version"], "3.1.4")
+        self.assertEqual(r["kind"], 0)
+        self.assertEqual(r["crc32"], "%08x" % (zlib.crc32(img) & 0xFFFFFFFF))
+        self.assertEqual(r["size"], len(img))
+        lib = self.get_json("/api/firmware")
+        row = [f for f in lib["firmware"] if f["file"] == "fw-v3.1.4.bin"]
+        self.assertEqual(len(row), 1)
+        self.assertEqual(row[0]["crc32"], r["crc32"])
+        with urllib.request.urlopen(self.url("/fw/fw-v3.1.4.bin"), timeout=5) as resp:
+            self.assertEqual(resp.read(), img)
+
+    def test_upload_rejects_bad_type(self):
+        r = self.post_fw("notes.txt", b"hello")
+        self.assertFalse(r["ok"])
+        self.assertIn(".bin", r["msg"])
+
+    def test_ota_sim_flash_updates_firmware(self):
+        self.seed_device("esp-b", 0)
+        img = b"\xaa" * 64
+        up = self.post_fw("esp-b-v2.5.0.bin", img, dev="esp-b")
+        self.assertTrue(up["ok"])
+        r = self.act("start_ota", {"id": "esp-b", "file": "esp-b-v2.5.0.bin"})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("2.5.0", r["msg"])
+        con = connect()
+        fw = con.execute("SELECT firmware FROM devices WHERE id='esp-b'").fetchone()[0]
+        con.close()
+        self.assertEqual(fw, "2.5.0")
+
+    def test_ota_kind_mismatch_rejected(self):
+        self.seed_device("esp-c", 0)
+        self.seed_device("cam-c", 5)
+        img = b"\x10" * 32
+        up = self.post_fw("kind0-v9.9.9.bin", img, dev="esp-c")
+        self.assertTrue(up["ok"])
+        self.assertEqual(up["kind"], 0)
+        r = self.act("start_ota", {"id": "cam-c", "file": "kind0-v9.9.9.bin"})
+        self.assertFalse(r["ok"])
+        self.assertIn("not compatible", r["msg"])
+        r = self.act("start_ota", {"id": "esp-c", "file": "kind0-v9.9.9.bin"})
+        self.assertTrue(r["ok"], r)
+
+    def test_ota_picks_compatible_by_default(self):
+        self.seed_device("esp-d", 0)
+        b0 = b"\x01" * 16
+        b5 = b"\x02" * 16
+        self.seed_device("cam-d", 5)
+        self.post_fw("cam-only-v1.0.0.bin", b5, dev="cam-d")
+        time.sleep(1.1)  # make "newest" deterministic
+        self.post_fw("esp-only-v1.1.0.bin", b0, dev="esp-d")
+        r = self.act("start_ota", {"id": "esp-d"})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("esp-only-v1.1.0.bin", r["msg"])
+
+    def test_preexisting_fw_dir_files_registered(self):
+        p = os.path.join(state.FW_DIR, "legacy-v0.7.0.bin")
+        with open(p, "wb") as f:
+            f.write(b"\xde\xad" * 8)
+        con = connect()
+        row = con.execute("SELECT version,kind,crc32 FROM firmware"
+                          " WHERE file='legacy-v0.7.0.bin'").fetchone()
+        con.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "0.7.0")
+        self.assertEqual(row[1], -1)
+        self.assertEqual(row[2], "%08x" % (zlib.crc32(b"\xde\xad" * 8) & 0xFFFFFFFF))
 
 
 if __name__ == "__main__":

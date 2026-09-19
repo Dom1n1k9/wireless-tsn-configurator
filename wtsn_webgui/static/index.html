@@ -234,35 +234,61 @@ function devRow(d){
    "<td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td>"+
    "<td><code>"+esc(d.usb||"")+"</code></td>"+
    "<td><select onchange='assignDomRow(\""+eid+"\",this.value)' style='max-width:120px'><option value='default'"+(d.domain==="default"?" selected":"")+">default</option>"+domOpts+"</select></td>"+
-   "<td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td style='max-width:170px'>"+esc(tsnFor(d.id))+"</td>"+
-   "<td><button class='ghost' onclick='snapDev(\""+eid+"\")'>Snapshot</button></td>"+
-   "<td>"+fwCell(d)+"</td>"+
+    "<td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td style='max-width:170px'>"+esc(tsnFor(d.id))+"</td>"+
+    "<td>"+fwCell(d)+"</td>"+
    "<td><button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td>"+
    "<td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
 function fwCell(d){
-  const eid=esc(d.id);
-  return "<input type=file id='fwf_"+d.id+"' accept='.bin,.img,.hex' style='display:none' onchange='fwUpload(\""+eid+"\",this)'>"+
-   "<button class='ghost' onclick='$(\"fwf_"+d.id+"\").click()'>Upload</button> "+
-   "<button class='ghost' title='Flash the newest uploaded firmware' onclick='otaDev(\""+eid+"\")'>OTA</button>";
+   const eid=esc(d.id);
+   return "<button class='ghost' title='Firmware manager: upload, check, flash' onclick='fwMgmt(\""+eid+"\")'>Firmware</button>";
 }
-async function fwUpload(id,inp){
-  const f=inp.files[0];
-  if(!f)return;
-  const r=await fetch("/api/firmware",{method:"POST",headers:{"X-Filename":f.name},body:f});
-  const j=await r.json();
-  if(!j.ok){toast(j.msg,false);return}
-  toast("uploaded "+j.file+" ("+j.size+" B) — flashing "+id,true);
-  inp.value="";
-  api("start_ota",{id:id,file:j.file});
+async function fwMgmt(id){
+   const d=(D.devices||[]).find(x=>x.id===id);
+   if(!d)return;
+   let lib=[];
+   try{const j=await (await fetch("/api/firmware")).json();lib=j.firmware||[]}catch(e){}
+   const rows=lib.map(f=>{
+    const compat=(f.kind===-1||f.kind===d.kind);
+    return "<tr><td>"+esc(f.version||"-")+"</td><td><code>"+esc(f.file)+"</code></td>"+
+     "<td>"+f.size+" B</td><td><code>"+esc(f.crc32||"")+"</code></td>"+
+     "<td>"+(f.kind===-1?"any":"kind "+f.kind)+"</td>"+
+     "<td>"+new Date((f.uploaded_at||0)*1000).toLocaleString()+"</td><td>"+
+     (compat?"<button onclick='fwFlash(\""+esc(id)+"\",\""+esc(f.file)+"\")'>Flash</button>"
+            :"<span class='muted' title='image is for a different device kind'>incompatible</span>")+"</td></tr>";
+   }).join("");
+   $("main").innerHTML="<h2>Firmware: "+esc(d.name)+"</h2>"+
+    "<div class='card'><h3>Current firmware</h3>"+
+    "<div class='row'><span>device <b>"+esc(d.id)+"</b> (kind "+d.kind+") &middot; usb <code>"+esc(d.usb||"-")+"</code></span>"+
+    "<span>running: <b>"+esc(d.firmware||"unknown")+"</b></span></div></div>"+
+    "<div class='card'><h3>Upload firmware</h3>"+
+    "<div class='muted' style='margin-bottom:8px'>.bin / .img / .hex, max 8 MB. The server rejects other types, computes the CRC32 and tags the image with this device's kind (kind "+d.kind+").</div>"+
+    "<div class='row'><input type='file' id='fw_up' accept='.bin,.img,.hex'><button onclick='fwUp(\""+esc(id)+"\")'>Upload</button></div>"+
+    "<div id='fw_up_res'></div></div>"+
+    "<div class='card'><h3>Stored firmware</h3>"+
+    (lib.length?"<table><tr><th>version</th><th>file</th><th>size</th><th>crc32</th><th>kind</th><th>uploaded</th><th></th></tr>"+rows+"</table>":"<div class='muted'>nothing stored yet</div>")+"</div>"+
+    "<button class='ghost' onclick='go(\"devices\")'>Back to Devices</button>";
 }
-function snapDev(id){
-  const name=prompt("Snapshot name for "+id+":","pre-deploy");
-  if(name===null)return;
-  api("create_version",{name:name||"snapshot",device_id:id}).then(load);
+async function fwUp(id){
+   const inp=$("fw_up");
+   const f=inp?inp.files[0]:null;
+   if(!f){toast("pick a .bin / .img / .hex file first",false);return}
+   const r=await fetch("/api/firmware",{method:"POST",headers:{"X-Filename":f.name,"X-Device":id},body:f});
+   const j=await r.json();
+   const m=$("fw_up_res");
+   if(m)m.innerHTML=j.ok?
+    "<div class='row'><span style='color:var(--ok)'>stored "+esc(j.file)+" &middot; "+j.size+" B &middot; crc32 "+esc(j.crc32)+(j.version?" &middot; v"+esc(j.version):"")+"</span></div>":
+    "<div class='row'><span style='color:var(--err)'>"+esc(j.msg)+"</span></div>";
+   if(j.ok){inp.value="";setTimeout(()=>fwMgmt(id),300)}
+}
+function fwFlash(id,file){
+   if(!confirm("Flash "+file+" to "+id+"?"))return;
+   api("start_ota",{id:id,file:file}).then(j=>{
+    toast(j.msg,j.ok);
+    if(j.ok)setTimeout(async()=>{await load();fwMgmt(id)},800);
+   });
 }
 function assignDomRow(id,dom){api("assign_domain",{device_id:id,domain:dom}).then(load)}
 function avReset(id){if(!confirm("Reset device "+id+"? Clears its WiFi + TSN config and reboots it."))return;api("save_devices",{reset:[id]}).then(load)}
-function otaDev(id){api("start_ota",{id:id})}
 function devices(){
   const rows=D.devices.map(devRow).join("");
   const domOpts=(D.domains||[]).map(x=>"<option value='"+esc(x.id)+"'>"+esc(x.name)+"</option>").join("");
@@ -274,7 +300,7 @@ function devices(){
    "<div class='row'><label>usb / serial</label><input id=dusb placeholder='e.g. ttyUSB2 or COM5'></div>"+
    "<div class='row'><label>domain</label><select id=ddom><option value='default'>default</option>"+domOpts+"</select></div>"+
    "<button onclick=saveDev()>Add Device</button> <span class='muted'>In Real mode the node also provisions itself over MQTT and can report its usb/serial port.</span></div>"+
-   "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>snapshot</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
+    "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
    domainCard()+
    versionsCard();
 }
@@ -302,7 +328,7 @@ function domainCard(){
 function versionsCard(){
   const devOpts="<option value=''>global (all devices)</option>"+D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");
   return "<div class='card'><h3>Config Versions / Rollback</h3>"+
-   "<div class='muted' style='margin-bottom:8px'>Snapshot the current configuration so you can diff and roll back after a deploy. Per-device snapshots are taken from the Snapshot button in the table above.</div>"+
+    "<div class='muted' style='margin-bottom:8px'>Snapshot the current configuration so you can diff and roll back after a deploy. Scope = global (whole config) or a single device.</div>"+
    "<div class='row'><label>scope</label><select id=cv_scope onchange=rvLoad()>"+devOpts+"</select><label>name</label><input id=cv_name placeholder='pre-deploy'></div>"+
    "<button onclick='cvSnap()'>Save snapshot</button> <button class='ghost' onclick='rvLoad()'>List versions</button></div>"+
    "<div id=cv_list></div>";
@@ -320,7 +346,7 @@ function rvLoad(){
 function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
 function diffV(id){fetch("/api/actions/diff_versions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
 
-function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>snapshot</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows}}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
  let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");

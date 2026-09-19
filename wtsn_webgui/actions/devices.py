@@ -4,7 +4,7 @@ import os
 import time
 
 from .. import state
-from ..db import add_event, clamp, get_self_ip
+from ..db import add_event, clamp, crc32_hex, get_self_ip
 from .. import mqtt_link
 
 
@@ -94,28 +94,63 @@ def _start_ota(con, body):
     fname = body.get("file", "")
     if not did:
         return {"ok": False, "msg": "missing device id"}
+    dev = con.execute("SELECT kind,firmware FROM devices WHERE id=?", (did,)).fetchone()
+    if not dev:
+        return {"ok": False, "msg": "unknown device " + did}
+    devkind = int(dev[0] or 0)
     if not fname:
-        try:
-            files = sorted((f for f in os.listdir(state.FW_DIR)
-                            if f.endswith((".bin", ".img"))),
-                           key=lambda f: os.path.getmtime(os.path.join(state.FW_DIR, f)),
-                           reverse=True)
-        except OSError:
-            files = []
-        fname = files[0] if files else ""
+        row = con.execute("SELECT file FROM firmware WHERE kind IN (?,-1)"
+                          " ORDER BY uploaded_at DESC, file DESC LIMIT 1", (devkind,)).fetchone()
+        fname = row[0] if row else ""
+        if not fname:
+            try:
+                files = sorted((f for f in os.listdir(state.FW_DIR)
+                                if f.endswith((".bin", ".img", ".hex"))),
+                               key=lambda f: os.path.getmtime(os.path.join(state.FW_DIR, f)),
+                               reverse=True)
+            except OSError:
+                files = []
+            fname = files[0] if files else ""
     if not fname or not os.path.isfile(os.path.join(state.FW_DIR, fname)):
-        return {"ok": False, "msg": "no firmware uploaded (pick a .bin on the Devices page)"}
+        return {"ok": False, "msg": "no firmware stored — upload a .bin/.img/.hex first"}
+    meta = con.execute("SELECT version,crc32,kind FROM firmware WHERE file=?",
+                       (fname,)).fetchone()
+    fwkind = int(meta[2]) if meta and meta[2] is not None else -1
+    if fwkind != -1 and fwkind != devkind:
+        return {"ok": False,
+                "msg": "%s is for kind %d, device %s is kind %d — not compatible"
+                       % (fname, fwkind, did, devkind)}
+    version = (meta[0] if meta else "") or ""
+    stored_crc = (meta[1] if meta else "") or ""
     host = os.environ.get("WTSN_HOST", "127.0.0.1")
     if host in ("0.0.0.0", "::"):
         host = "127.0.0.1"
     b = mqtt_link.get_real_mqtt(con) if state.MODE["mode"] == "real" else None
     url = "http://%s:%d/fw/%s" % (host, state.PORT, fname)
     if not b:
-        add_event("ota", "cnc", "OTA %s <- %s (no broker, simulated)" % (did, fname))
-        return {"ok": True, "msg": "OTA requested (simulated) for " + did}
-    b.publish("tsn/cmd/%s/ota" % did, json.dumps({"url": url}))
-    add_event("ota", "cnc", "OTA %s <- %s (%s)" % (did, fname, url))
-    return {"ok": True, "msg": "OTA started on " + did}
+        # Simulated device: download the image, verify its CRC exactly like a
+        # real node would, flash, then report the new running version.
+        with open(os.path.join(state.FW_DIR, fname), "rb") as f:
+            data = f.read()
+        real_crc = crc32_hex(data)
+        if stored_crc and real_crc != stored_crc:
+            add_event("ota", "cnc", "OTA %s <- %s ABORTED (crc %s != stored %s)"
+                      % (did, fname, real_crc, stored_crc))
+            return {"ok": False, "msg": "CRC32 mismatch — image corrupted, flash aborted"}
+        newver = version or fname
+        con.execute("UPDATE devices SET firmware=? WHERE id=?", (newver, did))
+        con.commit()
+        add_event("ota", "cnc", "OTA %s <- %s (simulated flash, crc32 %s verified) -> %s"
+                  % (did, fname, real_crc, newver))
+        return {"ok": True,
+                "msg": "flashed %s on %s — crc32 %s verified, now running %s"
+                       % (fname, did, real_crc, newver)}
+    b.publish("tsn/cmd/%s/ota" % did,
+              json.dumps({"url": url, "crc32": stored_crc, "version": version}))
+    add_event("ota", "cnc", "OTA %s <- %s (%s, crc32 %s)" % (did, fname, url, stored_crc))
+    return {"ok": True,
+            "msg": "OTA started on %s — device downloads %s and verifies crc32 %s"
+                   % (did, fname, stored_crc)}
 
 
 HANDLERS = {
