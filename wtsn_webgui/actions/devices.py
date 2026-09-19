@@ -1,10 +1,12 @@
 """Device-related actions: save/delete/reset devices, roles, ping, OTA."""
 import json
 import os
+import random
+import threading
 import time
 
 from .. import state
-from ..db import add_event, clamp, crc32_hex, get_self_ip
+from ..db import add_event, clamp, connect, crc32_hex, get_self_ip
 from .. import mqtt_link
 
 
@@ -75,17 +77,31 @@ def _ping_device(con, body):
     did = body.get("id", "")
     if not did:
         return {"ok": False, "msg": "missing device id"}
-    b = mqtt_link.get_real_mqtt(con) if state.MODE["mode"] == "real" else None
+    cnc_ip = get_self_ip()
+    add_event("mqtt", "cnc", "PING -> %s" % did, src_ip=cnc_ip, dst_ip="",
+              dest=did, proto="MQTT")
+    # Remember when the ping went out so the ack can be timestamped into an RTT
+    # latency sample for the TSN Metrics page.
+    state.PING_OUT[did] = time.time()
+    if state.MODE["mode"] != "real":
+        # No real agent to answer in simulation: reply after a realistic RTT and
+        # record the round trip so the Metrics latency chart shows the sample.
+        def _sim_ping_ack():
+            c = connect()
+            try:
+                mqtt_link.record_round_trip(c, did)
+            finally:
+                c.close()
+            add_event("mqtt", did, "PING ack %s (simulated)" % did, src_ip=cnc_ip,
+                      dst_ip="", dest="cnc", proto="MQTT")
+            state.WS_NOTIFY.set()
+        threading.Timer(random.uniform(0.005, 0.045), _sim_ping_ack).start()
+        return {"ok": True, "msg": "ping sent to " + did}
+    b = mqtt_link.get_real_mqtt(con)
     if not b:
         add_event("config", "cnc", "identify %s (no broker)" % did)
         return {"ok": False, "msg": "no broker in real mode"}
     b.publish("tsn/cmd/%s/ping" % did, "1")
-    # Remember when the ping went out so the ack can be timestamped into an RTT
-    # latency sample for the TSN Metrics page.
-    state.PING_OUT[did] = time.time()
-    cnc_ip = get_self_ip()
-    add_event("mqtt", "cnc", "PING -> %s" % did, src_ip=cnc_ip, dst_ip="",
-              dest=did, proto="MQTT")
     return {"ok": True, "msg": "ping sent to " + did}
 
 

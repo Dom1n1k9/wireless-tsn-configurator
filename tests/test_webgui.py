@@ -168,6 +168,22 @@ class WebGuiActionTest(unittest.TestCase):
         finally:
             state.DB_SIM = saved
 
+    def test_ping_sim_records_latency(self):
+        self.act("save_devices", {"device": {"id": "p1"}})
+        state.PING_OUT.clear()
+        r = self.act("ping_device", {"id": "p1"})
+        self.assertTrue(r["ok"])
+        self.assertIn("p1", state.PING_OUT)
+        time.sleep(0.08)
+        con = connect()
+        try:
+            n = con.execute("SELECT COUNT(*) FROM latency_log "
+                            "WHERE device_id='p1'").fetchone()[0]
+        finally:
+            con.close()
+        self.assertGreaterEqual(n, 1)
+        self.assertNotIn("p1", state.PING_OUT)
+
     def test_stream_lifecycle(self):
         self.act("save_devices", {"device": {"id": "talker1"}})
         self.act("save_devices", {"device": {"id": "l1"}})
