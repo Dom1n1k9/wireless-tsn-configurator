@@ -27,7 +27,7 @@ RPi edge node (user: wtsn)
 | `wtsn-llm` | service | LLM bridge :8081 → Ollama → allowlisted GUI actions (`rpi-ai/llm_bridge.py`) |
 | `ollama` | service | Local LLM runtime (default model `qwen2.5:1.5b`, CPU) |
 | `wtsn-update` | service + **timer** (30 min) | `git pull` → C core rebuild → sync `rpi-ai/*.py` → restart changed services |
-| `wtsn-backup` | service + **timer** (daily) | hot SQLite copies + key configs → `/home/wtsn/backups/` |
+| `wtsn-backup` | service + **timer** (daily) | hot SQLite copies + key configs (incl. `/etc/wtsn/env`, mosquitto `passwd`) → `/home/wtsn/backups/`; runs as **root** so the root-owned credential files are included, result dir is chowned back to `wtsn` |
 | `tailscaled` | service | stable remote address (optional but recommended) |
 
 The unit files live in [`rpi-ai/systemd/`](../rpi-ai/systemd/). They contain **no

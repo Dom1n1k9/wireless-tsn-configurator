@@ -29,11 +29,24 @@ for name in ("wtsn_gui.db", "wtsn_sim.db"):
     print("backed up", name)
 EOF
 
-[ -f /etc/wtsn/env ] && cp -f /etc/wtsn/env "$DIR/etc/env" && chmod 600 "$DIR/etc/env"
-[ -f /etc/mosquitto/conf.d/wtsn.conf ] && cp -f /etc/mosquitto/conf.d/wtsn.conf "$DIR/etc/"
-[ -f /etc/mosquitto/passwd ] && cp -f /etc/mosquitto/passwd "$DIR/etc/" && chmod 600 "$DIR/etc/passwd"
-[ -f /home/wtsn/wtsn-ai/config.json ] && cp -f /home/wtsn/wtsn-ai/config.json "$DIR/"
-[ -f /home/wtsn/wtsn-ai/policy_state.json ] && cp -f /home/wtsn/wtsn-ai/policy_state.json "$DIR/"
+copy() {  # copy <src> <dest> [chmod] -- log a warning instead of failing silently
+    if [ -f "$1" ]; then
+        if cp -f "$1" "$2"; then
+            [ -n "${3:-}" ] && chmod "$3" "$2"
+        else
+            say "WARNING: could not copy $1"
+        fi
+    fi
+}
+# Runs as root (see wtsn-backup.service) so the root-owned credential files are
+# included; the result dir is handed back to the wtsn user below.
+copy /etc/wtsn/env "$DIR/etc/env" 600
+copy /etc/mosquitto/conf.d/wtsn.conf "$DIR/etc/"
+copy /etc/mosquitto/passwd "$DIR/etc/passwd" 600
+copy /home/wtsn/wtsn-ai/config.json "$DIR/"
+copy /home/wtsn/wtsn-ai/policy_state.json "$DIR/"
+
+[ "$(id -u)" = 0 ] && chown -R wtsn:wtsn "$DIR"
 
 find "$DEST" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null
 say "backup done: $DIR"
