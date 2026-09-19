@@ -18,8 +18,8 @@ SCHEMA = (
     "src TEXT,data_id TEXT,value REAL,text TEXT);"
     "CREATE TABLE IF NOT EXISTS domains(id TEXT PRIMARY KEY,name TEXT,description TEXT);"
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
-    "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
-    "INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,preemption INTEGER);"
+    "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT PRIMARY KEY,priority INTEGER,"
+    "traffic_class INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,preemption INTEGER);"
     "CREATE TABLE IF NOT EXISTS preemption_configs(device_id TEXT PRIMARY KEY,preemption "
     "INTEGER,emac TEXT,pmac TEXT);"
     "CREATE TABLE IF NOT EXISTS vlan_groups(id TEXT PRIMARY KEY,name TEXT,vlan_id INTEGER);"
@@ -28,8 +28,8 @@ SCHEMA = (
     "INTEGER,deploy_target TEXT);"
     "CREATE TABLE IF NOT EXISTS gcl_entries(schedule_id TEXT,\"index\" INTEGER,gate_state "
     "INTEGER,duration_ns INTEGER);"
-    "CREATE TABLE IF NOT EXISTS timesync_status(id TEXT,mode INTEGER,grandmaster TEXT,"
-    "offset_ns INTEGER,quality INTEGER,jitter_ns INTEGER DEFAULT 0);"
+    "CREATE TABLE IF NOT EXISTS timesync_status(id TEXT PRIMARY KEY,mode INTEGER,"
+    "grandmaster TEXT,offset_ns INTEGER,quality INTEGER,jitter_ns INTEGER DEFAULT 0);"
     "CREATE TABLE IF NOT EXISTS sensors(device_id TEXT,sensor_id TEXT,type INTEGER,name TEXT,"
     "value REAL,unit TEXT,healthy INTEGER,last_update INTEGER,"
     "PRIMARY KEY(device_id,sensor_id));"
@@ -119,6 +119,34 @@ def ensure_schema(con):
             con.commit()
     except Exception:
         pass
+    # Older DBs created 'timesync_status' and 'qos_configs' without primary keys,
+    # so INSERT OR REPLACE appended duplicate rows (the simulator writes a
+    # timesync row every tick). Rebuild deduplicated tables if needed; new DBs
+    # get the primary keys from SCHEMA directly.
+    for table, key, ddl in (
+            ("timesync_status", "id",
+             "CREATE TABLE timesync_status_tmp(id TEXT PRIMARY KEY,mode INTEGER,"
+             "grandmaster TEXT,offset_ns INTEGER,quality INTEGER,jitter_ns "
+             "INTEGER DEFAULT 0)"),
+            ("qos_configs", "device_id",
+             "CREATE TABLE qos_configs_tmp(device_id TEXT PRIMARY KEY,priority "
+             "INTEGER,traffic_class INTEGER,bandwidth_kbps INTEGER,latency_ms "
+             "INTEGER,preemption INTEGER)")):
+        try:
+            rows = con.execute("PRAGMA table_info(%s)" % table).fetchall()
+            if rows and not any(r[5] for r in rows):
+                con.execute("DROP TABLE IF EXISTS %s_tmp" % table)
+                con.execute(ddl)
+                cols = ",".join('"%s"' % r[1] for r in rows)
+                con.execute(
+                    "INSERT OR REPLACE INTO %s_tmp(%s) SELECT %s FROM %s AS t WHERE "
+                    "t.rowid=(SELECT MAX(x.rowid) FROM %s AS x WHERE x.\"%s\"=t.\"%s\")"
+                    % (table, cols, cols, table, table, key, key))
+                con.execute("DROP TABLE %s" % table)
+                con.execute("ALTER TABLE %s_tmp RENAME TO %s" % (table, table))
+                con.commit()
+        except Exception:
+            pass
     # Indexes for the telemetry/history hot paths (sensor sparklines, perf stats,
     # sync reports, latency samples). Full-table scans are avoidable here.
     for ddl in (

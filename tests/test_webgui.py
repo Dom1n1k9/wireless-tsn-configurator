@@ -118,6 +118,56 @@ class WebGuiActionTest(unittest.TestCase):
         data = load_all()
         self.assertEqual(data["timesync_status"][0]["grandmaster"], "d1")
 
+    def test_qos_upsert_no_duplicates(self):
+        self.act("save_devices", {"device": {"id": "qd1"}})
+        self.assertTrue(self.act("save_qos", {"device_id": "qd1", "priority": 3})["ok"])
+        self.assertTrue(self.act("save_qos", {"device_id": "qd1", "priority": 6})["ok"])
+        rows = [x for x in load_all()["qos_configs"] if x["device_id"] == "qd1"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["priority"], 6)
+        self.assertTrue(self.act("delete_qos", {"device_id": "qd1"})["ok"])
+
+    def test_timesync_upsert_no_duplicates(self):
+        self.assertTrue(self.act("save_timesync", {"mode": 1, "grandmaster": "d1"})["ok"])
+        self.assertTrue(self.act("save_timesync", {"mode": 2, "grandmaster": "d2"})["ok"])
+        rows = [x for x in load_all()["timesync_status"] if x["id"] == "main"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["grandmaster"], "d2")
+        self.act("save_timesync", {"mode": 1, "grandmaster": "d1"})
+
+    def test_old_db_migration_dedups(self):
+        import sqlite3
+        p = os.path.join(self.tmp, "old.db")
+        con = sqlite3.connect(p)
+        con.execute("CREATE TABLE timesync_status(id TEXT,mode INTEGER,grandmaster TEXT,"
+                    "offset_ns INTEGER,quality INTEGER,jitter_ns INTEGER DEFAULT 0)")
+        con.execute("INSERT INTO timesync_status(id,mode,grandmaster,offset_ns,quality)"
+                    " VALUES('main',1,'old-gm',10,50)")
+        con.execute("INSERT INTO timesync_status(id,mode,grandmaster,offset_ns,quality)"
+                    " VALUES('main',1,'new-gm',20,90)")
+        con.execute("CREATE TABLE qos_configs(device_id TEXT,priority INTEGER,"
+                    "traffic_class INTEGER,bandwidth_kbps INTEGER,latency_ms INTEGER,"
+                    "preemption INTEGER)")
+        con.execute("INSERT INTO qos_configs(device_id,priority) VALUES('d9',3)")
+        con.execute("INSERT INTO qos_configs(device_id,priority) VALUES('d9',6)")
+        con.commit()
+        con.close()
+        saved = state.DB_SIM
+        state.DB_SIM = p
+        try:
+            con2 = connect()
+            rows = con2.execute("SELECT grandmaster FROM timesync_status "
+                                "WHERE id='main'").fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["grandmaster"], "new-gm")
+            qrows = con2.execute("SELECT priority FROM qos_configs "
+                                 "WHERE device_id='d9'").fetchall()
+            self.assertEqual(len(qrows), 1)
+            self.assertEqual(qrows[0][0], 6)
+            con2.close()
+        finally:
+            state.DB_SIM = saved
+
     def test_stream_lifecycle(self):
         self.act("save_devices", {"device": {"id": "talker1"}})
         self.act("save_devices", {"device": {"id": "l1"}})
