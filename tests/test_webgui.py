@@ -130,6 +130,31 @@ class WebGuiActionTest(unittest.TestCase):
         self.assertEqual(data["tsn_streams"][0]["status"], 1)
         self.assertTrue(self.act("delete_stream", {"stream_id": "st1"})["ok"])
 
+    def test_exec_all_sim_acks_devices(self):
+        self.act("save_devices", {"device": {"id": "E1"}})
+        self.act("save_devices", {"device": {"id": "E2"}})
+        r = self.act("exec_all")
+        self.assertTrue(r["ok"])
+        time.sleep(0.1)  # let simulated ACK timers land
+        conn = connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, last_deploy_ok, last_deploy_at FROM devices"
+                " WHERE id IN ('E1','E2')").fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(x["last_deploy_ok"] == 1 for x in rows))
+        self.assertTrue(all(int(x["last_deploy_at"]) > 0 for x in rows))
+
+    def test_fx_send_and_recent_sim(self):
+        r = self.act("fx_send", {"msg": "hello-field"})
+        self.assertTrue(r["ok"])
+        recent = self.act("fx_recent")
+        self.assertTrue(recent["ok"])
+        self.assertTrue(any("hello-field" in (x.get("text") or "")
+                            for x in recent["data"]))
+
     def test_versions_snapshot_and_rollback(self):
         self.act("save_devices", {"device": {"id": "d1"}})
         self.act("save_qos", {"device_id": "d1", "priority": 5})

@@ -91,6 +91,12 @@ ALLOWED = {
     "delete_stream": {"need": ["stream_id"], "clamp": {}},
     "save_timesync": {"need": ["grandmaster"], "clamp": {"mode": (0, 1)}},
     "save_preemption": {"need": ["device_id"], "clamp": {"preemption": (0, 1)}},
+    "save_vlan": {"need": ["vlan_id"], "clamp": {"vlan_id": (1, 4094)}},
+    "delete_vlan": {"need": ["id"], "clamp": {}},
+    "save_member": {"need": ["group_id"], "clamp": {}},
+    "deploy_stream": {"need": ["stream_id"], "clamp": {}},
+    "deploy_all_streams": {"need": [], "clamp": {}},
+    "ping_device": {"need": ["device_id"], "clamp": {}},
     "create_version": {"need": [], "clamp": {}},
     "exec_all": {"need": [], "clamp": {}},
 }
@@ -118,7 +124,7 @@ def validate(action, params, devices):
         if k in DEVICE_KEYS:
             if v not in devices:
                 return None, "unknown device: %s" % v
-        if k == "listeners" and isinstance(v, list):
+        if k in ("listeners", "set_members") and isinstance(v, list):
             v = [x for x in v if x in devices]
         cleaned[k] = v
     return cleaned, None
@@ -157,6 +163,12 @@ Allowed actions and their params:
 - delete_stream: stream_id
 - save_timesync: mode(0-1), grandmaster, nodes:[ids]
 - save_preemption: device_id, preemption(0-1), emac, pmac
+- save_vlan: vlan_id(1-4094), id (group id, default grp<vlan_id>), name
+- delete_vlan: id
+- save_member: group_id, set_members:[device ids] (replaces the group's members)
+- deploy_stream: stream_id
+- deploy_all_streams: (empty)
+- ping_device: device_id
 - create_version: name
 - exec_all: (empty) - deploys all saved config to the network
 

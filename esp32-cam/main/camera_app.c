@@ -488,7 +488,7 @@ static esp_err_t replay_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-static void ota_go(const char *url);
+static void ota_go(const char *url, const char *crc32_hex);
 
 static void mqtt_data(void *arg, esp_mqtt_event_handle_t e) {
     (void)arg;
@@ -514,7 +514,24 @@ static void mqtt_data(void *arg, esp_mqtt_event_handle_t e) {
                         url[i] = v[i];
                     }
                     url[i] = '\0';
-                    ota_go(url);
+                    /* optional "crc32":"<hex>" -> verify image after download */
+                    char crc[16] = {0};
+                    const char *c = strstr(p, "\"crc32\"");
+                    if (c) {
+                        c = strchr(c + 7, ':');
+                        if (c) {
+                            c = strchr(c + 1, '"');
+                            if (c) {
+                                const char *w = c + 1;
+                                size_t j = 0;
+                                for (; w[j] && w[j] != '"' && j < sizeof(crc) - 1; j++) {
+                                    crc[j] = w[j];
+                                }
+                                crc[j] = '\0';
+                            }
+                        }
+                    }
+                    ota_go(url, crc[0] ? crc : NULL);
                 }
             }
         }
@@ -525,14 +542,14 @@ static void mqtt_data(void *arg, esp_mqtt_event_handle_t e) {
     }
 }
 
-static void ota_go(const char *url) {
+static void ota_go(const char *url, const char *crc32_hex) {
     if (!url || !url[0]) return;
     char ack_topic[48], ack[64];
     snprintf(ack_topic, sizeof(ack_topic), "tsn/ack/%s", g_device_id);
     snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true}", g_device_id);
-    ESP_LOGI(TAG, "OTA command: %s", url);
+    ESP_LOGI(TAG, "OTA command: %s (crc32 %s)", url, crc32_hex ? crc32_hex : "none");
     esp_mqtt_client_publish(g_mqtt, ack_topic, ack, 0, 0, 0);
-    wtsn_ota_start(url);
+    wtsn_ota_start_checked(url, crc32_hex);
 }
 
 static void mqtt_event(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {

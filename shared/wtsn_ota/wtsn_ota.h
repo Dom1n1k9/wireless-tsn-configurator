@@ -23,6 +23,14 @@
  * alloc errors. Safe to call from an MQTT command callback. */
 esp_err_t wtsn_ota_start(const char *url);
 
+/* Same as wtsn_ota_start(), but after the image is written the device
+ * re-reads the target partition and verifies its CRC32 against
+ * `crc32_hex` (unsigned hex string as computed by the GUI at upload
+ * time). On mismatch the update is aborted, the new partition is
+ * marked invalid and the previous app stays active. Pass NULL to skip
+ * the check. */
+esp_err_t wtsn_ota_start_checked(const char *url, const char *crc32_hex);
+
 /* Convenience for the common "url + expected size" MQTT payload form. */
 esp_err_t wtsn_ota_start_sized(const char *url, size_t size);
 

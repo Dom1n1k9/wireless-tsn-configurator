@@ -231,13 +231,19 @@ function devRow(d){
   const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
   const domOpts=(D.domains||[]).map(x=>"<option value='"+esc(x.id)+"'"+(d.domain===x.id?" selected":"")+">"+esc(x.name)+"</option>").join("");
   return "<tr><td>"+esc(d.id)+(aiActive?" <span class='chip' style='color:var(--warn)' title='AI is actively configuring this device'>AI</span>":"")+"</td>"+
-   "<td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+esc(d.ip)+"</td>"+
+    "<td>"+esc(d.name)+"</td><td>"+stBadge(d.status)+"</td><td>"+deployCell(d)+"</td><td>"+esc(d.ip)+"</td>"+
    "<td><code>"+esc(d.usb||"")+"</code></td>"+
    "<td><select onchange='assignDomRow(\""+eid+"\",this.value)' style='max-width:120px'><option value='default'"+(d.domain==="default"?" selected":"")+">default</option>"+domOpts+"</select></td>"+
     "<td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td style='max-width:170px'>"+esc(tsnFor(d.id))+"</td>"+
     "<td>"+fwCell(d)+"</td>"+
    "<td><button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td>"+
    "<td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
+function deployCell(d){
+  if(!d.last_deploy_at)return "<span class='muted'>never</span>";
+  const t=new Date(d.last_deploy_at*1000).toLocaleTimeString();
+  return d.last_deploy_ok?"<span class='badge ok' style='font-size:11px' title='last deploy acked by device'>✓ "+t+"</span>"
+                         :"<span class='badge warn' style='font-size:11px' title='deploy sent, waiting for ack'>… "+t+"</span>";
+}
 function fwCell(d){
    const eid=esc(d.id);
    return "<button class='ghost' title='Firmware manager: upload, check, flash' onclick='fwMgmt(\""+eid+"\")'>Firmware</button>";
@@ -300,7 +306,7 @@ function devices(){
    "<div class='row'><label>usb / serial</label><input id=dusb placeholder='e.g. ttyUSB2 or COM5'></div>"+
    "<div class='row'><label>domain</label><select id=ddom><option value='default'>default</option>"+domOpts+"</select></div>"+
    "<button onclick=saveDev()>Add Device</button> <span class='muted'>In Real mode the node also provisions itself over MQTT and can report its usb/serial port.</span></div>"+
-    "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
+    "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>deploy</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
    domainCard()+
    versionsCard();
 }
@@ -346,7 +352,7 @@ function rvLoad(){
 function rollback(id){if(!confirm("Roll back configuration to this version?"))return;api("rollback_version",{id:id}).then(load)}
 function diffV(id){fetch("/api/actions/diff_versions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({a:id})}).then(r=>r.json()).then(j=>toast(j.diff||j.msg,j.ok))}
 
-function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows}}
+function devices_render(){const hdr=[].slice.call(document.querySelectorAll("h3")).find(h=>h.textContent==="Devices");const tbl=hdr?hdr.nextElementSibling:null;if(tbl&&tbl.tagName==="TABLE"){const rows=D.devices.map(devRow).join("");tbl.innerHTML="<tr><th>id</th><th>name</th><th>status</th><th>deploy</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows}}
 const PRIOS=[[0,"Background (background data)"],[1,"Best effort"],[2,"Excellent effort"],[3,"Critical application"],[4,"Video (latency and jitter below 100 ms)"],[5,"Voice (latency and jitter below 10 ms)"],[6,"Internetwork control (network control)"],[7,"Control data traffic (data traffic control)"]];
 function qos(){const def=(D.qos_configs[0]||{}).priority;
  let rows=D.qos_configs.map(q=>"<tr><td>"+esc(q.device_id)+"</td><td>Priority "+q.priority+" — "+(PRIOS.find(p=>p[0]==q.priority)||["",q.priority])[1]+"</td><td>"+q.latency_ms+" ms</td><td><button class='danger' onclick='api(\"delete_qos\",{device_id:\""+esc(q.device_id)+"\"}).then(load)'>Clear</button></td></tr>").join("");
@@ -445,10 +451,35 @@ function fxmqtt(){
  const isPc=(srv.value||"pc")==="pc";
  const opts=D.devices.map(d=>"<option value='"+esc(d.id)+"' "+(srvid.value==d.id?"selected":"")+">"+esc(d.id)+"</option>").join("");
  return "<h2>IEEE 802.1FX — FXMQTT Config</h2><div class='card'><h3>Field Server / Participant</h3>"+
-  "<div class='row'><label>server</label><select id=fs_type onchange=fsMode()><option value='pc' "+(isPc?"selected":"")+">PC (configurator)</option><option value='node' "+(isPc?"":"selected")+">Node (device)</option></select></div>"+
+  "<div class='row'><label>server</label><select id=fs_type onchange=fsMode()><option value='pc' "+(isPc?"selected":"")+">"+esc(D.host||"PC")+" (configurator)</option><option value='node' "+(isPc?"":"selected")+">Node (device)</option></select></div>"+
   "<div class='row' id=fs_node_row><label>node</label><select id=fs_node "+(isPc?"disabled":"")+">"+opts+"</select></div>"+
   "<div class='row'><label>broker</label><input id=fs_broker placeholder='host:port' value='"+esc(brk.value||"127.0.0.1:1883")+"'></div>"+
-  "<button onclick=fsSave()>Save / Deploy</button></div>"}
+  "<button onclick=fsSave()>Save / Deploy</button></div>"+
+  "<div class='card'><h3>Live FX data (C2C field exchange)</h3>"+
+  "<div class='muted' style='margin-bottom:8px'>Values exchanged on <code>tsn/fx/data</code> — "+(D.mode==="sim"?"simulated field-server samples from the devices":"from real participants via the broker")+". Updates every 2 s.</div>"+
+  "<div class='row'><input id=fx_msg placeholder='e.g. pressure=1013' style='width:200px'><select id=fx_src>"+D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("")+"<option value='cnc'>"+esc(D.host||"cnc")+" (configurator)</option></select><button class='ghost' onclick=fxSendNow()>Send test value</button></div>"+
+  "<div id='fx_live'><div class='muted'>loading...</div></div></div>";
+ setTimeout(fxLiveStart,50);
+}
+let fxLiveTimer=null;
+function fxLiveStart(){
+ if(fxLiveTimer)clearInterval(fxLiveTimer);
+ fxLiveLoad();
+ fxLiveTimer=setInterval(fxLiveLoad,2000);
+}
+function fxLiveLoad(){
+ const el=$("fx_live");
+ if(!el){if(fxLiveTimer){clearInterval(fxLiveTimer);fxLiveTimer=null}return}
+ fetch("/api/actions/fx_recent",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(r=>r.json()).then(j=>{
+  const m=$("fx_live");if(!m)return;
+  const rows=(j.data||[]).map(r=>"<tr><td>"+new Date((r.ts||0)*1000).toLocaleTimeString()+"</td><td>"+esc(r.src)+"</td><td><code>"+esc(r.data_id)+"</code></td><td>"+(r.text?"<i>"+esc(r.text)+"</i>":(r.value==null?"-":esc(r.value)))+"</td></tr>").join("");
+  m.innerHTML=rows?"<table><tr><th>time</th><th>source</th><th>data id</th><th>value</th></tr>"+rows+"</table>":"<div class='muted'>no FX data yet — it appears within a few seconds</div>";
+ }).catch(()=>{});
+}
+function fxSendNow(){
+ const src=$("fx_src").value||"cnc",msg=$("fx_msg").value||"test=1";
+ api("fx_send",{source:src,msg:msg}).then(j=>{toast(j.msg,j.ok);if(j.ok){$("fx_msg").value="";fxLiveLoad()}});
+}
 function fsMode(){const pc=$("fs_type").value==="pc";$("fs_node").disabled=pc;if(pc)$("fs_node").value=""}
 function fsSave(){const type=$("fs_type").value;api("set_server",{type:type,id:(type==="node"?$("fs_node").value:""),broker:$("fs_broker").value||"127.0.0.1:1883"}).then(load)}
 function monitor(){return "<h2>Network / Frame Monitor</h2><div class='card'><div class='row'><span>"+(D.mode==="sim"?"Live simulated flow (MQTT, FX over MQTT, raw frames)":"Real traffic — waiting for real nodes")+"</span><input id=mon_filter placeholder='filter...' style='width:160px;margin-left:10px' oninput='monFilter()'>"+"<span class='spacer'></span><button class='ghost' onclick='api(\"clear_events\",{}).then(load)'>Clear</button><button id=mon_toggle class='ghost' onclick='toggleMon()'>"+(MON_RUNNING?"Pause":"Start")+"</button><span id=mon_state class='muted'></span></div><div class='monrow'><span class='t'>time</span><span class='s'>source</span><span class='ip'>src IP</span><span class='s'>destination</span><span class='ip'>dst IP</span><span class='pro'>protocol</span><span>message</span></div><div id=mon></div></div>"}

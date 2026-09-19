@@ -279,14 +279,18 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         send_ack(true, "");
         return;
     } else if (strcmp(cmd, "ota") == 0) {
-        /* OTA: expects JSON {"url":"http://<host>:<port>/fw/<name>.bin"[,"size":N]}.
-         * Downloads to the other OTA partition and reboots; a bad new app is
-         * rolled back automatically by the bootloader. */
+        /* OTA: expects JSON {"url":"http://<host>:<port>/fw/<name>.bin"
+         * [,"size":N][,"crc32":"<hex>"]}. Downloads to the other OTA
+         * partition; if crc32 is given the image is verified against it
+         * before the reboot (mismatch => abort, old app stays active).
+         * A bad new app is rolled back automatically by the bootloader. */
         char url[256] = {0};
+        char crc[16] = {0};
         wtsn_json_get_str(payload, "url", url, sizeof(url));
-        if (url[0] && wtsn_ota_start(url) == ESP_OK) {
+        wtsn_json_get_str(payload, "crc32", crc, sizeof(crc));
+        if (url[0] && wtsn_ota_start_checked(url, crc[0] ? crc : NULL) == ESP_OK) {
             send_ack(true, "");
-            ESP_LOGI(TAG, "OTA started: %s", url);
+            ESP_LOGI(TAG, "OTA started: %s (crc32 %s)", url, crc[0] ? crc : "none");
         } else {
             send_ack(false, "ota_bad_url");
         }

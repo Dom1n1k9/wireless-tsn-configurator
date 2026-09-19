@@ -14,6 +14,8 @@ SCHEMA = (
     "heartbeat_at INTEGER DEFAULT 0,rssi INTEGER DEFAULT 0,usb TEXT DEFAULT '');"
     "CREATE TABLE IF NOT EXISTS firmware(file TEXT PRIMARY KEY,version TEXT,size INTEGER,"
     "crc32 TEXT,kind INTEGER DEFAULT -1,uploaded_at INTEGER);"
+    "CREATE TABLE IF NOT EXISTS fx_data(id INTEGER PRIMARY KEY AUTOINCREMENT,ts INTEGER,"
+    "src TEXT,data_id TEXT,value REAL,text TEXT);"
     "CREATE TABLE IF NOT EXISTS domains(id TEXT PRIMARY KEY,name TEXT,description TEXT);"
     "CREATE TABLE IF NOT EXISTS device_tsn_features(device_id TEXT,feature TEXT);"
     "CREATE TABLE IF NOT EXISTS qos_configs(device_id TEXT,priority INTEGER,traffic_class "
@@ -71,6 +73,7 @@ def ensure_schema(con):
     con.commit()
     for tbl, col in (("devices", "domain"), ("devices", "heartbeat_at"),
                       ("devices", "rssi"), ("devices", "usb"),
+                      ("devices", "last_deploy_at"), ("devices", "last_deploy_ok"),
                       ("timesync_status", "jitter_ns")):
         try:
             cols = [r[1] for r in con.execute("PRAGMA table_info(%s)" % tbl)]

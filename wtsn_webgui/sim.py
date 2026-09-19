@@ -169,6 +169,54 @@ def sim_tick():
                 con.execute("INSERT INTO sensor_history(device_id,sensor_id,ts,value) "
                             "VALUES(?,?,strftime('%s','now'),?)", (did, sid, val))
         con.execute("DELETE FROM sensor_history WHERE ts < strftime('%s','now','-1 hours')")
+        # Simulated OPC UA FX C2C field exchange: participants publish a data
+        # set (a few sensor values) on tsn/fx/data, which the FXMQTT page shows
+        # live. Only the mapped sensors are exchanged, with some sparsity.
+        if random.random() < 0.7:
+            fx_map = {"temp1": "temp_c", "press1": "pressure_hpa",
+                      "hum1": "humidity_pct", "light1": "light_lx",
+                      "pir1": "motion", "wifi_motion": "wifi_motion",
+                      "ai_person": "ai_person", "ai_detect": "ai_objects",
+                      "dist1": "sonar_cm", "mb_temp": "temp_c",
+                      "mb_sound": "sound_db"}
+            n_fx = 0
+            for row in con.execute("SELECT device_id,sensor_id,value FROM sensors"):
+                data_id = fx_map.get(row["sensor_id"])
+                if not data_id or random.random() < 0.5:
+                    continue
+                con.execute("INSERT INTO fx_data(ts,src,data_id,value)"
+                            " VALUES(strftime('%s','now'),?,?,?)",
+                            (row["device_id"], data_id, row["value"]))
+                n_fx += 1
+            if n_fx:
+                con.execute("DELETE FROM fx_data WHERE id NOT IN"
+                            " (SELECT id FROM fx_data ORDER BY id DESC LIMIT 500)")
+                if random.random() < 0.15:
+                    add_event("fx", "cnc", "tsn/fx/data <- %d values (C2C exchange)" % n_fx)
+        # 802.1Qcc stream runtime state: mostly ready, but the reservation
+        # occasionally wobbles (standby / failed) so the Streams page is alive.
+        for sr in con.execute("SELECT stream_id,status FROM tsn_streams").fetchall():
+            r = random.random()
+            if sr["status"] == 1:
+                if r < 0.02:
+                    con.execute("UPDATE tsn_streams SET status=3 WHERE stream_id=?",
+                                (sr["stream_id"],))
+                    add_event("streams", "cnc",
+                              "stream %s -> standby (listener silent)" % sr["stream_id"])
+                elif r > 0.995:
+                    con.execute("UPDATE tsn_streams SET status=2 WHERE stream_id=?",
+                                (sr["stream_id"],))
+                    add_event("streams", "cnc",
+                              "stream %s -> failed (reservation timeout)" % sr["stream_id"])
+            elif sr["status"] == 3 and r < 0.2:
+                con.execute("UPDATE tsn_streams SET status=1 WHERE stream_id=?",
+                            (sr["stream_id"],))
+                add_event("streams", "cnc", "stream %s -> ready" % sr["stream_id"])
+            elif sr["status"] == 2 and r < 0.1:
+                con.execute("UPDATE tsn_streams SET status=1 WHERE stream_id=?",
+                            (sr["stream_id"],))
+                add_event("streams", "cnc",
+                          "stream %s -> ready (re-reserved)" % sr["stream_id"])
         # Simulated sonar sweeps (esp32-02) and WiFiVision RSSI sweeps (esp32-01)
         # so the Sensors page can render the radar + WiFiVision maps even in
         # Simulation mode. A "sweep" drifts through 0..179° anti-clockwise.

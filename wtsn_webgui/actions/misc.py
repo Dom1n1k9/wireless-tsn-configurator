@@ -1,10 +1,12 @@
 """Misc/system actions: mode, exec_all, monitor, versions, backup/restore."""
 import json
+import random
 import re as _re
+import threading
 import time
 
 from .. import state
-from ..db import add_event, clamp, sensor_history
+from ..db import add_event, clamp, connect, sensor_history
 from .. import mqtt_link
 
 
@@ -20,16 +22,26 @@ def _set_mode(con, body):
     return {"ok": True, "msg": "mode = " + m}
 
 
-def _exec_all(con, body):
-    from .core import deploy_stream_msg, stream_payload
-    if state.MODE["mode"] != "real":
-        return {"ok": False, "msg": "Execute in SIM mode is not possible (no broker). "
-                "Switch to REAL mode."}
-    broker = mqtt_link.get_real_mqtt(con)
-    if not broker:
-        return {"ok": False, "msg": "MQTT broker not reachable"}
+def _sim_ack(did):
+    """Simulated device ACK: lands after a realistic delay, exactly like a
+    real agent's tsn/ack/<id> would (status row + fresh ACK + event + WS)."""
+    add_event("config", did, "ack %s OK (simulated)" % did)
+    c = connect()
+    try:
+        c.execute("UPDATE devices SET last_deploy_ok=1,last_deploy_at=?"
+                  " WHERE id=?", (int(time.time()), did))
+        c.commit()
+    finally:
+        c.close()
+    with state.ACK_LOCK:
+        state.RECENT_ACKS[did] = (True, time.time())
+    state.WS_NOTIFY.set()
+
+
+def _build_snapshots(con):
+    """Per-device config snapshot (the exact JSON a real agent receives on
+    tsn/cmd/<id>/apply). Shared by real and simulated execution."""
     snapshots = {}
-    n_pub = 0
     for r in con.execute("SELECT * FROM devices"):
         did = r["id"]
         snap = {"cmd": "apply", "id": did, "priority": 0, "traffic_class": 0,
@@ -66,6 +78,61 @@ def _exec_all(con, body):
                 snap["gcl"] = [{"gate_state": g["gate_state"],
                                 "duration_ns": g["duration_ns"]} for g in gcl]
         snapshots[did] = json.dumps(snap)
+    return snapshots
+
+
+def _exec_all_sim(con):
+    """Simulation execution: same snapshot, same ACK/retry flow — but the
+    'agents' are timers, so every device answers tsn/ack after a realistic
+    delay (150-600 ms) and the Devices page shows its deploy status."""
+    snapshots = _build_snapshots(con)
+    now = int(time.time())
+    for did in snapshots:
+        con.execute("UPDATE devices SET last_deploy_ok=0,last_deploy_at=? WHERE id=?",
+                    (now, did))
+        add_event("fxmqtt", did, "apply (simulated) <- %s" % snapshots[did][:80])
+    con.commit()
+
+    def deploy(dids):
+        for did in dids:
+            threading.Timer(random.uniform(0.15, 0.6), _sim_ack, args=(did,)).start()
+
+    deploy(list(snapshots))
+    retried = []
+    start_ack = time.time()
+    end = time.time() + 2.0
+    while time.time() < end:
+        with state.ACK_LOCK:
+            acked = {did for did, (ok, at) in state.RECENT_ACKS.items()
+                     if at >= start_ack and ok}
+        pending = [did for did in snapshots if did not in acked]
+        if not pending:
+            break
+        time.sleep(0.2)
+    if pending:
+        retried = pending
+        deploy(pending)
+        time.sleep(0.8)
+    with state.ACK_LOCK:
+        acked = {did for did, (ok, at) in state.RECENT_ACKS.items()
+                 if at >= start_ack and ok}
+    n_ok = len([d for d in snapshots if d in acked])
+    msg = "Deployed %d device(s) in simulation; %d acked" % (len(snapshots), n_ok)
+    if retried:
+        msg += "; %d needed a retry" % len(retried)
+    return {"ok": True, "msg": msg}
+
+
+def _exec_all(con, body):
+    from .core import deploy_stream_msg, stream_payload
+    if state.MODE["mode"] != "real":
+        return _exec_all_sim(con)
+    broker = mqtt_link.get_real_mqtt(con)
+    if not broker:
+        return {"ok": False, "msg": "MQTT broker not reachable"}
+    snapshots = _build_snapshots(con)
+    n_pub = 0
+    for did in snapshots:
         broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
         broker.publish("tsn/cmd/%s/status" % did, "1")
         n_pub += 1
