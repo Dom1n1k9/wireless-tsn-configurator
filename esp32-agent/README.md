@@ -24,7 +24,8 @@ portal.
 1. Power on the ESP32 — it broadcasts `WTSN-Setup`.
 2. Connect your phone/PC to that SoftAP.
 3. Open **http://192.168.4.1/** in a browser.
-4. Enter your WiFi SSID / password and the MQTT broker host, save.
+4. Enter WiFi SSID / password, the MQTT broker `host:port`, and the broker
+   user / password (leave both empty for an anonymous broker), save.
 5. The agent stores it in NVS and reboots — it now joins your WiFi and connects
    to the broker automatically.
 

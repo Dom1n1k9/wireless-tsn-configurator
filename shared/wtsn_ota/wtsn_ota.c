@@ -2,6 +2,7 @@
 
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
+#include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_log.h"
@@ -23,23 +24,38 @@ typedef struct {
     char *crc;   /* hex CRC32 string, or NULL to skip verification */
 } ota_job_t;
 
-/* Re-read the image the OTA layer just wrote (it is now the
- * PENDING_VERIFY partition) and compare its CRC32 with the value the
- * GUI computed at upload time. Standard zlib CRC32 semantics:
- * running state seeded with 0xFFFFFFFF, final XOR 0xFFFFFFFF. */
+/* Re-read the image the OTA layer just wrote (the non-running update
+ * partition, now PENDING_VERIFY) and compare its CRC32 with the value the
+ * GUI computed at upload time. Only the actual image bytes are covered, not
+ * the whole partition: the ESP image header stores the total image size at
+ * byte offset 8 (little-endian), matching the .bin file the GUI hashed.
+ * Standard zlib CRC32: running state seeded with 0xFFFFFFFF, final XOR. */
 static esp_err_t ota_verify_crc(const char *crc_hex) {
-    const esp_partition_t *part =
-        esp_ota_get_state_partition(ESP_OTA_IMG_PENDING_VERIFY);
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part) {
-        ESP_LOGE(TAG, "CRC check: no pending-verify partition found");
+        ESP_LOGE(TAG, "CRC check: no update partition found");
         return ESP_ERR_NOT_FOUND;
+    }
+    uint8_t hdr[16];
+    if (esp_partition_read(part, 0, hdr, sizeof(hdr)) != ESP_OK ||
+        hdr[0] != 0xE9) {
+        ESP_LOGE(TAG, "CRC check: no valid ESP image header (magic=0x%02X)",
+                 hdr[0]);
+        return ESP_FAIL;
+    }
+    uint32_t img_size = (uint32_t)hdr[8] | ((uint32_t)hdr[9] << 8) |
+                        ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24);
+    if (img_size == 0 || img_size > part->size) {
+        ESP_LOGE(TAG, "CRC check: implausible image size %u (part %u)",
+                 (unsigned)img_size, (unsigned)part->size);
+        return ESP_FAIL;
     }
     uint32_t expect = (uint32_t)strtoul(crc_hex, NULL, 16);
     uint8_t buf[4096];
     size_t off = 0;
     uint32_t state = 0xFFFFFFFFu;
-    while (off < part->size) {
-        size_t n = part->size - off < sizeof(buf) ? part->size - off : sizeof(buf);
+    while (off < img_size) {
+        size_t n = img_size - off < sizeof(buf) ? img_size - off : sizeof(buf);
         if (esp_partition_read(part, off, buf, n) != ESP_OK) {
             ESP_LOGE(TAG, "CRC check: partition read failed at offset %u",
                      (unsigned)off);
@@ -53,10 +69,15 @@ static esp_err_t ota_verify_crc(const char *crc_hex) {
         ESP_LOGE(TAG, "CRC32 mismatch: got %08lX expect %08lX - image "
                  "corrupted, aborting (old app stays active)",
                  (unsigned long)got, (unsigned long)expect);
-        esp_ota_set_state(part, ESP_OTA_IMG_INVALID);
+        /* esp_https_ota() already pointed the boot partition at the new
+         * image; point it back at the known-good running app so a later
+         * reboot cannot land on the corrupted one. */
+        const esp_partition_t *run = esp_ota_get_running_partition();
+        if (run) esp_ota_set_boot_partition(run);
         return ESP_ERR_INVALID_CRC;
     }
-    ESP_LOGI(TAG, "CRC32 verified: %08lX", (unsigned long)got);
+    ESP_LOGI(TAG, "CRC32 verified: %08lX (%u bytes)", (unsigned long)got,
+             (unsigned)img_size);
     return ESP_OK;
 }
 

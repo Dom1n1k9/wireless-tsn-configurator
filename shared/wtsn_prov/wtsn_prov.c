@@ -118,6 +118,7 @@ static esp_err_t handle_config(httpd_req_t *req) {
     body[got] = '\0';
 
     char ssid[64] = {0}, mqtt[64] = {0}, pass[64] = {0}, devid[32] = {0};
+    char muser[64] = {0}, mpass[64] = {0};
     char *save2 = NULL;
     char *k = strtok_r(body, "&", &save2);
     while (k) {
@@ -133,6 +134,8 @@ static esp_err_t handle_config(httpd_req_t *req) {
         if (strcmp(key, "ssid") == 0) snprintf(ssid, sizeof(ssid), "%s", val);
         else if (strcmp(key, "pass") == 0) snprintf(pass, sizeof(pass), "%s", val);
         else if (strcmp(key, "mqtt") == 0) snprintf(mqtt, sizeof(mqtt), "%s", val);
+        else if (strcmp(key, "muser") == 0) snprintf(muser, sizeof(muser), "%s", val);
+        else if (strcmp(key, "mpass") == 0) snprintf(mpass, sizeof(mpass), "%s", val);
         else if (strcmp(key, "devid") == 0 || strcmp(key, "id") == 0)
             snprintf(devid, sizeof(devid), "%s", val);
         k = strtok_r(NULL, "&", &save2);
@@ -142,6 +145,20 @@ static esp_err_t handle_config(httpd_req_t *req) {
         return ESP_FAIL;
     }
     if (mqtt[0] == '\0') snprintf(mqtt, sizeof(mqtt), "wtsn-broker.local");
+    /* Optional broker credentials live in the "wtsn" NVS namespace (muser/mpass),
+     * read by wtsn_cfg on connect. Written directly so the save_cb signature
+     * stays unchanged for every board that embeds this portal. Empty = erase. */
+    {
+        nvs_handle_t nh = 0;
+        if (nvs_open("wtsn", NVS_READWRITE, &nh) == ESP_OK) {
+            if (muser[0]) nvs_set_str(nh, "muser", muser);
+            else nvs_erase_key(nh, "muser");
+            if (mpass[0]) nvs_set_str(nh, "mpass", mpass);
+            else nvs_erase_key(nh, "mpass");
+            nvs_commit(nh);
+            nvs_close(nh);
+        }
+    }
     if (!g_cfg.save_cb) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no save handler");
         return ESP_FAIL;
@@ -161,7 +178,7 @@ static esp_err_t handle_config(httpd_req_t *req) {
 static esp_err_t handle_root(httpd_req_t *req) {
     char cur_dev[32] = {0};
     load_current_id(cur_dev, sizeof(cur_dev));
-    char html[1024];
+    char html[1400];
     snprintf(html, sizeof(html),
         "<!doctype html><html><head><meta charset=utf-8><title>%s</title></head>"
         "<body style='font-family:sans-serif;max-width:420px;margin:40px auto'>"
@@ -170,7 +187,9 @@ static esp_err_t handle_root(httpd_req_t *req) {
         "<p><label>Device ID <input name='devid' placeholder='leave empty to keep' value='%s'></label></p>"
         "<p><label>WiFi SSID <input name='ssid' required></label></p>"
         "<p><label>WiFi password <input name='pass' type='password'></label></p>"
-        "<p><label>MQTT broker host <input name='mqtt' value='%s'></label></p>"
+        "<p><label>MQTT broker host:port <input name='mqtt' value='%s'></label></p>"
+        "<p><label>MQTT user <input name='muser' placeholder='leave empty for no auth'></label></p>"
+        "<p><label>MQTT password <input name='mpass' type='password'></label></p>"
         "<button>Save &amp; connect</button>"
         "</form></body></html>",
         g_cfg.title, g_cfg.title, cur_dev, g_cfg.default_mqtt);
