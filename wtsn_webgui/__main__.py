@@ -55,15 +55,12 @@ def main(argv=None):
     srv = WTSNServer((host, port), make_handler())
 
     def _shutdown(sig, frame):
+        # Must NOT call srv.shutdown() here: it blocks until serve_forever()
+        # returns, but serve_forever() runs on this same thread, so a direct
+        # call would deadlock until systemd SIGKILLs us. A side thread sets
+        # the shutdown flag; serve_forever() notices it and returns.
         state.LISTENER_STOP.set()
-        try:
-            srv.shutdown()
-        except Exception:
-            pass
-        try:
-            os._exit(0)
-        except Exception:
-            pass
+        threading.Thread(target=srv.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
