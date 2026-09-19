@@ -135,9 +135,13 @@ static wtsn_error publish_stream(wtsn_tsn_manager *m, const char *device,
     return WTSN_ERR_NET;
 }
 
+struct listener_walk_ctx {
+    wtsn_tsn_manager *m;
+    const wtsn_stream *s;
+};
+
 static void all_listener_cb(const wtsn_device *dev, void *userdata) {
-    struct { wtsn_tsn_manager *m; const wtsn_stream *s; } *ctx =
-        (struct { wtsn_tsn_manager *m; const wtsn_stream *s; } *)userdata;
+    struct listener_walk_ctx *ctx = (struct listener_walk_ctx *)userdata;
     if (!dev->id[0] || strcmp(dev->id, ctx->s->talker) == 0) return;
     publish_stream(ctx->m, dev->id, ctx->s, WTSN_STREAM_ROLE_LISTENER);
 }
@@ -155,7 +159,7 @@ wtsn_error wtsn_tsn_manager_deploy(wtsn_tsn_manager *m, const char *stream_id) {
     if (s.listener_all) {
         /* all-listeners: push the stream to every device in the DB except
            the talker, so each agent registers itself as a listener. */
-        struct { wtsn_tsn_manager *m; const wtsn_stream *s; } ctx = { m, &s };
+        struct listener_walk_ctx ctx = { m, &s };
         (void)wtsn_db_device_for_each(m->db, all_listener_cb, &ctx);
     } else {
         for (size_t i = 0; i < s.listener_count; i++) {
