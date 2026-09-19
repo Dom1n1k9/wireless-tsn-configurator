@@ -982,38 +982,40 @@ function loadBigSensorCharts(dev){
     html+="</div>";
     box.innerHTML=html;
   })}
- function metricChart(pts,{w=560,h=110,unit="",color="var(--sec)"}={}){
-  if(!pts||!pts.length)return "<div class='muted'>no samples yet — Ping a device (Devices) for latency, or wait for gPTP reports</div>";
-  const now=Math.floor(Date.now()/1000);
-  let t0=pts[0].ts||now,t1=pts[pts.length-1].ts||now;
-  if(t1<=t0){t0=now-300;t1=now}
-  let mn=Infinity,mx=-Infinity;
-  pts.forEach(p=>{const v=parseFloat(p.v);if(!isNaN(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}});
-  if(!isFinite(mn))return "<div class='muted'>no numeric samples</div>";
-  const pad=(mx===mn)?1:((mx-mn)*0.08);
-  mn-=pad;mx+=pad;
-  const W=w,H=h;
-  const x=t=>4+(Math.max(0,Math.min(1,(t-t0)/((t1-t0)||1))))*(W-8);
-  const y=v=>H-6-((v-mn)/(mx-mn))*(H-12);
-  let path="",last="";
-  const perDev={};
-  pts.forEach(k=>{
-    const v=parseFloat(k.v);if(isNaN(v))return;
-    (perDev[k.device_id]=perDev[k.device_id]||[]).push({ts:k.ts,v:v})});
-  const series=Object.keys(perDev);
-  series.forEach((dev,di)=>{
-    const col=["var(--sec)","var(--ok)","var(--warn)","var(--err)"][di%4];
-    const ps=perDev[dev];
-    path+="<path d='"+ps.map((p,i)=>(i?"L":"M")+x(p.ts).toFixed(1)+","+y(p.v).toFixed(1)).join(" ")+"' fill='none' stroke='"+col+"' stroke-width='1.5'/>";
-    const lp=ps[Math.max(0,ps.length-1)];
-    last+="<circle cx='"+x(lp.ts).toFixed(1)+"' cy='"+y(lp.v).toFixed(1)+"' r='2.5' fill='"+col+"'><title>"+esc(dev)+" "+lp.v+" "+unit+"</title></circle>"});
-  const gwidth=Math.max(0,W-8-2);
-  const grid=[0,0.25,0.5,0.75,1].map(f=>"<line x1='"+(4+f*gwidth).toFixed(1)+"' y1='4' x2='"+(4+f*gwidth).toFixed(1)+"' y2='"+(H-6).toFixed(1)+"' stroke='var(--border)' stroke-width='1'/>").join("");
-  const yl=[0,0.25,0.5,0.75,1].map(f=>"<line x1='4' y1='"+(4+f*(H-10)).toFixed(1)+"' x2='"+(W-4).toFixed(1)+"' y2='"+(4+f*(H-10)).toFixed(1)+"' stroke='var(--border)' stroke-width='1'/>").join("");
-  const leg=series.map((dev,di)=>["var(--sec)","var(--ok)","var(--warn)","var(--err)"][di%4]+":"+esc(dev)).join(" · ");
-  return "<svg width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"' style='background:var(--surf2);border-radius:6px;max-width:100%'>"+grid+yl+"</svg>"+
-   "<svg width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"' style='background:transparent;margin-top:-"+H+"px;max-width:100%'>"+path+last+"</svg>"+
-   "<div class='gcllegend' style='margin-top:2px'>"+leg+"</div>"}
+  const CHART_COLS=["var(--sec)","var(--ok)","var(--warn)","var(--err)"];
+  function metricChart(pts,{w=560,h=150,unit=""}={}){
+   if(!pts||!pts.length)return "<div class='muted'>no samples yet — Ping a device (Devices) for latency, or wait for gPTP reports</div>";
+   const now=Math.floor(Date.now()/1000);
+   let t0=pts[0].ts||now,t1=pts[pts.length-1].ts||now;
+   if(t1<=t0){t0=now-300;t1=now}
+   let mn=Infinity,mx=-Infinity;
+   pts.forEach(p=>{const v=parseFloat(p.v);if(!isNaN(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}});
+   if(!isFinite(mn))return "<div class='muted'>no numeric samples</div>";
+   const pad=(mx===mn)?1:((mx-mn)*0.08);
+   mn-=pad;mx+=pad;
+   const W=w,H=h;
+   const x=t=>4+Math.max(0,Math.min(1,(t-t0)/((t1-t0)||1)))*(W-8);
+   const y=v=>10+((mx-v)/(mx-mn))*(H-34);
+   let path="",last="";
+   const perDev={};
+   pts.forEach(k=>{
+     const v=parseFloat(k.v);if(isNaN(v))return;
+     (perDev[k.device_id]=perDev[k.device_id]||[]).push({ts:k.ts,v:v})});
+   const series=Object.keys(perDev);
+   series.forEach((dev,di)=>{
+     const col=CHART_COLS[di%4];
+     const ps=perDev[dev];
+     path+="<path d='"+ps.map((p,i)=>(i?"L":"M")+x(p.ts).toFixed(1)+","+y(p.v).toFixed(1)).join(" ")+"' fill='none' stroke='"+col+"' stroke-width='1.5'/>";
+     const lp=ps[ps.length-1];
+     last+="<circle cx='"+x(lp.ts).toFixed(1)+"' cy='"+y(lp.v).toFixed(1)+"' r='2.5' fill='"+col+"'><title>"+esc(dev)+" "+lp.v+" "+unit+"</title></circle>"});
+   const grid=[0,0.25,0.5,0.75,1].map(f=>"<line x1='4' y1='"+(10+f*(H-34)).toFixed(1)+"' x2='"+(W-4)+"' y2='"+(10+f*(H-34)).toFixed(1)+"' stroke='var(--border)' stroke-width='1'/>").join("");
+   const vlab="<text x='8' y='15' fill='var(--dim)' font-size='9'>"+fmtAxis(mx)+" "+unit+"</text>"+
+    "<text x='8' y='"+(H-22)+"' fill='var(--dim)' font-size='9'>"+fmtAxis(mn)+" "+unit+"</text>";
+   const tlbl="<text x='4' y='"+(H-8)+"' fill='var(--dim)' font-size='9'>"+fmtTime(t0)+"</text>"+
+    "<text x='"+(W-4)+"' y='"+(H-8)+"' fill='var(--dim)' font-size='9' text-anchor='end'>"+fmtTime(t1)+"</text>";
+   const leg=series.map((dev,di)=>"<span style='display:inline-flex;align-items:center;gap:5px;margin-right:16px;color:var(--text)'><span style='width:10px;height:10px;border-radius:2px;background:"+CHART_COLS[di%4]+"'></span>"+esc(dev)+"</span>").join("");
+   return "<svg viewBox='0 0 "+W+" "+H+"' style='width:100%;max-width:"+W+"px;aspect-ratio:"+W+"/"+H+";background:var(--surf2);border-radius:6px'>"+grid+path+last+vlab+tlbl+"</svg>"+
+    "<div class='gcllegend' style='margin-top:4px'>"+leg+"</div>"}
 function metrics(){
   return "<h2>TSN Metrics</h2>"+
    "<div class='muted' style='margin-bottom:10px'>Control-plane E2E latency (RTT per <b>Ping</b>, stored in <code>latency_log</code>) and gPTP clock offset from <code>timesync_reports</code>. In Simulation, synthetic samples are generated so you can see how the page behaves; in Real mode they come from real device Ping/acks and gPTP reports.</div>"+
