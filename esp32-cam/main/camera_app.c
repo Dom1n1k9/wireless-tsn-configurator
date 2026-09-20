@@ -605,9 +605,18 @@ static esp_err_t mqtt_start(void) {
     char will_topic[48];
     snprintf(will_topic, sizeof(will_topic), "tsn/lwt/%s", g_device_id);
     static const char will_msg[] = "offline";
+    /* broker auth: same NVS keys as esp32-agent (portal writes muser/mpass).
+     * Static: esp-mqtt keeps the string pointers past this function. */
+    static char muser[64], mpass[64];
+    nvs_str_get("muser", muser, sizeof(muser));
+    nvs_str_get("mpass", mpass, sizeof(mpass));
     esp_mqtt_client_config_t cfg = {
         .broker = { .address = { .hostname = host, .port = 1883, .transport = MQTT_TRANSPORT_OVER_TCP } },
-        .credentials = { .client_id = g_device_id },
+        .credentials = {
+            .client_id = g_device_id,
+            .username = muser[0] ? muser : NULL,
+            .authentication = { .password = mpass[0] ? mpass : NULL },
+        },
         .session = { .keepalive = 30,
                      .last_will = {
                          .topic = will_topic,
