@@ -75,6 +75,12 @@ static void on_connected(esp_mqtt_event_handle_t e, wtsn_mqtt *m) {
     esp_mqtt_client_subscribe(m->c, t, 0);
     snprintf(t, sizeof(t), "tsn/cmd/%s/ota", m->device_id[0] ? m->device_id : "+");
     esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/factory", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/reset", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
+    snprintf(t, sizeof(t), "tsn/cmd/%s/reboot", m->device_id[0] ? m->device_id : "+");
+    esp_mqtt_client_subscribe(m->c, t, 0);
     esp_mqtt_client_subscribe(m->c, "tsn/fx/cmd/#", 0);
     /* FX field exchange: only the shared motion/event feed drives the local
      * actor. A broad "tsn/fx/#" would let every node re-trigger itself (echo)
