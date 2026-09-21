@@ -138,15 +138,28 @@ static wtsn_error publish_stream(wtsn_tsn_manager *m, const char *device,
 struct listener_walk_ctx {
     wtsn_tsn_manager *m;
     const wtsn_stream *s;
+    const char *domain;     /* NULL = all domains */
 };
 
 static void all_listener_cb(const wtsn_device *dev, void *userdata) {
     struct listener_walk_ctx *ctx = (struct listener_walk_ctx *)userdata;
     if (!dev->id[0] || strcmp(dev->id, ctx->s->talker) == 0) return;
+    if (ctx->domain && strcmp(dev->domain, ctx->domain) != 0) return;
     publish_stream(ctx->m, dev->id, ctx->s, WTSN_STREAM_ROLE_LISTENER);
 }
 
+static wtsn_error deploy_scoped(wtsn_tsn_manager *m, const char *stream_id,
+                                const char *domain);
+
 wtsn_error wtsn_tsn_manager_deploy(wtsn_tsn_manager *m, const char *stream_id) {
+    return deploy_scoped(m, stream_id, NULL);
+}
+
+/* Internal scoped deploy: `domain` (NULL/empty = all domains) also limits
+ * the all-listeners fan-out so a domain-scoped deploy never configures
+ * endpoints outside its own physical cell. */
+static wtsn_error deploy_scoped(wtsn_tsn_manager *m, const char *stream_id,
+                                const char *domain) {
     if (!m || !stream_id) return WTSN_ERR_INVALID_ARG;
     wtsn_stream s;
     wtsn_error e = wtsn_tsn_manager_load(m, stream_id, &s);
@@ -158,9 +171,13 @@ wtsn_error wtsn_tsn_manager_deploy(wtsn_tsn_manager *m, const char *stream_id) {
 
     if (s.listener_all) {
         /* all-listeners: push the stream to every device in the DB except
-           the talker, so each agent registers itself as a listener. */
-        struct listener_walk_ctx ctx = { m, &s };
-        (void)wtsn_db_device_for_each(m->db, all_listener_cb, &ctx);
+           the talker, so each agent registers itself as a listener. When a
+           domain scope is active, only devices of that domain are reached. */
+        struct listener_walk_ctx ctx = { m, &s, domain };
+        if (domain && domain[0])
+            (void)wtsn_db_device_for_each_in_domain(m->db, domain, all_listener_cb, &ctx);
+        else
+            (void)wtsn_db_device_for_each(m->db, all_listener_cb, &ctx);
     } else {
         for (size_t i = 0; i < s.listener_count; i++) {
             if (!s.listeners[i][0]) continue;
@@ -179,14 +196,35 @@ static int collect_order(const wtsn_stream *s, void *ud) {
     return 0;
 }
 
-static int deploy_cb(const wtsn_stream *s, void *ud) {
-    wtsn_tsn_manager *m = (wtsn_tsn_manager *)ud;
-    return wtsn_tsn_manager_deploy(m, s->stream_id) == WTSN_OK ? 0 : 0;
+/* True when the stream belongs to `domain` (via its talker device), or when
+ * the scope argument is empty (global deploy). A device missing from the DB
+ * is treated as "belongs" so a domain scope never silently loses a stream
+ * that still needs its endpoints pushed. */
+static int stream_in_domain(wtsn_tsn_manager *m, const char *stream_id,
+                            const char *domain) {
+    if (!domain || !domain[0]) return 1;
+    wtsn_stream s;
+    if (wtsn_tsn_manager_load(m, stream_id, &s) != WTSN_OK) return 1;
+    wtsn_device talker;
+    if (wtsn_db_device_get(m->db, s.talker, &talker) != WTSN_OK) return 1;
+    return !talker.domain[0] || strcmp(talker.domain, domain) == 0;
 }
 
-wtsn_error wtsn_tsn_manager_deploy_all(wtsn_tsn_manager *m) {
+struct deploy_ctx {
+    wtsn_tsn_manager *m;
+    const char *domain;     /* NULL/empty = all domains */
+};
+
+static int deploy_cb(const wtsn_stream *s, void *ud) {
+    struct deploy_ctx *dctx = (struct deploy_ctx *)ud;
+    if (!stream_in_domain(dctx->m, s->stream_id, dctx->domain)) return 0;
+    return deploy_scoped(dctx->m, s->stream_id, dctx->domain) == WTSN_OK ? 0 : 0;
+}
+
+wtsn_error wtsn_tsn_manager_deploy_all(wtsn_tsn_manager *m, const char *domain) {
     if (!m) return WTSN_ERR_INVALID_ARG;
     (void)collect_order;
-    wtsn_tsn_manager_for_each(m, deploy_cb, m);
+    struct deploy_ctx dctx = { m, domain };
+    wtsn_tsn_manager_for_each(m, deploy_cb, &dctx);
     return WTSN_OK;
 }

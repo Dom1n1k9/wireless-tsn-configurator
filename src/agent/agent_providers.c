@@ -116,12 +116,25 @@ static wtsn_error linux_read_sensors(void *state) {
 }
 
 static wtsn_error linux_send(void *state, const char *topic, const unsigned char *data, size_t len) {
-    (void)state;
-    (void)topic;
-    (void)data;
-    (void)len;
-    /* TODO(host-agent): publish via the mqtt client. Currently a no-op; the
-     * previous implementation allocated a buffer that was never used or freed. */
+    linux_state *ls = (linux_state *)state;
+    if (!ls || !topic) return WTSN_ERR_INVALID_ARG;
+    if (!ls->mqtt) {
+        wtsn_log(WTSN_LOG_WARN, "linux_send: no mqtt client connected, dropping %s", topic);
+        return WTSN_ERR_NOT_READY;
+    }
+    /* Publish via the established MQTT client. The payload is arbitrary binary
+     * data, so copy it into a NUL-terminated buffer (MQTT payloads are byte
+     * strings; this publish API takes a C string). */
+    char *buf = malloc(len + 1);
+    if (!buf) return WTSN_ERR_NO_MEMORY;
+    if (data && len) memcpy(buf, data, len);
+    buf[len] = '\0';
+    wtsn_error e = wtsn_mqtt_client_publish(ls->mqtt, topic, buf);
+    free(buf);
+    if (e != WTSN_OK) {
+        wtsn_log(WTSN_LOG_WARN, "linux_send: publish %s failed (%d)", topic, (int)e);
+        return e;
+    }
     return WTSN_OK;
 }
 

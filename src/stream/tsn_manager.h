@@ -29,6 +29,9 @@ size_t wtsn_tsn_manager_count(wtsn_tsn_manager *m);
 
 /* 802.1Qcc: compute the path and push talker + listeners to their agents via MQTT */
 wtsn_error wtsn_tsn_manager_deploy(wtsn_tsn_manager *m, const char *stream_id);
-wtsn_error wtsn_tsn_manager_deploy_all(wtsn_tsn_manager *m);
+/* Deploy every configured stream. When `domain` is non-NULL and non-empty,
+ * only streams whose endpoints all belong to that TSN domain are deployed
+ * (physical 802.11 cell); NULL/empty = all domains (legacy global deploy). */
+wtsn_error wtsn_tsn_manager_deploy_all(wtsn_tsn_manager *m, const char *domain);
 
 #endif

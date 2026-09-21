@@ -42,13 +42,33 @@ command -v tc >/dev/null || { log "missing 'tc' (iproute2)"; exit 1; }
 # ---- 1) gPTP (802.1AS) ----
 if command -v ptp4l >/dev/null; then
     pkill -f "ptp4l -i $IFACE" 2>/dev/null
+    # linuxptp ships a gPTP example config built for L2 (gPTP) operation on
+    # modern kernels; try it first, then fall back to the transport-specific
+    # defaults so a missing file never breaks the deploy.
+    MASTER_CFG=/etc/linuxptp/gptp_master.cfg
+    SLAVE_CFG=/etc/linuxptp/gptp_slave.cfg
+    if [ ! -f "$MASTER_CFG" ] && [ -f /etc/linuxptp/gPTP.cfg ]; then
+        MASTER_CFG=/etc/linuxptp/gPTP.cfg
+    fi
+    if [ ! -f "$SLAVE_CFG" ] && [ -f "$MASTER_CFG" ]; then
+        SLAVE_CFG="$MASTER_CFG"
+    fi
     if [ "$ROLE" = "master" ]; then
-        log "gPTP: $IFACE as grandmaster"
-        ptp4l -i "$IFACE" -m -f /etc/linuxptp/gptp_master.cfg &
-        # TODO: real config /etc/linuxptp/gptp_master.cfg may not exist
+        log "gPTP: $IFACE as grandmaster ($MASTER_CFG)"
+        if [ -f "$MASTER_CFG" ]; then
+            ptp4l -i "$IFACE" -m -f "$MASTER_CFG" &
+        else
+            log "no /etc/linuxptp/gptp_master.cfg - using default gPTP transport config"
+            ptp4l -i "$IFACE" -m --gptp --transportSpecific 1 &
+        fi
     else
-        log "gPTP: $IFACE as slave"
-        ptp4l -i "$IFACE" -m -s -f /etc/linuxptp/gptp_slave.cfg &
+        log "gPTP: $IFACE as slave ($SLAVE_CFG)"
+        if [ -f "$SLAVE_CFG" ]; then
+            ptp4l -i "$IFACE" -m -s -f "$SLAVE_CFG" &
+        else
+            log "no /etc/linuxptp/gptp_slave.cfg - using default gPTP transport config"
+            ptp4l -i "$IFACE" -m -s --gptp --transportSpecific 1 &
+        fi
     fi
 else
     log "linuxptp not installed - skipping gPTP (apt install linuxptp)"

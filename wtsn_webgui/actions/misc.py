@@ -38,11 +38,24 @@ def _sim_ack(did):
     state.WS_NOTIFY.set()
 
 
-def _build_snapshots(con):
+def _domain_devices(con, domain):
+    """Return the set of device ids to deploy for a (possibly scoped) domain.
+    Empty/None scope = every device (global deploy, the legacy behaviour)."""
+    if not domain:
+        return {r[0] for r in con.execute("SELECT id FROM devices")}
+    return {r[0] for r in con.execute(
+        "SELECT id FROM devices WHERE domain=?", (domain,))}
+
+
+def _build_snapshots(con, domain=None):
     """Per-device config snapshot (the exact JSON a real agent receives on
-    tsn/cmd/<id>/apply). Shared by real and simulated execution."""
+    tsn/cmd/<id>/apply). Shared by real and simulated execution. Optionally
+    scoped to a single TSN domain (physical 802.11 cell)."""
     snapshots = {}
+    allowed = _domain_devices(con, domain)
     for r in con.execute("SELECT * FROM devices"):
+        if r["id"] not in allowed:
+            continue
         did = r["id"]
         snap = {"cmd": "apply", "id": did, "priority": 0, "traffic_class": 0,
                 "vlan_id": 0, "group": "default", "preemption": 0,
@@ -81,11 +94,11 @@ def _build_snapshots(con):
     return snapshots
 
 
-def _exec_all_sim(con):
+def _exec_all_sim(con, domain=None):
     """Simulation execution: same snapshot, same ACK/retry flow — but the
     'agents' are timers, so every device answers tsn/ack after a realistic
     delay (150-600 ms) and the Devices page shows its deploy status."""
-    snapshots = _build_snapshots(con)
+    snapshots = _build_snapshots(con, domain)
     now = int(time.time())
     for did in snapshots:
         con.execute("UPDATE devices SET last_deploy_ok=0,last_deploy_at=? WHERE id=?",
@@ -117,7 +130,8 @@ def _exec_all_sim(con):
         acked = {did for did, (ok, at) in state.RECENT_ACKS.items()
                  if at >= start_ack and ok}
     n_ok = len([d for d in snapshots if d in acked])
-    msg = "Deployed %d device(s) in simulation; %d acked" % (len(snapshots), n_ok)
+    scope = (" domain " + domain) if domain else ""
+    msg = "Deployed %d device(s)%s in simulation; %d acked" % (len(snapshots), scope, n_ok)
     if retried:
         msg += "; %d needed a retry" % len(retried)
     return {"ok": True, "msg": msg}
@@ -125,12 +139,14 @@ def _exec_all_sim(con):
 
 def _exec_all(con, body):
     from .core import deploy_stream_msg, stream_payload
+    domain = body.get("domain") or ""
     if state.MODE["mode"] != "real":
-        return _exec_all_sim(con)
+        return _exec_all_sim(con, domain)
     broker = mqtt_link.get_real_mqtt(con)
     if not broker:
         return {"ok": False, "msg": "MQTT broker not reachable"}
-    snapshots = _build_snapshots(con)
+    snapshots = _build_snapshots(con, domain)
+    allowed = set(snapshots)
     n_pub = 0
     for did in snapshots:
         broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
@@ -146,6 +162,11 @@ def _exec_all(con, body):
             "SELECT role,device_id FROM tsn_stream_members WHERE stream_id=?",
             (sr["stream_id"],)).fetchall()
         talker = next((m["device_id"] for m in memb if m["role"] == "talker"), "")
+        if domain and talker not in allowed and not any(
+                m["device_id"] in allowed for m in memb if m["role"] == "listener"):
+            # A domain-scoped deploy only publishes streams whose endpoints all
+            # live in that domain; records with endpoints elsewhere are skipped.
+            continue
         n_pub += deploy_stream_msg(broker, con, sr["stream_id"], payload)
         if talker:
             add_event("fxmqtt", "cnc",
@@ -161,7 +182,7 @@ def _exec_all(con, body):
             acked = {did for did, (ok, at) in state.RECENT_ACKS.items()
                      if at >= start_ack and ok}
         pending = [r["id"] for r in con.execute("SELECT id FROM devices")
-                   if r["id"] not in acked]
+                   if r["id"] in allowed and r["id"] not in acked]
         if not pending:
             break
         time.sleep(0.3)
@@ -170,7 +191,8 @@ def _exec_all(con, body):
             broker.publish("tsn/cmd/%s/apply" % did, snapshots[did])
             retried.append(did)
             add_event("fxmqtt", "cnc", "retry tsn/cmd/%s/apply" % did)
-    msg = "Sent /apply to %d device(s) via MQTT" % n_pub
+    msg = "Sent /apply to %d device(s)%s via MQTT" % (
+        n_pub, (" in domain " + domain) if domain else "")
     if retried:
         msg += "; %d retried (no ack)" % len(retried)
     return {"ok": True, "msg": msg}

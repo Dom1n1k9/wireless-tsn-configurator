@@ -118,6 +118,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 #archNodes{position:absolute;top:0;left:0}
 </style></head><body>
 <header><span class="logo">WTSN Configurator</span><span class="sub">Wireless TSN control plane</span>
+<select id="execScope" onchange="execAll()" style="margin-left:12px;background:var(--surf2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px" title="Scope the deploy to a TSN domain (physical 802.11 cell)"><option value="">All domains</option></select>
 <button class="execbtn" onclick="execAll()">Execute settings on controller</button>
 <div class="spacer"></div>
 <span class="mode"><button id="md_real" onclick="setMode('real')">Real</button><button id="md_sim" class="on" onclick="setMode('sim')">Simulation</button></span>
@@ -132,7 +133,8 @@ function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 async function api(a,d){const r=await fetch("/api/actions/"+a,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d||{})});const j=await r.json();toast(j.msg,j.ok);return j}
 function toast(m,ok){const t=$("toast");t.style.display="block";t.style.borderColor=ok?"var(--sec)":"var(--err)";t.textContent=m;clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",2200)}
-async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();go((location.hash||"").replace("#","")||cur||"devices")}
+async function load(){const r=await fetch("/api/data");D=await r.json();renderNav();syncExecScope();go((location.hash||"").replace("#","")||cur||"devices")}
+function syncExecScope(){const sel=$("execScope");if(!sel)return;const cur=sel.value;const opt='<option value="">All domains</option>'+[].concat(D.domains||[]).map(x=>"<option value='"+esc(x.id)+"'>"+esc(x.name)+" ("+esc(x.id)+")</option>").join("");if(sel.innerHTML!==opt){sel.innerHTML=opt;if(cur)sel.value=cur}}
 window.addEventListener("hashchange",()=>{const p=(location.hash||"").replace("#","");if(p)go(p)});
 function renderNav(){const n=$("nav");n.innerHTML="";
  NAV.forEach(g=>{if(g[0]){const h=document.createElement("div");h.className="navgroup";n.appendChild(h);const t=document.createElement("div");t.className="navtitle";t.textContent=g[0];h.appendChild(t)}const cont=g[1];cont.forEach(pp=>{const b=document.createElement("button");b.textContent=pp[1];b.onclick=()=>go(pp[0]);b.id="nv_"+pp[0];(g[0]?n.lastElementChild:n).appendChild(b)})});
@@ -159,7 +161,8 @@ function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.class
     else if(p==="architecture"){m.innerHTML=architecture();archGo();}
     else if(p==="settings")m.innerHTML=settings();}
 
-function execAll(){api("exec_all",{}).then(load)}
+function execAll(){api("exec_all",{domain:$("execScope")?$("execScope").value:""}).then(load)}
+function execDomain(d){api("exec_all",{domain:d}).then(load)}
 function aiClipUrl(id,path){
   const f=String(path||"").replace(/^\/ai\//,"");
   return "/clip/"+encodeURIComponent(id)+"/"+encodeURIComponent(f);
@@ -323,10 +326,11 @@ function domainCard(){
   const rows=(D.domains||[]).map(g=>{
     const members=(D.devices||[]).filter(d=>d.domain===g.id).length;
     return "<div class='row'><span><b>"+esc(g.name)+"</b> <span class='muted'>("+esc(g.id)+" &middot; "+members+" devices"+(g.description?" &middot; "+esc(g.description):"")+")</span></span>"+
+      "<button class='ghost' onclick='execDomain(\""+esc(g.id)+"\")'>Deploy</button>"+
       (g.id!=="default"?"<button class='danger' onclick='api(\"delete_domain\",{id:\""+esc(g.id)+"\"}).then(load)'>Delete</button>":"<span class='muted'>built-in</span>")+"</div>";
   }).join("");
   return "<div class='card'><h3>Domains</h3>"+
-   "<div class='muted' style='margin-bottom:8px'>Physical 802.11 cells each form their own collision/time domain. Assign a domain per device in the table above (currently organizational — deployment is global).</div>"+
+   "<div class='muted' style='margin-bottom:8px'>Physical 802.11 cells each form their own collision/time domain. Assign a domain per device in the table above, then deploy one cell at a time with <b>Deploy</b> (scoped to that domain), or use the header's Execute button with the scope selector.</div>"+
    rows+
    "<div class='row'><label>id</label><input id=nv_id placeholder='e.g. shopfloor'><label>name</label><input id=nv_name placeholder='Shop Floor'><label>description</label><input id=nv_desc placeholder='optional'></div>"+
    "<button onclick='api(\"save_domain\",{id:$(\"nv_id\").value,name:$(\"nv_name\").value,description:$(\"nv_desc\").value}).then(load)'>Add domain</button></div>";
@@ -1104,7 +1108,8 @@ function streams(){
   "<div class='row'><label>listeners</label><select id=s_lsn multiple size=5>"+opts+"</select><span class='muted'>Ctrl+click to select multiple</span></div>"+
   "<div class='row'><label>vlan</label><select id=s_vlan><option value='0'>- none -</option>"+vopts+"</select></div>"+
   "<div class='row'><button onclick=saveStream()>Save Stream</button>"+
-  "<button class='ghost' onclick='api(\"deploy_all_streams\",{}).then(load)'>Deploy All</button></div></div>"+
+  "<button class='ghost' onclick='api(\"deploy_all_streams\",{domain:$(\"sd_scope\")?$(\"sd_scope\").value:\"\"}).then(load)'>Deploy All</button>"+
+  "<span class='muted'>scope:</span><select id=sd_scope><option value=''>all</option>"+(D.domains||[]).map(x=>"<option value='"+esc(x.id)+"'>"+esc(x.name)+"</option>").join("")+"</select></div></div>"+
   "<h3>Streams</h3><table><tr><th>id</th><th>name</th><th>talker</th><th>listeners</th><th>vlan</th><th>status</th><th></th></tr>"+rows+"</table>"}
 function saveStream(){const lsn=[].slice.call(document.querySelectorAll("#s_lsn option:checked")).map(o=>o.value);
  api("save_stream",{name:$("s_name").value,talker:$("s_talker").value,listeners:lsn,

@@ -82,20 +82,37 @@ def _deploy_stream(con, body):
 
 
 def _deploy_all_streams(con, body):
-    con.execute("UPDATE tsn_streams SET status=1")
+    domain = body.get("domain") or ""
+    if domain:
+        # Domain-scoped: only streams whose stored members all sit in `domain`.
+        allowed = {r[0] for r in con.execute(
+            "SELECT id FROM devices WHERE domain=?", (domain,))}
+        rows = []
+        for sr in con.execute("SELECT * FROM tsn_streams"):
+            memb = con.execute("SELECT device_id FROM tsn_stream_members "
+                               "WHERE stream_id=?", (sr["stream_id"],)).fetchall()
+            mem = {m["device_id"] for m in memb} or {sr["talker"]}
+            if mem and not mem.issubset(allowed):
+                continue
+            rows.append(sr)
+    else:
+        rows = con.execute("SELECT * FROM tsn_streams").fetchall()
+    for sr in rows:
+        con.execute("UPDATE tsn_streams SET status=1 WHERE stream_id=?", (sr["stream_id"],))
     con.commit()
-    n = con.execute("SELECT COUNT(*) FROM tsn_streams").fetchone()[0]
+    n = len(rows)
     if state.MODE["mode"] == "real":
         broker = mqtt_link.get_real_mqtt(con)
         if broker:
-            for sr in con.execute("SELECT * FROM tsn_streams").fetchall():
+            for sr in rows:
                 payload = stream_payload(con, sr["stream_id"])
                 if payload:
                     deploy_stream_msg(broker, con, sr["stream_id"], payload)
         else:
             return {"ok": False, "msg": "MQTT broker not reachable"}
-    add_event("config", "cnc", "802.1Qcc all %d streams deployed via FXMQTT" % n)
-    return {"ok": True, "msg": "%d streams deployed via FXMQTT" % n}
+    scope = (" in domain " + domain) if domain else ""
+    add_event("config", "cnc", "802.1Qcc all %d streams%s deployed via FXMQTT" % (n, scope))
+    return {"ok": True, "msg": "%d streams%s deployed via FXMQTT" % (n, scope)}
 
 
 HANDLERS = {

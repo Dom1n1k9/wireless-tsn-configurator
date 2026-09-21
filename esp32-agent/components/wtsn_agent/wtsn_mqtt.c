@@ -170,7 +170,11 @@ void wtsn_mqtt_start(wtsn_mqtt *m) {
     esp_mqtt_client_start(m->c);
 }
 
-void wtsn_mqtt_publish(wtsn_mqtt *m, const char *topic, const char *payload) {
+void wtsn_mqtt_publish_qos(wtsn_mqtt *m, const char *topic, const char *payload, int qos) {
     if (!m || !m->c) return;
-    esp_mqtt_client_publish(m->c, topic, payload, 0, 0, 0);
+    esp_mqtt_client_publish(m->c, topic, payload, qos, 0, 0);
+}
+
+void wtsn_mqtt_publish(wtsn_mqtt *m, const char *topic, const char *payload) {
+    wtsn_mqtt_publish_qos(m, topic, payload, 0);
 }

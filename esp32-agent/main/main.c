@@ -316,6 +316,12 @@ static void on_command(const char *topic, const char *payload, void *ud) {
     } else if (strcmp(cmd, "factory") == 0) {
         factory_reset();
         return;   /* never reached (reboots) */
+    } else if (strcmp(cmd, "wfm_recal") == 0) {
+        /* WiFiVision press-to-recalibrate: restart the "empty room" calibration
+         * window so motion thresholds re-learn the current radio floor. */
+        wtsn_wifimotion_recalibrate();
+        send_ack(true, "wfm_recal");
+        return;
     }
 }
 
@@ -576,6 +582,9 @@ static void led_task(void *arg) {
  * reboots into provisioning mode. */
 #define FACTORY_BTN_GPIO GPIO_NUM_0
 #define FACTORY_HOLD_MS 3000
+/* Shorter hold on the same button = "press-to-recalibrate": re-learns the
+ * WiFiVision "empty room" RSSI/CSI floor without erasing config. */
+#define WFM_RECAL_HOLD_MS 1200
 
 static void factory_reset(void) {
     nvs_handle_t h;
@@ -593,13 +602,28 @@ static void factory_reset(void) {
 static void btn_task(void *arg) {
     (void)arg;
     int64_t down_us = 0;
+    int wfm_recal_done = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
         if (gpio_get_level(FACTORY_BTN_GPIO) == 0) {
             if (!down_us) {
                 down_us = esp_timer_get_time();
-            } else if (esp_timer_get_time() - down_us >= (int64_t)FACTORY_HOLD_MS * 1000) {
-                factory_reset();
+                wfm_recal_done = 0;
+            } else {
+                int64_t held = esp_timer_get_time() - down_us;
+                if (!wfm_recal_done &&
+                    held >= (int64_t)WFM_RECAL_HOLD_MS * 1000 &&
+                    held < (int64_t)FACTORY_HOLD_MS * 1000) {
+                    /* Press-to-recalibrate: WiFiVision "empty room" floor. Only
+                     * once per press; keep holding past FACTORY_HOLD_MS for the
+                     * factory reset. */
+                    wtsn_wifimotion_recalibrate();
+                    wfm_recal_done = 1;
+                    ESP_LOGI(TAG, "WiFiVision recalibrated (BOOT held ~%d ms)",
+                             WFM_RECAL_HOLD_MS);
+                } else if (held >= (int64_t)FACTORY_HOLD_MS * 1000) {
+                    factory_reset();
+                }
             }
         } else {
             down_us = 0;

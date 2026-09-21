@@ -25,8 +25,9 @@
  *
  * Auto-calibration: on start the module samples a few seconds of "empty room"
  * and derives sensitivity thresholds from that floor, so it works without a
- * tuning UI. The 20 s press-to-recalibrate is not implemented; call
- * wtsn_wifimotion_recalibrate() to restart that window.
+ * tuning UI. Press-to-recalibrate: hold the BOOT button ~1.2 s on the node, or
+ * send `tsn/cmd/<id>/wfm_recal`, to restart that window via
+ * wtsn_wifimotion_recalibrate().
  */
 void wtsn_wifimotion_init(const char *device_id, wtsn_mqtt *mq);
 

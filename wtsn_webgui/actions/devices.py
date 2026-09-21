@@ -138,9 +138,14 @@ def _start_ota(con, body):
                        % (fname, fwkind, did, devkind)}
     version = (meta[0] if meta else "") or ""
     stored_crc = (meta[1] if meta else "") or ""
-    host = os.environ.get("WTSN_HOST", "127.0.0.1")
-    if host in ("0.0.0.0", "::"):
-        host = "127.0.0.1"
+    # The devices pull the firmware over HTTP from the CNC. WTSN_HOST defaults
+    # to 127.0.0.1 (GUI binds localhost), which an ESP could never reach — so
+    # when the env has no explicit LAN address we fall back to the CNC's actual
+    # LAN IP (same value the ping source uses). This keeps OTA working when the
+    # CNC runs on the RPi instead of this PC.
+    host = (os.environ.get("WTSN_HOST") or "").strip()
+    if host in ("0.0.0.0", "::", "127.0.0.1", "localhost", ""):
+        host = get_self_ip()
     b = mqtt_link.get_real_mqtt(con) if state.MODE["mode"] == "real" else None
     url = "http://%s:%d/fw/%s" % (host, state.PORT, fname)
     if not b:

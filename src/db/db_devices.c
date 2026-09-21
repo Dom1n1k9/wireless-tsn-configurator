@@ -97,6 +97,21 @@ void wtsn_db_device_for_each(wtsn_db *db, wtsn_db_device_cb cb, void *userdata) 
     sqlite3_finalize(st);
 }
 
+void wtsn_db_device_for_each_in_domain(wtsn_db *db, const char *domain,
+                                       wtsn_db_device_cb cb, void *userdata) {
+    if (!db || !domain || !cb) return;
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db->handle,
+        "SELECT id,name,ip,mac,kind,firmware,status,last_seen,domain,heartbeat_at "
+        "FROM devices WHERE domain=?;", -1, &st, NULL) != SQLITE_OK) return;
+    sqlite3_bind_text(st, 1, domain, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        wtsn_device d = row_to_device(db, st);
+        cb(&d, userdata);
+    }
+    sqlite3_finalize(st);
+}
+
 wtsn_error wtsn_db_device_get(wtsn_db *db, const char *id, wtsn_device *out) {
     if (!db || !db->handle || !id || !out) return WTSN_ERR_INVALID_ARG;
     sqlite3_stmt *st = NULL;
