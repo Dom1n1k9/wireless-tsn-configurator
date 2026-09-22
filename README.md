@@ -18,7 +18,7 @@ It acts as a centralized controller (CNC-style, aligned with IEEE 802.1Qcc) that
 discovers wireless nodes, manages them, applies QoS / VLAN / time-synchronization /
 schedule policies, reads sensors, performs firmware OTA with CRC-verified images and
 exposes the whole network over **FXMQTT** — OPC UA FX / C2C Field Exchange carried
-over MQTT.
+over MQTT. Sienda Time Sensitive Network Stack will be implemented.
 
 ---
 
