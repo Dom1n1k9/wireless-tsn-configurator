@@ -306,6 +306,16 @@ static void actor_apply(int mode) {
     if (mode < 0) mode = 0;
     if (mode >= TIMER_SWITCH_MODES) mode = TIMER_SWITCH_MODES - 1;
     g_actor_mode = mode;
+    /* mode 7 = momentary trigger pulse for timer/cyclic relay modules
+     * (e.g. Z-3807-M): the Trigger input of those boards is edge-start,
+     * a held HIGH does nothing. Fire a ~300 ms HIGH then back to 0. */
+    if (mode == 7) {
+        gpio_set_level(WTSN_ACTOR_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        gpio_set_level(WTSN_ACTOR_GPIO, 0);
+        ESP_LOGI(TAG, "actor mode=%d -> trigger pulse", mode);
+        return;
+    }
     int on = (mode == 1 || mode == 2 || mode == 3 || mode == 6) ? 1 : 0;
     gpio_set_level(WTSN_ACTOR_GPIO, on);
     ESP_LOGI(TAG, "actor mode=%d -> out=%d", mode, on);

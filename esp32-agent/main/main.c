@@ -157,6 +157,10 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         if (strstr(payload, "\"motion\":1") || strstr(payload, "\"wifi_motion\":1")) {
             ESP_LOGI(TAG, "motion event -> sonar sweep"); 
             wtsn_sonar_trigger();
+            /* actor board: pulse the relay trigger on motion as well */
+            if (!g_has_sensors) {
+                wtsn_sensor_actor_set(7);
+            }
         }
         return;
     }
@@ -499,6 +503,9 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             if (!g_has_sensors) {
                 wtsn_sonar_init(g_device_id, g_mqtt);
                 wtsn_sensor_actor_set_pin();
+                /* startup test click: pulse the relay module trigger (mode 7)
+                 * ~0.3 s after boot so the actor is audibly confirmed. */
+                wtsn_sensor_actor_set(7);
             }
             wtsn_uart_init(g_mqtt, g_device_id);
             wtsn_uart_start();

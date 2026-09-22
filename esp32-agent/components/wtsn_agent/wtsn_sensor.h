@@ -16,10 +16,11 @@ enum {
     WTSN_SENSOR_GPIO   = 4,
 };
 
-/* 7-mode timer switch (actor). Mode meanings:
+/* Timer switch (actor) modes:
  *  0 off, 1 manual-on, 2 always-on, 3 timed-once, 4 interval,
- *  5 delayed-start, 6 auto/cyclic */
-#define TIMER_SWITCH_MODES 7
+ *  5 delayed-start, 6 auto/cyclic, 7 momentary trigger pulse (~300 ms,
+ *  for edge-triggered relay/timer modules such as the Z-3807-M) */
+#define TIMER_SWITCH_MODES 8
 
 /* Init sensors + actor on this node. device_id is used on the MQTT payloads. */
 void wtsn_sensor_init(const char *device_id, wtsn_mqtt *mq);
