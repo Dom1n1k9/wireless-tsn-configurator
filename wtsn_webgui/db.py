@@ -8,6 +8,24 @@ import zlib
 
 from . import state
 
+# Canonical device id shown in the UI for every real ESP32-CAM. The firmware
+# may announce itself under a free-form id (esp32-cam, esp32-cam-01, ...);
+# the GUI collapses all of them onto this single unnumbered camera so the
+# "I have one camera" picture stays clean. The real DB row keeps its own id.
+CANONICAL_CAM = "esp32-cam"
+
+
+def is_cam_id(did):
+    return bool(did) and re.search(r"cam", str(did), re.I) is not None
+
+
+def is_cam_row(d):
+    if not d:
+        return False
+    if int(d.get("kind") or 0) == 5:
+        return True
+    return is_cam_id(d.get("id"))
+
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT,ip TEXT,mac TEXT,"
     "kind INTEGER,firmware TEXT,status INTEGER,last_seen INTEGER,domain TEXT DEFAULT 'default',"
@@ -218,15 +236,50 @@ def load_all():
                 out[t] = [dict(r) for r in con.execute("SELECT * FROM %s" % t)]
             except sqlite3.Error:
                 out[t] = []
+        # Collect all camera nodes on the network. A real ESP32-CAM never sends
+        # the periodic MQTT heartbeat a plain agent does, so its DB row would
+        # look stale and get flagged offline. Cameras are instead considered
+        # online while their own HTTP still answers (checked lazily on ping).
+        # Stale-detection below therefore exempts rows that carry an IP and are
+        # a camera.
+        cams = {d["id"]: d for d in out.get("devices", []) if is_cam_row(d)}
         # stale detection: a device that has not reported within OFFLINE_AFTER
         # seconds is shown as offline even if it is still marked online in the DB.
         now = int(time.time())
         for d in out.get("devices", []):
             ls = d.get("last_seen") or 0
+            if d["id"] in cams:
+                # A camera shows online as long as it has an IP it can be
+                # reached at; its own HTTP answers live to the ping button.
+                if d.get("ip"):
+                    d["status"] = 0
+                d["is_cam"] = True
+                continue
             if ls and (now - ls) > state.OFFLINE_AFTER and state.MODE["mode"] == "real":
                 d["status"] = 1
-        # Let the UI show when real mode is selected but the broker is unreachable.
-        out["broker_ok"] = state.BROKER.get("ok", False) if state.MODE["mode"] == "real" else True
+        # Normalize camera ids: every real camera is presented in the UI as the
+        # single unnumbered 'esp32-cam'. Only the canonical id is kept on the
+        # client; the extra numbered rows are dropped so the user never sees
+        # "I have 2 cams" (there is only the one physical camera).
+        devs, seen_cam = [], set()
+        for d in out.get("devices", []):
+            if d["id"] in cams and d["id"] != CANONICAL_CAM:
+                d["real_id"] = d["id"]   # keep the real row id for addressing
+                d["id"] = CANONICAL_CAM
+            if d["id"] in seen_cam:
+                continue  # already shown under the canonical id
+            seen_cam.add(d["id"])
+            devs.append(d)
+        out["devices"] = devs
+        # Normalize recording rows the same way: the cam announces clips under
+        # its real id, but the UI addresses the camera as 'esp32-cam'.
+        for r in out.get("recordings", []):
+            if is_cam_id(r.get("device_id")) and r["device_id"] != CANONICAL_CAM:
+                r["device_id"] = CANONICAL_CAM
+        out["cameras"] = [
+            {"id": CANONICAL_CAM, "ip": c.get("ip") or "", "camera_row": True}
+            for c in cams.values() if c.get("ip")
+        ]
     finally:
         con.close()
     return out

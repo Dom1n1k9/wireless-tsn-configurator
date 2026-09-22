@@ -5,10 +5,13 @@ import json
 import os
 import re
 import secrets
-import struct
+import shutil
 import socket
+import struct
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -142,6 +145,8 @@ def make_handler():
                 self._serve_fw(p[len("/fw/"):])
             elif p.startswith("/clip/"):
                 self._serve_clip(p[len("/clip/"):])
+            elif p.startswith("/cam/"):
+                self._serve_cam_proxy(p[len("/cam/"):])
             else:
                 self._send(_load_html(), "text/html; charset=utf-8")
 
@@ -271,6 +276,72 @@ def make_handler():
             self.end_headers()
             with open(path, "rb") as f:
                 self.wfile.write(f.read())
+
+        def _serve_cam_proxy(self, rel):
+            """Proxy the camera's own HTTP endpoints through the CNC server.
+
+            The browser talks only to this server (rpi:8000, maybe over
+            Tailscale) — it must never need to reach http://<cam>/ directly
+            (the cam is on the LAN of the Pi, not the client). Routes:
+              /cam/<ip>/last.jpg     last recording thumbnail (JPEG)
+              /cam/<ip>/replay.mjpeg replay last SD clip (MJPEG)
+              /cam/<ip>/stream       live MJPEG stream
+              /cam/<ip>/ping         HEAD-ish health check used by the GUI
+            The cam ip is validated to a numeric IPv4 host before use.
+            """
+            rel = rel.replace("\\", "/")
+            parts = [seg for seg in rel.split("/") if seg not in ("", ".")]
+            if len(parts) != 2:
+                self.send_error(404)
+                return
+            host, path = parts
+            m = re.fullmatch(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})", host)
+            if not m:
+                self.send_error(404)
+                return
+            nums = [int(x) for x in m.groups()]
+            if any(x > 255 for x in nums):
+                self.send_error(404)
+                return
+            host = ".".join(str(x) for x in nums)
+            if path not in ("last.jpg", "replay.mjpeg", "stream", "ping"):
+                self.send_error(404)
+                return
+            if path == "ping":
+                self._cam_probe(host)
+                return
+            upstream = "http://%s/%s" % (host, path)
+            try:
+                req = urllib.request.Request(upstream,
+                                             headers={"User-Agent": "wtsn-gui-proxy"})
+                with urllib.request.urlopen(req, timeout=4.0) as r:
+                    ctype = r.headers.get("Content-Type", "application/octet-stream")
+                    self.send_response(200)
+                    if ctype:
+                        self.send_header("Content-Type", ctype.split(";")[0].strip())
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    shutil.copyfileobj(r, self.wfile)
+            except Exception:
+                self.send_error(502)
+            return
+
+        def _cam_probe(self, host):
+            t0 = time.time()
+            ok = None
+            err = ""
+            try:
+                req = urllib.request.Request("http://%s/last.jpg" % host,
+                                             headers={"User-Agent": "wtsn-gui-probe"})
+                with urllib.request.urlopen(req, timeout=2.0) as r:
+                    r.read(64)
+                ok = True
+            except Exception as ex:  # noqa: BLE001
+                ok = False
+                err = "%s: %s" % (ex.__class__.__name__, ex)
+            rtt_ms = (time.time() - t0) * 1000.0
+            self._send(json.dumps({"ok": ok, "ip": host, "rtt_ms": round(rtt_ms, 2),
+                                   "err": err}).encode())
 
         def do_POST(self):
             if not self._check_auth():

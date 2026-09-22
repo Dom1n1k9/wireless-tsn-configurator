@@ -435,6 +435,50 @@ class WebGuiRealModeTest(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertIn(("tsn/cmd/esp32-01/ping", "1"), self.broker.published)
 
+    def test_camera_rows_normalize_to_canonical_id(self):
+        # Simulate the real camera announcing under a numbered id.
+        con = connect()
+        con.execute(
+            "INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
+            "last_seen,rssi,usb) VALUES('esp32-cam-01','esp32-cam-01',"
+            "'10.0.0.9','AA:BB:CC:00:09',5,'1.1.0',0,0,-60,'')")
+        # Give the camera a stale last_seen; it must still show online.
+        con.execute("UPDATE devices SET last_seen=?, status=0 WHERE id='esp32-cam-01'",
+                    (int(time.time()) - 900,))
+        con.commit()
+        con.close()
+        data = load_all()
+        ids = [d["id"] for d in data["devices"]]
+        self.assertNotIn("esp32-cam-01", ids)
+        self.assertIn("esp32-cam", ids)
+        cam = next(d for d in data["devices"] if d["id"] == "esp32-cam")
+        self.assertEqual(cam["real_id"], "esp32-cam-01")
+        self.assertTrue(cam["is_cam"])
+        self.assertEqual(cam["status"], 0)  # online despite stale MQTT last_seen
+        # Recording rows announced under the real id map to the canonical id.
+        con = connect()
+        con.execute("INSERT INTO recordings(device_id,path,recorded_at) "
+                    "VALUES('esp32-cam-01','/sdcard/clip_0001.jpg', ?)",
+                    (int(time.time()),))
+        con.commit()
+        con.close()
+        data2 = load_all()
+        rec = [r for r in data2["recordings"] if r["device_id"] == "esp32-cam"]
+        self.assertEqual(len(rec), 1)
+        self.assertTrue(rec[0]["path"].endswith("clip_0001.jpg"))
+
+    def test_cam_ping_uses_http_not_mqtt(self):
+        # Pinging a camera must NOT publish an MQTT /ping command (the cam
+        # firmware never answers it); it probes the camera IP over HTTP.
+        self.act("save_devices", {"device": {"id": "esp32-cam-01", "name": "cam",
+                                             "ip": "10.0.0.99", "kind": 5}})
+        r = self.act("ping_device", {"id": "esp32-cam-01"})
+        topics = [t for t, _ in self.broker.published]
+        self.assertNotIn("tsn/cmd/esp32-cam-01/ping", topics)
+        # offline is reported when the cam's HTTP does not answer (no ip or no server)
+        self.assertFalse(r["ok"])
+        self.assertIn("offline", r.get("msg", ""))
+
     def test_ack_recorded_in_state(self):
         con = connect()
         try:

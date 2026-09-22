@@ -2,6 +2,7 @@
 import json
 import os
 import random
+import re
 import threading
 import time
 
@@ -78,6 +79,55 @@ def _ping_device(con, body):
     if not did:
         return {"ok": False, "msg": "missing device id"}
     cnc_ip = get_self_ip()
+    # Resolve the canonical UI id ('esp32-cam') back to the real DB row (the
+    # cam may be stored under esp32-cam / esp32-cam-01 / whatever announced).
+    row = con.execute("SELECT id,ip,kind FROM devices WHERE id=?", (did,)).fetchone()
+    if row is None:
+        for r in con.execute("SELECT id,ip,kind FROM devices"):
+            if re.search(r"cam", r["id"], re.I) or int(r["kind"] or 0) == 5:
+                row = r
+                break
+    is_cam = bool(row and (int(row["kind"] or 0) == 5 or re.search(r"cam", row["id"], re.I)))
+
+    # A real ESP32-CAM never answers the MQTT /ping command (the cam firmware
+    # only handles /ota + motion feeds). Instead we probe the camera's own HTTP
+    # server: a reachable camera = online. This also yields a real round-trip
+    # sample for the TSN Metrics page.
+    if is_cam:
+        import urllib.request
+        real_id, cam_ip = row["id"], row["ip"] or ""
+        t0 = time.time()
+        status, note = "offline", "no ip"
+        if cam_ip:
+            try:
+                url = "http://%s/last.jpg" % cam_ip
+                req = urllib.request.Request(url, headers={"User-Agent": "wtsn-gui"})
+                with urllib.request.urlopen(req, timeout=2.0) as r:
+                    r.read(64)
+                status, note = "online", "HTTP OK (%s)" % url
+            except Exception as ex:  # noqa: BLE001
+                status, note = "offline", "%s (%s)" % (ex.__class__.__name__, ex)
+        rtt_ms = (time.time() - t0) * 1000.0
+        add_event("mqtt", "cnc",
+                  "PING cam %s -> %s: %s (%.1f ms)" % (did, cam_ip or "?", note, rtt_ms),
+                  src_ip=cnc_ip, dst_ip=cam_ip, dest=did, proto="HTTP")
+        state.PING_OUT[did] = time.time()
+        try:
+            con.execute("INSERT INTO latency_log(device_id,ts,latency_ms) "
+                        "VALUES(?,?,?)", (real_id, int(time.time()), round(rtt_ms, 2)))
+            con.commit()
+        except Exception:  # noqa: BLE001
+            pass
+        if status == "online":
+            try:
+                con.execute("UPDATE devices SET status=0,last_seen=strftime('%s','now') "
+                            "WHERE id=?", (real_id,))
+                con.commit()
+            except Exception:  # noqa: BLE001
+                pass
+        return {"ok": status == "online",
+                "msg": "cam %s is %s (%s, %.1f ms)" % (did, status, note, rtt_ms)}
+
     add_event("mqtt", "cnc", "PING -> %s" % did, src_ip=cnc_ip, dst_ip="",
               dest=did, proto="MQTT")
     # Remember when the ping went out so the ack can be timestamped into an RTT

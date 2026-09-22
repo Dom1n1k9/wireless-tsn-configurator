@@ -127,7 +127,7 @@ ul{padding-left:20px}.card p{margin:6px 0}.card li{margin:3px 0}
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div id="toast"></div>
 <script>
-const NAV=[["System",[["devices","Devices"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["assistant","AI Assistant"],["architecture","Architecture"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
+const NAV=[["System",[["devices","Devices"],["recordings","Recordings"],["monitor","Monitor"],["metrics","Metrics"],["sensors","Sensors"],["assistant","AI Assistant"],["architecture","Architecture"]]],["OPC UA FX over MQTT",[["fxmqtt","FXMQTT Config"]]],["IEEE 802.1AS",[["timesync","Synchronization"]]],["IEEE 802.1Q",[["qos","QoS Priority"],["vlan","WVLAN ID"]]],["IEEE 802.1Qbv",[["tas","TAS / GCL"]]],["IEEE 802.1Qbu",[["preemption","Preemption"]]],["IEEE 802.1Qcc",[["streams","TSN Streams"]]]];
 let D={},cur="devices",MON_RUNNING=true;
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -145,8 +145,9 @@ function stBadge(s){const map=[["ok","online"],["warn","offline"],["err","error"
 function types(d){return (D.device_tsn_features||[]).filter(f=>f.device_id==d).map(f=>f.feature).join(", ")}
 function tsnOpts(gm){return D.devices.map(d=>"<label><input type=checkbox value='"+esc(d.id)+"' "+(d.id==gm?"checked":"")+"> GM:"+esc(d.id)+"</label>").join("")}
 function go(p){cur=p;document.querySelectorAll("#nav button").forEach(b=>b.className=b.id==="nv_"+p?"on":"");
- const m=$("main");
-  if(p==="devices"||p==="domains"||p==="versions")m.innerHTML=devices();
+  const m=$("main");
+   if(p==="devices"||p==="domains"||p==="versions")m.innerHTML=devices();
+   else if(p==="recordings")m.innerHTML=recordings();
   else if(p==="qos")m.innerHTML=qos();
  else if(p==="vlan")m.innerHTML=vlan();
  else if(p==="tas")m.innerHTML=tas();
@@ -179,9 +180,8 @@ function playClip(id,path,title){
   document.body.appendChild(ov);
 }
 function camCell(d){
-  const isCam=(d.kind===5)||/cam/i.test(d.id||"");
-  if(!isCam||!d.ip)return "<span class='muted'>-</span>";
-  const rec=(D.recordings||[]).filter(r=>(r.device_id===d.id)).length;
+  const isCam=d.is_cam||false;
+  const rec=(D.recordings||[]).filter(r=>r.device_id===d.id).length;
   let s="";
   if(rec>0)s=" <span class='chip' data-dev='"+esc(d.id)+"' onclick='showRec(\""+esc(d.id)+"\")' style='cursor:pointer;color:var(--sec)'>"+rec+" clips</span>";
   const aiRecs=(D.recordings||[]).filter(r=>r.device_id===d.id&&(r.path||"").startsWith("/ai/"))
@@ -193,42 +193,53 @@ function camCell(d){
      "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(d.id)+"\",\""+esc(last.path)+"\",\"AI clip · \"+new Date((\""+(last.recorded_at||0)+")*1000).toLocaleString()+\" · \"+\""+esc(last.path)+"\")'>▶ AI clip</button></div>"+
      "</div>"+s;
   }
-  // Reject anything that is not a plausible IPv4 host as the camera address --
-  // the ip field comes from MQTT announcements, so it must not be able to turn
-  // into markup (URL is built from numeric verified parts only).
-  const m=String(d.ip).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if(!m)return "<span class='muted'>bad ip</span>"+s;
+  // A real camera records to its own microSD. The cam's HTTP (last.jpg /
+  // replay.mjpeg / stream) is proxied through the CNC server so the browser
+  // never needs to reach <cam-ip> directly (works over Tailscale / remote).
+  if(isCam&&d.ip){
+    const host=validHost(d.ip);
+    if(host){
+      return "<div style='text-align:center;line-height:1.2'>"+
+       "<div><img src='/cam/"+host+"/last.jpg' style='width:96px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' title='last recording (from the camera)' onerror=\"this.outerHTML='<span class=muted>no recording yet</span>'\"></div>"+
+       "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play</button> "+
+       "<button class='ghost' style='font-size:11px;padding:2px 8px' onclick='showRec(\""+esc(d.id)+"\")'>Recordings</button></div>"+
+       "</div>"+s;
+    }
+  }
+  return "<span class='muted'>-</span>"}
+function validHost(ip){
+  const m=String(ip).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if(!m)return null;
   const parts=m.slice(1).map(x=>{const n=parseInt(x,10);return n>=0&&n<=255?n:null});
-  if(parts.some(p=>p===null))return "<span class='muted'>bad ip</span>"+s;
-  const host=parts.join(".");
-  // NO live stream in the UI: show the last-recording snapshot + a Play button
-  // that replays the stored clip (http://<cam>/replay.mjpeg).
-  return "<div style='text-align:center;line-height:1.2'>"+
-   "<div><img src='http://"+host+"/last.jpg' style='width:96px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' title='last recording' onerror=\"this.outerHTML='<span class=muted>no recording yet</span>'\"></div>"+
-   "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play</button></div>"+
-   "</div>"+s}
+  if(parts.some(p=>p===null))return null;
+  return parts.join(".");
+}
 function playReplay(host){
   const ov=document.createElement("div");
   ov.id="replayOv";
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px";
-  ov.innerHTML="<div style='color:var(--text);font-weight:600'>Last recording</div>"+
-   "<img src='http://"+host+"/replay.mjpeg' style='max-width:90vw;max-height:70vh;border-radius:8px;background:#000'>"+
+  ov.innerHTML="<div style='color:var(--text);font-weight:600'>Last recording (replayed from the camera)</div>"+
+   "<img src='/cam/"+host+"/replay.mjpeg' style='max-width:90vw;max-height:70vh;border-radius:8px;background:#000'>"+
    "<button class='ghost' onclick='document.getElementById(\"replayOv\").remove()'>Close</button>";
   document.body.appendChild(ov);
 }
 function showRec(id){
   const rows=(D.recordings||[]).filter(r=>r.device_id===id).sort((a,b)=>(b.recorded_at||0)-(a.recorded_at||0));
   if(!rows.length){toast("no recordings yet",false);return}
+  const cam=D.devices.find(d=>d.id===id&&d.is_cam);
+  const host=cam&&cam.ip?validHost(cam.ip):null;
   $("main").innerHTML="<h2>Recordings: "+esc(id)+"</h2><div class='card'>"+
+    (host?"<div class='row'><span>Last frame (from the camera, via CNC):</span><img src='/cam/"+host+"/last.jpg' style='width:160px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' onerror=\"this.style.display='none'\"></div>":"")+
    rows.map(r=>{
      const isAi=(r.path||"").startsWith("/ai/");
-     const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>":"";
-     return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":"")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
+     const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>"
+                    :(host?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play (replay.mjpeg)</button>":"");
+     return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":" <span class='muted'>(on-cam SD)</span>")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
    }).join("")+
    "</div><button class='ghost' onclick='go(\"devices\")'>Back</button>"
 }
 function devRow(d){
-  const eid=esc(d.id);
+  const eid=esc(d.real_id||d.id);
   const now=Math.floor(Date.now()/1000);
   const aiActive=(D.ai_decisions||[]).some(r=>r.device_id===d.id&&r.source!=="user"&&now-r.ts<600);
   const rssi=(d.rssi||d.rssi===0)&&d.rssi!==0?(d.rssi+" dBm"):"-";
@@ -309,7 +320,8 @@ function devices(){
    "<div class='row'><label>usb / serial</label><input id=dusb placeholder='e.g. ttyUSB2 or COM5'></div>"+
    "<div class='row'><label>domain</label><select id=ddom><option value='default'>default</option>"+domOpts+"</select></div>"+
    "<button onclick=saveDev()>Add Device</button> <span class='muted'>In Real mode the node also provisions itself over MQTT and can report its usb/serial port.</span></div>"+
-    "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>deploy</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
+    camAddCard()+
+     "<h3>Devices</h3><table><tr><th>id</th><th>name</th><th>status</th><th>deploy</th><th>ip</th><th>usb</th><th>domain</th><th>rssi</th><th>fw</th><th>cam</th><th>tsn</th><th>firmware</th><th>ping</th><th>manage</th></tr>"+rows+"</table>"+
    domainCard()+
    versionsCard();
 }
@@ -322,6 +334,16 @@ function tsnFor(id){
  if((D.tas_schedules||[]).some(t=>t.deploy_target===id))f.push("802.1Qbv TAS");
  return Array.from(new Set(f)).join(", ")}
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,usb:$("dusb").value,domain:$("ddom").value,firmware:"",kind:0,status:0,tsn:[]}}).then(load)}
+function camAddCard(){
+  // If no camera is present yet, offer a one-click way to add the single
+  // canonical ESP32-CAM row (id esp32-cam) with the camera's LAN IP.
+  const has=(D.devices||[]).some(d=>d.is_cam);
+  if(has)return "";
+  return "<div class='card'><h3>ESP32-CAM</h3>"+
+   "<div class='muted' style='margin-bottom:8px'>You have one camera. Add it once (id shows as <b>esp32-cam</b>), give it its IP, then Ping checks reachability and Recordings lists its clips.</div>"+
+   "<div class='row'><label>ip</label><input id=cam_ip placeholder='192.168.1.60'></div>"+
+   "<button onclick='api(\"save_devices\",{device:{id:\"esp32-cam\",name:\"ESP32-CAM\",ip:$(\"cam_ip\").value,kind:5,status:0,tsn:[]}}).then(load)'>Add Camera</button></div>";
+}
 function domainCard(){
   const rows=(D.domains||[]).map(g=>{
     const members=(D.devices||[]).filter(d=>d.domain===g.id).length;
@@ -334,6 +356,33 @@ function domainCard(){
    rows+
    "<div class='row'><label>id</label><input id=nv_id placeholder='e.g. shopfloor'><label>name</label><input id=nv_name placeholder='Shop Floor'><label>description</label><input id=nv_desc placeholder='optional'></div>"+
    "<button onclick='api(\"save_domain\",{id:$(\"nv_id\").value,name:$(\"nv_name\").value,description:$(\"nv_desc\").value}).then(load)'>Add domain</button></div>";
+}
+function recordings(){
+  const cams=(D.devices||[]).filter(d=>d.is_cam);
+  // Historical MQTT announcements can accumulate thousands of rows, but the
+  // vision service only keeps the ~10 newest AI clips on the Pi and the cam's
+  // own SD clips are replayed (not fetched) — so list the newest finite set.
+  let recs=(D.recordings||[]).slice().sort((a,b)=>(b.recorded_at||0)-(a.recorded_at||0));
+  const ai=recs.filter(r=>(r.path||"").startsWith("/ai/"));
+  const rest=recs.filter(r=>!(r.path||"").startsWith("/ai/"));
+  recs=rest.concat(ai.slice(0,10));
+  const cards=cams.map(cam=>{
+    const host=cam.ip?validHost(cam.ip):null;
+    const rows=recs.filter(r=>r.device_id===cam.id);
+    const list=rows.map(r=>{
+      const isAi=(r.path||"").startsWith("/ai/");
+      const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(cam.id)+"\",\""+esc(r.path)+"\")'>▶ Play stored clip</button>"
+                     :(host?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play (camera replay)</button>":"");
+      return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":" <span class='muted'>(on-cam SD)</span>")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
+    }).join("");
+    return "<div class='card'><h3>"+esc(cam.id)+" <span class='muted'>· "+esc(cam.ip||"no ip")+"</span></h3>"+
+      (host?"<div class='row'><span>Last frame (via CNC proxy):</span><img src='/cam/"+host+"/last.jpg' style='width:160px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' onerror=\"this.style.display='none'\"></div><div class='row'><span><a href='/cam/"+host+"/stream' target='_blank' rel='noopener'>Live MJPEG stream</a> · <a href='/cam/"+host+"/replay.mjpeg' target='_blank' rel='noopener'>Replay last clip</a></span></div>":"")+
+      (list||"<div class='muted'>No recording announcements yet — the camera publishes <b>tsn/cam/recordings</b> after it saves a clip triggered by motion/PIR.</div>")+
+      "</div>";
+  }).join("");
+  return "<h2>Camera Recordings</h2>"+
+   "<div class='muted' style='margin-bottom:10px'>What the ESP32-CAM recorded. The camera announces clip names over MQTT (<code>tsn/cam/recordings</code>); thumbnails and replay come straight from the camera's own HTTP server (via the CNC proxy), nothing leaves the LAN.</div>"+
+   (cards||"<div class='card' class='muted'>No camera added yet — add it on the Devices page (ESP32-CAM row with its IP), or switch to Real mode so the camera announces itself.</div>");
 }
 function versionsCard(){
   const devOpts="<option value=''>global (all devices)</option>"+D.devices.map(d=>"<option value='"+esc(d.id)+"'>"+esc(d.id)+"</option>").join("");

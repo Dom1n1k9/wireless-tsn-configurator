@@ -7,6 +7,20 @@ tagged the same way.
 ## [Unreleased]
 
 ### Fixed (UI)
+- ESP32-CAM: all real camera rows now collapse into a single unnumbered
+  **`esp32-cam`** in the GUI — the firmware may announce under a numbered id
+  (e.g. `esp32-cam-01`) and the vision service under `esp32-cam`, but you only
+  have one camera, so you see exactly one row.
+- ESP32-CAM: the camera no longer shows **offline** just because it does not
+  send MQTT heartbeats. Its online state is derived from reachability instead
+  of the 20 s MQTT staleness timer.
+- ESP32-CAM **Ping** button now works: it probes the camera's own HTTP server
+  (the cam firmware never answers the MQTT `/ping` command) and records a real
+  round-trip latency sample on the Metrics page.
+- Add **Recordings** page + thumbnail + playback for the camera. The camera's
+  HTTP endpoints (`last.jpg`, `replay.mjpeg`, `stream`) are proxied through the
+  CNC server (`/cam/<ip>/...`) so they work from any browser (Tailscale, remote)
+  instead of requiring the browser to reach the cam's LAN IP directly.
 - Metrics page now loads its data immediately when opened (previously it showed
   "loading..." until the window selector was changed because `mtLoad()` was never
   called on navigation).
