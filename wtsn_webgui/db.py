@@ -276,10 +276,14 @@ def load_all():
         for r in out.get("recordings", []):
             if is_cam_id(r.get("device_id")) and r["device_id"] != CANONICAL_CAM:
                 r["device_id"] = CANONICAL_CAM
-        out["cameras"] = [
-            {"id": CANONICAL_CAM, "ip": c.get("ip") or "", "camera_row": True}
-            for c in cams.values() if c.get("ip")
-        ]
+        out["cameras"] = []
+        seen_ip = set()
+        for c in cams.values():
+            ip = c.get("ip") or ""
+            if not ip or ip in seen_ip:
+                continue
+            seen_ip.add(ip)
+            out["cameras"].append({"id": CANONICAL_CAM, "ip": ip, "camera_row": True})
     finally:
         con.close()
     return out
