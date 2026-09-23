@@ -168,15 +168,29 @@ function aiClipUrl(id,path){
   const f=String(path||"").replace(/^\/ai\//,"");
   return "/clip/"+encodeURIComponent(id)+"/"+encodeURIComponent(f);
 }
+function playLatestClip(id,title){
+  // The vision service keeps a stable last.mjpeg (mirror of last.jpg) with the
+  // newest clip; this is always playable even when numbered clips are pruned.
+  playClip(id,"/ai/last.mjpeg",title||"Latest recording");
+}
 function playClip(id,path,title){
   const old=document.getElementById("replayOv");
   if(old)old.remove();
   const ov=document.createElement("div");
   ov.id="replayOv";
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px";
-  ov.innerHTML="<div style='color:var(--text);font-weight:600'>"+(title||"AI clip")+"</div>"+
-    "<img src='"+aiClipUrl(id,path)+"' style='max-width:90vw;max-height:70vh;border-radius:8px;background:#000'>"+
-    "<button class='ghost' onclick='document.getElementById(\"replayOv\").remove()'>Close</button>";
+  const url=aiClipUrl(id,path);
+  const img=document.createElement("img");
+  img.src=url;
+  img.style.cssText="max-width:90vw;max-height:70vh;border-radius:8px;background:#000";
+  img.onerror=function(){
+    // Numbered clip pruned/missing -> fall back to the stable latest clip.
+    img.onerror=null;
+    img.src="/clip/"+encodeURIComponent(id)+"/last.mjpeg";
+  };
+  ov.innerHTML="<div style='color:var(--text);font-weight:600'>"+(title||"AI clip")+"</div>";
+  ov.appendChild(img);
+  ov.appendChild((function(){const b=document.createElement("button");b.className="ghost";b.textContent="Close";b.onclick=()=>ov.remove();return b})());
   document.body.appendChild(ov);
 }
 function camCell(d){
@@ -190,7 +204,8 @@ function camCell(d){
     const last=aiRecs[0];
     return "<div style='text-align:center;line-height:1.2'>"+
      "<div><img src='/clip/"+esc(d.id)+"/last.jpg' style='width:96px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' title='last AI detection (recorded on the edge)' onerror=\"this.outerHTML='<span class=muted>no clip yet</span>'\"></div>"+
-     "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(d.id)+"\",\""+esc(last.path)+"\",\"AI clip · \"+new Date((\""+(last.recorded_at||0)+")*1000).toLocaleString()+\" · \"+\""+esc(last.path)+"\")'>▶ AI clip</button></div>"+
+     "<div style='margin-top:3px'><button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playLatestClip(\""+esc(d.id)+"\",\"Last AI clip\")'>▶ Latest</button> "+
+     "<button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(d.id)+"\",\""+esc(last.path)+"\",\"AI clip · \"+new Date((\""+(last.recorded_at||0)+")*1000).toLocaleString()+\" · \"+\""+esc(last.path)+"\")'>▶ AI clip</button></div>"+
      "</div>"+s;
   }
   // A real camera records to its own microSD. The cam's HTTP (last.jpg /
@@ -232,9 +247,9 @@ function showRec(id){
     (host?"<div class='row'><span>Last frame (from the camera, via CNC):</span><img src='/cam/"+host+"/last.jpg' style='width:160px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' onerror=\"this.style.display='none'\"></div>":"")+
    rows.map(r=>{
      const isAi=(r.path||"").startsWith("/ai/");
-     const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>"
+      const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>"
                     :(host?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play (replay.mjpeg)</button>":"");
-     return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":" <span class='muted'>(on-cam SD)</span>")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
+      return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":" <span class='muted'>(on-cam SD)</span>")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
    }).join("")+
    "</div><button class='ghost' onclick='go(\"devices\")'>Back</button>"
 }
@@ -371,12 +386,14 @@ function recordings(){
     const rows=recs.filter(r=>r.device_id===cam.id);
     const list=rows.map(r=>{
       const isAi=(r.path||"").startsWith("/ai/");
-      const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(cam.id)+"\",\""+esc(r.path)+"\")'>▶ Play stored clip</button>"
+      const play=isAi?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playClip(\""+esc(cam.id)+"\",\""+esc(r.path)+"\")'>▶ Play</button>"
                      :(host?" <button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playReplay(\""+host+"\")'>▶ Play (camera replay)</button>":"");
       return "<div class='row'><span>"+esc(r.path)+(isAi?" <span class='muted'>(AI)</span>":" <span class='muted'>(on-cam SD)</span>")+"</span><span class='muted'>"+new Date((r.recorded_at||0)*1000).toLocaleString()+play+"</span></div>";
     }).join("");
     return "<div class='card'><h3>"+esc(cam.id)+" <span class='muted'>· "+esc(cam.ip||"no ip")+"</span></h3>"+
-      (host?"<div class='row'><span>Last frame (via CNC proxy):</span><img src='/cam/"+host+"/last.jpg' style='width:160px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' onerror=\"this.style.display='none'\"></div><div class='row'><span><a href='/cam/"+host+"/stream' target='_blank' rel='noopener'>Live MJPEG stream</a> · <a href='/cam/"+host+"/replay.mjpeg' target='_blank' rel='noopener'>Replay last clip</a></span></div>":"")+
+      "<div class='row'><span>Last AI frame:</span><img src='/clip/"+esc(cam.id)+"/last.jpg' style='width:160px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border)' onerror=\"this.style.display='none'\"></div>"+
+      "<button class='ghost' style='font-size:11px;padding:2px 8px' onclick='playLatestClip(\""+esc(cam.id)+"\",\"Latest recording\")'>▶ Latest</button>"+
+      (host?"<div class='row'><span><a href='/cam/"+host+"/stream' target='_blank' rel='noopener'>Live MJPEG stream</a> · <a href='/cam/"+host+"/replay.mjpeg' target='_blank' rel='noopener'>Replay last clip</a></span></div>":"")+
       (list||"<div class='muted'>No recording announcements yet — the camera publishes <b>tsn/cam/recordings</b> after it saves a clip triggered by motion/PIR.</div>")+
       "</div>";
   }).join("");

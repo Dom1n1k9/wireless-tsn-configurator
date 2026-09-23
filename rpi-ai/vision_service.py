@@ -291,14 +291,26 @@ class Camera:
                 f.write(b"\r\n" + boundary + b"--\r\n")
             cv2.imwrite(os.path.join(cdir, "last.jpg"), last_draw,
                         [cv2.IMWRITE_JPEG_QUALITY, 80])
-            # keep the most recent 10 clips
-            clips = sorted(f for f in os.listdir(cdir) if f.endswith(".mjpeg"))
+            # Keep a stable "latest" clip at last.mjpeg (same tricks as
+            # last.jpg) so the web GUI can always replay the newest recording
+            # even if the numbered clip_*.mjpeg files get pruned.
+            with open(os.path.join(cdir, "last.mjpeg"), "wb") as f:
+                for fb in frames:
+                    f.write(b"\r\n" + boundary + b"\r\nContent-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n" + fb)
+                f.write(b"\r\n" + boundary + b"--\r\n")
+            # keep the most recent 10 clips (last.mjpeg is the stable "latest"
+            # so it is never pruned; it is advertised separately below)
+            clips = sorted(f for f in os.listdir(cdir)
+                           if f.endswith(".mjpeg") and f != "last.mjpeg")
             for old in clips[:-10]:
                 try:
                     os.remove(os.path.join(cdir, old))
                 except OSError:
                     pass
             keep = [c for c in clips if os.path.exists(os.path.join(cdir, c))][-10:]
+            if os.path.exists(os.path.join(cdir, "last.mjpeg")):
+                keep.append("last.mjpeg")
             mqtt_cli.publish("tsn/cam/recordings", json.dumps(
                 {"id": self.id, "recordings": ["/ai/" + c for c in keep]}))
             log("%s: recorded clip %s (%d frames)" % (self.id, os.path.basename(path), len(frames)))
