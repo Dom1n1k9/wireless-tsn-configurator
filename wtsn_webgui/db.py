@@ -284,6 +284,8 @@ def load_all():
                 continue
             seen_ip.add(ip)
             out["cameras"].append({"id": CANONICAL_CAM, "ip": ip, "camera_row": True})
+        # Let the UI show when real mode is selected but the broker is unreachable.
+        out["broker_ok"] = state.BROKER.get("ok", False) if state.MODE["mode"] == "real" else True
     finally:
         con.close()
     return out

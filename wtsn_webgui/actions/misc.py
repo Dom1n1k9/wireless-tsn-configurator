@@ -350,15 +350,18 @@ def _rollback_version(con, body):
     except Exception:
         data = None
     if isinstance(data, dict) and data.get("devices") is not None:
+        _VIRTUAL = {"is_cam", "real_id", "camera_row"}
         for t in ("devices", "device_tsn_features", "qos_configs", "preemption_configs",
                   "vlan_groups", "vlan_members", "tas_schedules", "gcl_entries",
                   "timesync_status", "tsn_streams", "tsn_stream_members", "settings"):
             rows = data.get(t)
             con.execute("DELETE FROM %s" % t)
+            valid = {r[1] for r in con.execute("PRAGMA table_info(%s)" % t)}
             for r in rows or []:
                 if not isinstance(r, dict):
                     continue
-                cols = [k for k in r if isinstance(r[k], (str, int, float))]
+                cols = [k for k in r if isinstance(r[k], (str, int, float))
+                        and k not in _VIRTUAL and k in valid]
                 if not cols:
                     continue
                 con.execute("INSERT INTO %s(%s) VALUES(%s)" % (t, ",".join(cols),
@@ -444,6 +447,14 @@ def _restore_backup(con, body):
     tables = ["devices", "qos_configs", "preemption_configs", "vlan_groups",
               "vlan_members", "tas_schedules", "gcl_entries", "timesync_status",
               "tsn_streams", "tsn_stream_members", "settings"]
+    # Virtual keys added by the UI layer (camera normalization) must not be
+    # written back as columns.
+    _VIRTUAL = {"is_cam", "real_id", "camera_row"}
+    col_cache = {}
+    def _cols(t):
+        if t not in col_cache:
+            col_cache[t] = {r[1] for r in con.execute("PRAGMA table_info(%s)" % t)}
+        return col_cache[t]
     # Atomic restore: a failed replay rolls everything back instead of leaving a
     # partially overwritten configuration.
     try:
@@ -459,13 +470,16 @@ def _restore_backup(con, body):
             if not isinstance(rows, list):
                 rows = [rows]
             con.execute("DELETE FROM %s" % t)
+            valid = _cols(t)
             for r in rows:
                 if not isinstance(r, dict):
                     continue
                 cols = []
                 vals = []
                 for k, v in r.items():
-                    if k == "meta":
+                    if k == "meta" or k in _VIRTUAL:
+                        continue
+                    if k not in valid:
                         continue
                     if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
                         cols.append("`" + k + "`")

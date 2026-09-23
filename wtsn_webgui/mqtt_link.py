@@ -6,7 +6,7 @@ import sqlite3
 import time
 
 from . import state
-from .db import add_event, ensure_schema, get_self_ip
+from .db import add_event, ensure_schema, get_self_ip, is_cam_id
 from .mqtt_broker import MqttBroker, NONE_PUB
 
 log = logging.getLogger("wtsn.mqtt_link")
@@ -182,6 +182,14 @@ def parse_listener_msg(con, topic, payload):
             if not brief:
                 brief = payload
             add_event("sensor", did, "sensors: " + brief)
+            # The vision service announces the camera's reachable IP alongside
+            # its AI sensor values; a DHCP-renewed camera would otherwise carry
+            # a stale ip in the devices row and its live HTTP would be
+            # unreachable. Keep the row in sync (cameras only).
+            if (j.get("ip") or j.get("cam_ip")) and is_cam_id(did):
+                cam_ip = j.get("ip") or j.get("cam_ip")
+                con.execute("UPDATE devices SET ip=?,last_seen=strftime('%s','now'),status=0 "
+                            "WHERE id=?", (cam_ip, did))
             dev = con.execute("SELECT id FROM devices WHERE id=?", (did,)).fetchone()
             if not dev:
                 con.execute("INSERT OR REPLACE INTO devices(id,name,status,last_seen)"

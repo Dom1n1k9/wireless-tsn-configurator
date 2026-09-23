@@ -326,6 +326,28 @@ class WebGuiActionTest(unittest.TestCase):
         finally:
             con.close()
 
+    def test_parse_listener_cam_syncs_ip(self):
+        # The vision service announces the camera's reachable ip on tsn/sensors/<cam>;
+        # the GUI must use it to fix a stale DHCP address in the devices row.
+        con = connect()
+        try:
+            con.execute("INSERT OR REPLACE INTO devices(id,name,ip,mac,kind,firmware,status,"
+                        "last_seen,rssi,usb) VALUES('esp32-cam-01','esp32-cam-01',"
+                        "'192.168.0.250','AA:BB:CC:00:09',5,'1.1.0',1,0,-50,'')")
+            con.commit()
+            parse_listener_msg(
+                con, "tsn/sensors/esp32-cam-01",
+                json.dumps({"id": "esp32-cam-01", "ip": "192.168.9.9",
+                            "sensors": [
+                                {"sensor_id": "ai_detect", "value": 1, "unit": "",
+                                 "ts": 1}]}))
+            row = con.execute("SELECT ip,status FROM devices WHERE id='esp32-cam-01'"
+                              ).fetchone()
+            self.assertEqual(row[0], "192.168.9.9")
+            self.assertEqual(row[1], 0)
+        finally:
+            con.close()
+
     def test_topology_action(self):
         # create an ESP32 device + a sensor so the wiring diagram has content
         self.act("save_devices", {"device": {"id": "esp32-01", "name": "gw",

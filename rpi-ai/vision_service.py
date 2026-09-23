@@ -22,6 +22,7 @@ Override with env WTSN_AI_CONFIG.
 """
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -219,9 +220,16 @@ class Camera:
         self.last_person = 0
         self.last_ok = time.time()
         self.relay = threading.Event()
+        # Extract the numeric IP the camera is actually reachable at (from the
+        # working stream URL). Announced to the GUI so it can correct a stale
+        # DHCP-assigned address from an old discovery message.
+        self.ip = ""
+        m = re.search(r"//([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?::\d+)?", self.url or "")
+        if m:
+            self.ip = m.group(1)
 
     def publish(self, cli, conf):
-        payload = {"id": self.id,
+        payload = {"id": self.id, "ip": self.ip,
                    "sensors": [
                        {"sensor_id": "ai_detect", "value": len(self.last_dets),
                         "unit": "", "ts": int(time.time())},
@@ -232,7 +240,7 @@ class Camera:
         cli.publish("tsn/sensors/%s" % self.id, json.dumps(payload))
         brief = ", ".join("%s:%.2f" % (n, c) for n, c, *_ in self.last_dets[:4])
         cli.publish("tsn/sensors/event", json.dumps(
-            {"id": self.id, "ai": 1 if self.last_dets else 0,
+            {"id": self.id, "ip": self.ip, "ai": 1 if self.last_dets else 0,
              "motion": 1 if self.triggered else 0, "classes": brief}))
         if self.triggered:
             log("%s: MOTION TRIGGER -> %s" % (self.id, brief))
