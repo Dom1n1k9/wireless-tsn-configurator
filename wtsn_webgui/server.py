@@ -29,7 +29,7 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 FW_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(bin|img|hex)")
 CLIP_DIR = os.environ.get("WTSN_CLIP_DIR",
                           os.path.join(os.path.expanduser("~"), "wtsn-ai", "clips"))
-CLIP_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mjpeg|jpg|jpeg|png)$")
+CLIP_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mjpeg|mp4|jpg|jpeg|png)$")
 
 
 class WSHub:
@@ -266,8 +266,8 @@ def make_handler():
             if os.path.commonpath([base, path]) != base or not os.path.isfile(path):
                 self.send_error(404)
                 return
-            ctype = "video/mjpeg" if parts[1].lower().endswith(".mjpeg") else \
-                    "image/jpeg"
+            ctype = "video/mp4" if parts[1].lower().endswith(".mp4") else \
+                    ("video/mjpeg" if parts[1].lower().endswith(".mjpeg") else "image/jpeg")
             size = os.path.getsize(path)
             self.send_response(200)
             self.send_header("Content-Type", ctype)

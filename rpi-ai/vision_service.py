@@ -262,16 +262,25 @@ class Camera:
         return frame, dets
 
     def record_clip(self, yolo, conf):
-        """Record a short annotated MJPEG clip and store it for the GUI."""
+        """Record a short clip (MP4 for the web + mjpeg fallback) and store it.
+
+        The frames are drawn with the YOLO boxes + class labels, so the saved
+        clip shows exactly what was detected (e.g. "person 0.90"). An mp4
+        (mp4v/avc1) is written for browsers that cannot render MJPEG-in-<img>;
+        last.mjpeg is kept too for the older replay links.
+        """
         cdir = os.path.join(CLIP_DIR, self.id)
         os.makedirs(cdir, exist_ok=True)
         ts = int(time.time())
-        path = os.path.join(cdir, "clip_%d.mjpeg" % ts)
+        path_mp4 = os.path.join(cdir, "clip_%d.mp4" % ts)
+        path_mj = os.path.join(cdir, "clip_%d.mjpeg" % ts)
         n = int(conf.get("clip_frames", 20))
         delay = float(conf.get("clip_delay", 0.05))
         boundary = b"----wtsnclip"
-        frames = []
+        frames_jpg = []
         last_draw = None
+        width = height = 0
+        dets_seen = []
         for _ in range(n):
             try:
                 frame, dets = self._frame_and_dets(yolo, conf)
@@ -284,45 +293,95 @@ class Camera:
                 cv2.rectangle(draw, (x1, y1), (x2, y2), col, 2)
                 cv2.putText(draw, "%s %.2f" % (nm, c), (x1, max(12, y1 - 4)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+                dets_seen.append((nm, float(c)))
+            h, w = draw.shape[:2]
+            width, height = w, h
             last_draw = draw
             ok, jpg = cv2.imencode(".jpg", draw, [cv2.IMWRITE_JPEG_QUALITY, 75])
             if ok:
-                frames.append(jpg.tobytes())
+                frames_jpg.append(jpg.tobytes())
             time.sleep(delay)
-        if not frames or last_draw is None:
+        if not frames_jpg or last_draw is None:
             return None
         try:
-            with open(path, "wb") as f:
-                for fb in frames:
+            # ---------- MP4 (the format the web GUI actually plays) ----------
+            mp4_path = None
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                vw = cv2.VideoWriter(path_mp4, fourcc, max(1.0, 1.0 / max(delay, 0.001)),
+                                     (width, height))
+                if vw.isOpened():
+                    for fb in frames_jpg:
+                        dec = cv2.imdecode(np.frombuffer(fb, np.uint8), cv2.IMREAD_COLOR)
+                        if dec is not None:
+                            vw.write(dec)
+                    vw.release()
+                    if os.path.getsize(path_mp4) > 0:
+                        mp4_path = path_mp4
+            except Exception as ex:  # noqa: BLE001
+                log("%s: mp4 encode failed (%s); falling back to mjpeg only" % (self.id, ex))
+                try:
+                    os.remove(path_mp4)
+                except OSError:
+                    pass
+                mp4_path = None
+
+            # ---------- MJPEG (always, for the older replay link) ----------
+            with open(path_mj, "wb") as f:
+                for fb in frames_jpg:
                     f.write(b"\r\n" + boundary + b"\r\nContent-Type: image/jpeg\r\n"
                             b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n" + fb)
                 f.write(b"\r\n" + boundary + b"--\r\n")
             cv2.imwrite(os.path.join(cdir, "last.jpg"), last_draw,
                         [cv2.IMWRITE_JPEG_QUALITY, 80])
-            # Keep a stable "latest" clip at last.mjpeg (same tricks as
-            # last.jpg) so the web GUI can always replay the newest recording
-            # even if the numbered clip_*.mjpeg files get pruned.
+            # stable "latest" clip (mp4 for browsers) so the GUI can always
+            # replay the newest recording even when numbered clips are pruned
+            if mp4_path:
+                try:
+                    import shutil as _sh
+                    _sh.copyfile(mp4_path, os.path.join(cdir, "last.mp4"))
+                except Exception as ex:  # noqa: BLE001
+                    log("%s: could not copy last.mp4: %s" % (self.id, ex))
             with open(os.path.join(cdir, "last.mjpeg"), "wb") as f:
-                for fb in frames:
+                for fb in frames_jpg:
                     f.write(b"\r\n" + boundary + b"\r\nContent-Type: image/jpeg\r\n"
                             b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n" + fb)
                 f.write(b"\r\n" + boundary + b"--\r\n")
-            # keep the most recent 10 clips (last.mjpeg is the stable "latest"
-            # so it is never pruned; it is advertised separately below)
-            clips = sorted(f for f in os.listdir(cdir)
-                           if f.endswith(".mjpeg") and f != "last.mjpeg")
-            for old in clips[:-10]:
-                try:
-                    os.remove(os.path.join(cdir, old))
-                except OSError:
-                    pass
-            keep = [c for c in clips if os.path.exists(os.path.join(cdir, c))][-10:]
-            if os.path.exists(os.path.join(cdir, "last.mjpeg")):
-                keep.append("last.mjpeg")
+            detns = {}
+            for nm, c in dets_seen:
+                detns[nm] = max(detns.get(nm, 0.0), c)
+            with open(os.path.join(cdir, "last.txt"), "w") as f:
+                f.write(json.dumps({"classes": detns, "ts": ts}))
+            # keep the most recent clips (mp4 + mjpeg pairs)
+            for ext in (".mp4", ".mjpeg"):
+                clips = sorted(f for f in os.listdir(cdir)
+                               if f.endswith(ext) and f != "last.mjpeg")
+                for old in clips[:-10]:
+                    try:
+                        os.remove(os.path.join(cdir, old))
+                    except OSError:
+                        pass
+            keep = []
+            for cand in ("last.mp4", "last.mjpeg"):
+                if os.path.exists(os.path.join(cdir, cand)):
+                    keep.append("/ai/" + cand)
+            # newest saved numbered clips (mp4 preferred) to list
+            named = sorted((f for f in os.listdir(cdir)
+                            if f.startswith("clip_") and f.endswith((".mp4", ".mjpeg"))),
+                           reverse=True)[:10]
+            seen_n = set()
+            for f in named:
+                p = os.path.join(cdir, f)
+                if os.path.exists(p) and f not in seen_n:
+                    seen_n.add(f)
+                    keep.append("/ai/" + f)
             mqtt_cli.publish("tsn/cam/recordings", json.dumps(
-                {"id": self.id, "recordings": ["/ai/" + c for c in keep]}))
-            log("%s: recorded clip %s (%d frames)" % (self.id, os.path.basename(path), len(frames)))
-            return path
+                {"id": self.id,
+                 "detections": detns or None,
+                 "recordings": keep or ["/ai/last.mjpeg"]}))
+            log("%s: recorded clip %s (%d frames) det=%s"
+                % (self.id, os.path.basename(path_mj), len(frames_jpg), detns or "none"))
+            return path_mj
         except Exception as ex:  # noqa: BLE001
             log("%s: clip save error: %s" % (self.id, ex))
             return None

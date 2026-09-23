@@ -96,12 +96,14 @@ def parse_listener_msg(con, topic, payload):
             return
         if "/cam/recordings" in topic and did:
             recs = j.get("recordings", [])
+            detns = j.get("detections")
             if recs:
                 now = int(time.time())
                 for rp in recs:
                     con.execute(
-                        "INSERT OR REPLACE INTO recordings(device_id,path,recorded_at) "
-                        "VALUES(?,?,?)", (did, str(rp), now))
+                        "INSERT OR REPLACE INTO recordings(device_id,path,recorded_at,detections) "
+                        "VALUES(?,?,?,?)", (did, str(rp), now,
+                                           json.dumps(detns) if detns else None))
                 con.commit()
             add_event("mqtt", did, "camera saved %d recording(s)" % len(recs))
             return

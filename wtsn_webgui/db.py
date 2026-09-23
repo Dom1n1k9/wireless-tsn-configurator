@@ -68,7 +68,7 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS latency_log(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "device_id TEXT,ts INTEGER,latency_ms REAL);"
     "CREATE TABLE IF NOT EXISTS recordings(device_id TEXT,path TEXT,recorded_at INTEGER,"
-    "PRIMARY KEY(device_id,path));"
+    "detections TEXT,PRIMARY KEY(device_id,path));"
     "CREATE TABLE IF NOT EXISTS sonar_sweeps(id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "device_id TEXT,ts INTEGER,sweep_id INTEGER,sweep TEXT);"
     "CREATE TABLE IF NOT EXISTS ai_decisions(id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -92,7 +92,8 @@ def ensure_schema(con):
     for tbl, col in (("devices", "domain"), ("devices", "heartbeat_at"),
                       ("devices", "rssi"), ("devices", "usb"),
                       ("devices", "last_deploy_at"), ("devices", "last_deploy_ok"),
-                      ("timesync_status", "jitter_ns")):
+                      ("timesync_status", "jitter_ns"),
+                      ("recordings", "detections")):
         try:
             cols = [r[1] for r in con.execute("PRAGMA table_info(%s)" % tbl)]
             if col not in cols:
