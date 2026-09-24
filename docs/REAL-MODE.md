@@ -129,6 +129,43 @@ cd esp32-cam && idf.py -p /dev/ttyUSB0 flash monitor
 Provision identically (Device ID `esp32-cam`). It appears with kind = camera;
 AI-triggered clips then show on the Devices page and in the edge clip store.
 
+## 7b. Optional: SSD1306 OLED + 4 buttons on esp32-02 (actor board)
+
+The `esp32-agent` firmware includes a small built-in SSD1306 (128x64, I2C)
+driver plus four debounced push-buttons, enabled automatically on the actor
+board (esp32-02 - no BME280). No extra component download needed.
+
+Wiring (module has `SCL SDA VCC GND` + `K1..K4`):
+
+| OLED module | esp32-02 |
+|-------------|----------|
+| VCC | 3V3 |
+| GND | GND |
+| SCL | GPIO22 (I2C clock - shared bus) |
+| SDA | GPIO21 (I2C data - shared bus) |
+| K1 | GPIO32 (to GND on press) |
+| K2 | GPIO33 (to GND on press) |
+| K3 | GPIO34 (to GND on press) |
+| K4 | GPIO35 (to GND on press) |
+
+- I2C runs at 100 kHz on the same bus as the sensor add-on; internal pull-ups
+  are enabled. For K3/K4 (GPIO34/35 are input-only, no internal pull-up) add
+  a 10 kΩ pull-up to 3V3, or rely on the switch module's own pull.
+- Rebuild + flash esp32-02: `. ~/esp/esp-idf/export.sh && cd esp32-agent && idf.py -p /dev/ttyUSB0 flash`.
+
+Behaviour:
+- The OLED shows the device id and a two-line status; the bottom row shows the
+  live K1..K4 levels.
+- Each button press publishes `tsn/button/<id>/K<n>` and an `tsn/ack/<id>` and
+  is reported as a sensor `btn1..btn4` (`tsn/sensors`) so it appears on the
+  GUI Sensors page.
+- Set the display text over MQTT:
+  `mosquitto_pub -h <pi> -u wtsn -P <pass> -t tsn/cmd/esp32-02/display -m '{"line1":"LIVE","line2":"OK"}'`
+- Read a button level: `... -t tsn/cmd/esp32-02/button -m '1'`
+
+There is also a **Display** button per device row in the GUI (Devices page)
+that opens a small dialog to set line1/line2 over MQTT.
+
 ## 8. Factory reset / re-provision
 
 - **Hold BOOT (GPIO0) ~3 s** → NVS erased → back to the `WTSN-Setup` AP.

@@ -104,6 +104,14 @@ def parse_listener_msg(con, topic, payload):
                         "INSERT OR REPLACE INTO recordings(device_id,path,recorded_at,detections) "
                         "VALUES(?,?,?,?)", (did, str(rp), now,
                                            json.dumps(detns) if detns else None))
+                # The vision service re-announces the clip list every few
+                # seconds; keep only the most recent announcements per device
+                # so the recordings table does not grow without bound.
+                con.execute(
+                    "DELETE FROM recordings WHERE device_id=? AND rowid NOT IN "
+                    "(SELECT rowid FROM recordings WHERE device_id=? "
+                    " ORDER BY recorded_at DESC, rowid DESC LIMIT 60)",
+                    (did, did))
                 con.commit()
             add_event("mqtt", did, "camera saved %d recording(s)" % len(recs))
             return

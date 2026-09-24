@@ -19,6 +19,7 @@
 #include "wtsn_json.h"
 #include "wtsn_prov.h"
 #include "wtsn_sensor.h"
+#include "wtsn_display.h"
 #include "wtsn_uart.h"
 #include "wtsn_sonar.h"
 #include "wtsn_version.h"
@@ -254,6 +255,32 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         char topic[40];
         snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
         wtsn_mqtt_publish(g_mqtt, topic, buf);
+        return;
+    } else if (strcmp(cmd, "display") == 0) {
+        /* SSD1306 OLED text: {"line1":"...","line2":"..."} */
+        static char dl1[24], dl2[24];
+        wtsn_json_get_str(payload, "line1", dl1, sizeof(dl1));
+        wtsn_json_get_str(payload, "line2", dl2, sizeof(dl2));
+        wtsn_display_status(dl1[0] ? dl1 : NULL, dl2[0] ? dl2 : NULL);
+        char ack[80];
+        snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true,\"display\":1}", g_device_id);
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        wtsn_mqtt_publish(g_mqtt, topic, ack);
+        return;
+    } else if (strcmp(cmd, "button") == 0) {
+        /* Echo which button(s) to act on: {"k":1} returns the latched level.
+         * The physical K1..K4 events are published autonomously on
+         * tsn/button/<id>/K* ; this command just ACKs + returns the state. */
+        int k = atoi(payload);
+        int level = 0;
+        if (k >= 1 && k <= 4) level = wtsn_display_btn(k);
+        char ack[80];
+        snprintf(ack, sizeof(ack), "{\"id\":\"%s\",\"ok\":true,\"k\":%d,\"level\":%d}",
+                 g_device_id, k, level);
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        wtsn_mqtt_publish(g_mqtt, topic, ack);
         return;
     } else if (strcmp(cmd, "servo") == 0) {
         /* manual servo test: {"deg":90} -> move SG90 to 90 deg */
@@ -499,13 +526,17 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             wtsn_ptp_start();
             wtsn_sensor_init(g_device_id, g_mqtt);
             /* esp32-02 is the actor/relay board: it owns the panning sonar
-             * (HC-SR04 on a DC motor) which triggers on motion from esp32-01. */
+             * (HC-SR04 on a DC motor) which triggers on motion from esp32-01,
+             * plus optionally an SSD1306 OLED + 4 buttons (see wtsn_display). */
             if (!g_has_sensors) {
                 wtsn_sonar_init(g_device_id, g_mqtt);
                 wtsn_sensor_actor_set_pin();
                 /* startup test click: pulse the relay module trigger (mode 7)
                  * ~0.3 s after boot so the actor is audibly confirmed. */
                 wtsn_sensor_actor_set(7);
+                /* actor board: OLED (SDD1306 I2C) + K1..K4 buttons */
+                wtsn_display_init(g_device_id, g_mqtt);
+                wtsn_display_status(g_device_id, "online");
             }
             wtsn_uart_init(g_mqtt, g_device_id);
             wtsn_uart_start();
@@ -784,6 +815,16 @@ void app_main(void) {
     int64_t last_beat = 0;
     while (1) {
         wtsn_sensor_tick();
+        /* actor board: refresh OLED and scan the K1..K4 buttons */
+        if (!g_has_sensors) {
+            wtsn_display_tick();
+            int btn = wtsn_display_btn_last();
+            if (btn) {
+                /* A physical button was pressed: publish a labelled event and
+                 * show it on the OLED. Handlers are wired in on_command(). */
+                wtsn_display_status(g_device_id, "btn pressed");
+            }
+        }
         /* periodic heartbeat so the webgui can mark offline if we disappear */
         if (g_mqtt && esp_timer_get_time() - last_beat >= 10000000) {
             last_beat = esp_timer_get_time();

@@ -193,6 +193,13 @@ class WebGuiActionTest(unittest.TestCase):
         self.assertGreaterEqual(n, 1)
         self.assertNotIn("p1", state.PING_OUT)
 
+    def test_send_mqtt_sim_and_missing_topic(self):
+        self.assertFalse(self.act("send_mqtt", {})["ok"])
+        r = self.act("send_mqtt", {"topic": "tsn/cmd/esp32-02/display",
+                                   "payload": '{"line1":"hi","line2":"yo"}'})
+        self.assertTrue(r["ok"])
+        self.assertIn("tsn/cmd/esp32-02/display", r["msg"])
+
     def test_stream_lifecycle(self):
         self.act("save_devices", {"device": {"id": "talker1"}})
         self.act("save_devices", {"device": {"id": "l1"}})

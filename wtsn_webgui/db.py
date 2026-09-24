@@ -274,7 +274,12 @@ def load_all():
         out["devices"] = devs
         # Normalize recording rows the same way: the cam announces clips under
         # its real id, but the UI addresses the camera as 'esp32-cam'.
-        for r in out.get("recordings", []):
+        recd = out.get("recordings", [])
+        recd.sort(key=lambda r: (r.get("recorded_at") or 0), reverse=True)
+        # Cap what the UI receives: no point shipping thousands of stale
+        # announcement rows (they used to bloat every /api/data response).
+        out["recordings"] = recd[:120]
+        for r in out["recordings"]:
             if is_cam_id(r.get("device_id")) and r["device_id"] != CANONICAL_CAM:
                 r["device_id"] = CANONICAL_CAM
         out["cameras"] = []

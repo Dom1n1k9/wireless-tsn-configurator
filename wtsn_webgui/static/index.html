@@ -303,7 +303,9 @@ function devRow(d){
    "<td><select onchange='assignDomRow(\""+eid+"\",this.value)' style='max-width:120px'><option value='default'"+(d.domain==="default"?" selected":"")+">default</option>"+domOpts+"</select></td>"+
     "<td>"+rssi+"</td><td>"+esc(d.firmware||"")+"</td><td>"+camCell(d)+"</td><td style='max-width:170px'>"+esc(tsnFor(d.id))+"</td>"+
     "<td>"+fwCell(d)+"</td>"+
-   "<td><button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button></td>"+
+   "<td><button onclick='api(\"ping_device\",{id:\""+eid+"\"})'>Ping</button>"+
+   (d.is_cam?"":" <button class='ghost' onclick='dlgDisplay(\""+eid+"\")'>Display</button>")+
+   "</td>"+
    "<td><button class='ghost' onclick='avReset(\""+eid+"\")'>Reset</button> <button class='danger' onclick='api(\"save_devices\",{delete:[\""+eid+"\"]}).then(load)'>Del</button></td></tr>"}
 function deployCell(d){
   if(!d.last_deploy_at)return "<span class='muted'>never</span>";
@@ -387,6 +389,22 @@ function tsnFor(id){
  if((D.tas_schedules||[]).some(t=>t.deploy_target===id))f.push("802.1Qbv TAS");
  return Array.from(new Set(f)).join(", ")}
 function saveDev(){api("save_devices",{device:{id:$("did").value,name:$("dname").value,ip:$("dip").value,usb:$("dusb").value,domain:$("ddom").value,firmware:"",kind:0,status:0,tsn:[]}}).then(load)}
+function dlgDisplay(id){
+  const d=(D.devices||[]).find(x=>x.id===id);
+  if(!d)return;
+  const ov=document.createElement("div");
+  ov.id="dlgOv";
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90;display:flex;align-items:center;justify-content:center";
+  ov.innerHTML="<div class='card' style='min-width:360px;background:var(--surf2);border:1px solid var(--sec)'>"+
+    "<h3>SSD1306 Display · "+esc(id)+(d.is_cam?"":" (esp32-02 actor + K1..K4)")+"</h3>"+
+    "<div class='row'><label>line 1</label><input id=dl1 maxlength=20 placeholder='status text'></div>"+
+    "<div class='row'><label>line 2</label><input id=dl2 maxlength=20 placeholder='status text'></div>"+
+    "<div class='row'><button onclick='api(\"send_mqtt\",{topic:\"tsn/cmd/"+esc(id)+"/display\",payload:JSON.stringify({line1:$(\"dl1\").value,line2:$(\"dl2\").value})}).then(()=>ov.remove())'>Send to display</button> "+
+    "<button class='ghost' onclick='ov.remove()'>Close</button></div>"+
+    "<div class='muted' style='font-size:11px;margin-top:6px'>Buttons K1-K4 publish on <code>tsn/button/"+esc(id)+"/K1..K4</code> and appear as <code>btn1..btn4</code> sensors (see Sensors page).</div></div>";
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove()});
+  document.body.appendChild(ov);
+}
 function camAddCard(){
   // If no camera is present yet, offer a one-click way to add the single
   // canonical ESP32-CAM row (id esp32-cam) with the camera's LAN IP.
@@ -693,7 +711,8 @@ function sensors(){
    if(g.pir1)chips.push("<span class='chip "+(g.pir1.value?"det":"")+"' data-sen='pir1' data-val='"+(g.pir1.value?"1":"0")+"'>Motion: <b>"+(g.pir1.value?"detected":"no motion")+"</b></span>");
    if(g.wifi_motion)chips.push("<span class='chip "+(g.wifi_motion.value?"det":"")+"' data-sen='wifi_motion' data-val='"+(g.wifi_motion.value?"1":"0")+"' title='RSSI-jitter/CSI based WiFi motion (WiFiVision)'>WiFi: <b>"+(g.wifi_motion.value?"detected":"no motion")+"</b></span>");
    if(g.ai_detect)chips.push("<span class='chip "+(g.ai_person.value?"det":"")+"' data-sen='ai_detect' data-val='"+g.ai_detect.value+"' title='AI object detection (YOLOv4-tiny on RPi)'>AI: <b>"+(g.ai_detect.value?(g.ai_person.value?"person detected":g.ai_detect.value+" objects"):"clear")+"</b></span>");
-   const anyLatest=[t,h,p,g.light1,g.pir1,g.wifi_motion,g.ai_detect,g.mb_temp,g.mb_light,g.mb_sound].find(Boolean);
+   ["btn1","btn2","btn3","btn4"].forEach(n=>{if(g[n])chips.push("<span class='chip "+(g[n].value?"det":"")+"' data-sen='"+n+"' data-val='"+g[n].value+"' title='"+sensorLabel(n)+" (actor board)'>"+sensorLabel(n)+": <b>"+(g[n].value?"pressed":"idle")+"</b></span>")});
+    const anyLatest=[t,h,p,g.light1,g.pir1,g.wifi_motion,g.ai_detect,g.mb_temp,g.mb_light,g.mb_sound,g.btn1,g.btn2,g.btn3,g.btn4].find(Boolean);
    if(!chips.length)continue;
    const mapsWrap=(dev==="esp32-01")
      ?"<div data-map='wifi' data-mapdev='"+esc(dev)+"'></div>"
@@ -753,7 +772,7 @@ function bigSensorChart(sid, pts, hist, color, unit){
    "</svg></div>"
 }
 function sensorLabel(sid){
-  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","wifi_motion":"WiFi Motion","wifi_rssi":"WiFi RSSI jitter","ai_detect":"AI Detect","ai_person":"AI Person","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound"}[sid]||sid;
+  return {"temp1":"Temperature","press1":"Pressure","hum1":"Humidity","light1":"Light","pir1":"Motion","wifi_motion":"WiFi Motion","wifi_rssi":"WiFi RSSI jitter","ai_detect":"AI Detect","ai_person":"AI Person","actor_mode":"Actor","mb_temp":"micro:bit Temp","mb_light":"micro:bit Light","mb_pir":"micro:bit Motion","mb_sound":"micro:bit Sound","btn1":"Button K1","btn2":"Button K2","btn3":"Button K3","btn4":"Button K4"}[sid]||sid;
 }
 /* ---- radar/coverage mini-maps shown inside the Sensors cards ---- */
 function sweepOf(dev){
@@ -814,11 +833,12 @@ function sensorsLive(){
     if(sid==="wifi_motion"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"detected":"no motion"}
     if(sid==="ai_detect"){const p=byDev[did]&&byDev[did].ai_person;ch.className="chip "+(p&&p.value?"det":"");if(b)b.textContent=s.value?(p&&p.value?"person detected":s.value+" objects"):"clear"}
     if(sid==="wifi_rssi"){if(b)b.textContent=s.value+" (jitter)"}
+    if(sid==="btn1"||sid==="btn2"||sid==="btn3"||sid==="btn4"){ch.className="chip "+(s.value?"det":"");if(b)b.textContent=s.value?"pressed":"idle"}
   });
   // update "updated x ago"
   document.querySelectorAll("[data-age]").forEach(el=>{
     const did=el.dataset.age,dev=byDev[did];if(!dev)return;
-    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.wifi_motion||dev.ai_detect||dev.mb_temp||dev.mb_light||dev.mb_sound;
+    const t=dev.temp1||dev.hum1||dev.press1||dev.light1||dev.pir1||dev.wifi_motion||dev.ai_detect||dev.mb_temp||dev.mb_light||dev.mb_sound||dev.btn1||dev.btn2||dev.btn3||dev.btn4;
     if(t&&t.last_update){let a=now-(t.last_update>1000000000000?t.last_update/1000:t.last_update);el.textContent=a<0?"":a<60?"updated "+Math.round(a)+"s ago":a<3600?"updated "+Math.floor(a/60)+"m ago":"updated "+Math.floor(a/3600)+"h "+Math.floor((a%3600)/60)+"m ago"}
   });
 }
