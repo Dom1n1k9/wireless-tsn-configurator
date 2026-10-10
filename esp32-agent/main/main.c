@@ -181,6 +181,28 @@ static void on_command(const char *topic, const char *payload, void *ud) {
         /* set_wifi: expects JSON {"ssid":"...","pass":"..."} on tsn/cmd/<id>/wifi */
         crate_set_wifi(payload);
         send_ack(true, "");
+    } else if (strcmp(cmd, "add_wifi") == 0) {
+        /* add_wifi: append a network to the saved multihome list (keeps the
+         * others) so the node auto-connects at any location. JSON
+         * {"ssid":"...","pass":"..."}. Does NOT restart - send a separate
+         * "reboot" after all adds so the list is re-scanned exactly once. */
+        char asid[64] = {0};
+        char apass[64] = {0};
+        htsn_json_get_str(payload, "ssid", asid, sizeof(asid));
+        htsn_json_get_str(payload, "pass", apass, sizeof(apass));
+        bool added = false;
+        if (asid[0]) added = htsn_cfg_net_add(asid, apass);
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "{\"id\":\"%s\",\"ok\":%s,\"added\":%s,\"nets\":%d}",
+                 g_device_id, asid[0] ? "true" : "false",
+                 added ? "true" : (asid[0] ? "dup" : "none"),
+                 htsn_cfg_net_count());
+        char topic[40];
+        snprintf(topic, sizeof(topic), "tsn/ack/%s", g_device_id);
+        htsn_mqtt_publish(g_mqtt, topic, buf);
+        ESP_LOGI(TAG, "add_wifi: '%s' (nets now %d)", asid, htsn_cfg_net_count());
+        return;
     } else if (strcmp(cmd, "qos") == 0) {
         int p = atoi(payload);
         htsn_tsn_apply_qos(p, p, 0, 0, 0);
